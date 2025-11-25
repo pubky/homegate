@@ -1,6 +1,6 @@
 mod persistence;
 mod app_context;
-mod api;
+
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
