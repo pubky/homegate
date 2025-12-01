@@ -28,10 +28,9 @@ impl HttpServer {
 
     pub(crate) fn create_router(context: &AppContext) -> Router {
         let state = AppState {
-            sql_db: context.db.clone(),
+            db: context.db.clone(),
         };
-        let app = base().layer(TraceLayer::new_for_http()).with_state(state);
-        app
+        base().layer(TraceLayer::new_for_http()).with_state(state)
     }
 
     /// Start the HTTP server

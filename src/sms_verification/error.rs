@@ -15,4 +15,7 @@ pub enum SmsVerificationError {
 
     #[error("Invalid response from API: {0}")]
     InvalidResponse(String),
+
+    #[error("Database error: {0}")]
+    DatabaseError(#[from] crate::persistence::db::DbError),
 }

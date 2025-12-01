@@ -2,7 +2,7 @@ use sea_query::{ColumnDef, Expr, PostgresQueryBuilder, Query, SimpleExpr, Table}
 use sea_query_binder::SqlxBinder;
 use sqlx::{Row, Transaction};
 
-use crate::persistence::sql::{migration::MigrationTrait, sql_db::SqlDb};
+use crate::persistence::sql::{migration::MigrationTrait, migrations::m20251201_create_sms_verifications::M20251201CreateSmsVerifications, sql_db::SqlDb};
 
 /// The name of the migration table to keep track of which migrations have been applied.
 const MIGRATION_TABLE: &str = "migrations";
@@ -23,7 +23,7 @@ impl<'a> Migrator<'a> {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         // Add new migrations here. They run from top to bottom.
         vec![
-            // Box::new(M20250806CreateUserMigration),
+            Box::new(M20251201CreateSmsVerifications),
         ]
     }
 
@@ -148,6 +148,7 @@ impl<'a> Migrator<'a> {
 
     /// Checks if a migration is needed.
     /// This is done by checking if the migration name is in the migrations table.
+    #[allow(dead_code)]
     pub async fn has_migration_already_been_applied(
         &self,
         migration_name: &str,

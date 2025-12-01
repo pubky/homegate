@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 use std::{fmt::Display, str::FromStr};
 
 use serde::{Deserialize, Serialize};
@@ -40,6 +42,7 @@ impl ConnectionString {
     }
 }
 
+#[cfg_attr(not(test), allow(unexpected_cfgs))]
 #[cfg(any(test, feature = "testing"))]
 impl ConnectionString {
     /// Returns a connection string for a test database.

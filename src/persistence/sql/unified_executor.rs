@@ -2,11 +2,13 @@ use futures_util::future::BoxFuture;
 
 /// Macro to create a unified executor from a transaction.
 /// This is a shortcut for `&mut (&mut tx).into()`.
+#[allow(unused_macros)]
 macro_rules! uexecutor {
     ($tx:expr) => {{ &mut crate::persistence::sql::UnifiedExecutor::from_tx(&mut $tx) }};
 }
 
 // Re-export the macro so it can be imported from this module path
+#[allow(unused_imports)]
 pub(crate) use uexecutor;
 
 /// A unified executor that can be used to execute queries on a pool or a transaction.
@@ -15,6 +17,7 @@ pub(crate) use uexecutor;
 /// Can easily be converted from a pool or a transaction:
 /// - `db.pool().into()`
 /// - `transaction.into()`
+#[allow(dead_code)]
 pub(crate) enum UnifiedExecutor<'a> {
     Pool {
         future: BoxFuture<'a, Result<sqlx::pool::PoolConnection<sqlx::Postgres>, sqlx::Error>>,
@@ -25,6 +28,7 @@ pub(crate) enum UnifiedExecutor<'a> {
 
 impl<'a> UnifiedExecutor<'a> {
     /// Create a new executor from a pool.
+    #[allow(dead_code)]
     pub fn from_pool(pool: &'a sqlx::PgPool) -> Self {
         let future: BoxFuture<'a, Result<sqlx::pool::PoolConnection<sqlx::Postgres>, sqlx::Error>> =
             Box::pin(async move { pool.acquire().await });
@@ -35,6 +39,7 @@ impl<'a> UnifiedExecutor<'a> {
     }
 
     /// Create a new executor from a transaction.
+    #[allow(dead_code)]
     pub fn from_tx(tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>) -> Self {
         UnifiedExecutor::Transaction(tx)
     }
@@ -42,6 +47,7 @@ impl<'a> UnifiedExecutor<'a> {
     /// Get the connection from the executor.
     /// If the executor is a pool, it will acquire a connection from the pool.
     /// If the executor is a transaction, it will return the transaction.
+    #[allow(dead_code)]
     pub async fn get_con(&mut self) -> Result<&mut sqlx::PgConnection, sqlx::Error> {
         match self {
             UnifiedExecutor::Pool { future, connection } => {

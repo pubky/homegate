@@ -1,6 +1,7 @@
-use crate::persistence::sql::SqlDb;
+use crate::persistence::db::Db;
 
 #[derive(Clone, Debug)]
 pub(crate) struct AppState {
-    pub(crate) sql_db: SqlDb,
+    #[allow(dead_code)]
+    pub(crate) db: Db,
 }

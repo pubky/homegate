@@ -1,16 +1,19 @@
 use crate::app_context::AppContext;
+use crate::persistence::db::Db;
 use crate::sms_verification::error::SmsVerificationError;
 use crate::sms_verification::prelude_api::{CheckCodeResponse, PreludeAPI, VerificationResponse};
 use regex::Regex;
 
 pub struct SmsVerificationService {
     prelude_api: PreludeAPI,
+    db: Db,
 }
 
 impl SmsVerificationService {
     pub fn new(context: AppContext) -> Self {
         let prelude_api = PreludeAPI::new(&context);
-        Self { prelude_api }
+        let db = context.db.clone();
+        Self { prelude_api, db }
     }
 
     /// Validates that a phone number is in E.164 format
@@ -41,13 +44,12 @@ impl SmsVerificationService {
         // - Check rate limits for this phone number/IP
         // - Store the verification attempt in the database
 
-        // Call the PreludeAPI to create verification
         let response = self
             .prelude_api
             .create_verification(phone_number, ip_address)
             .await?;
 
-        // TODO: Store the verification response (ID, status) in the database
+        self.db.create_sms(phone_number, &response.id).await?;
 
         Ok(response)
     }
@@ -66,15 +68,20 @@ impl SmsVerificationService {
         // - Check that the verification hasn't expired
         // - Check rate limits for failed attempts
 
-        // Call the PreludeAPI to check the code
         let response = self.prelude_api.check_code(phone_number, code).await?;
 
-        // TODO: Update the verification status in the database based on response
-        // - If status is "success", mark phone number as verified
-        // - If status is "failure" or "expired_or_not_found", update attempt count
+        // If verification successful then update database
+        if response.status == "success" {
+            let signup_code = generate_signup_code();
+            self.db.verify_sms(&response.id, &signup_code).await?;
+        }
 
         Ok(response)
     }
+}
+
+fn generate_signup_code() -> String {
+    todo!("Implement Base32 Crockford signup code generation")
 }
 
 #[cfg(test)]
