@@ -10,6 +10,12 @@ pub struct EnvConfig {
     pub database_url: ConnectionString,
     pub http_listen_socket: SocketAddr,
     pub prelude_api_key: String,
+    #[serde(default = "default_prelude_api_url")]
+    pub prelude_api_url: String,
+}
+
+fn default_prelude_api_url() -> String {
+    "https://api.prelude.so".to_string()
 }
 
 impl EnvConfig {

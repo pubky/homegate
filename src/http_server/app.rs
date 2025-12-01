@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::app_context::AppContext;
-use crate::client_server::{AppState, routes};
+use crate::http_server::{AppState, routes};
 use axum::{Router, routing::get};
 use axum_server::Handle;
 use futures_util::TryFutureExt;
@@ -12,7 +12,6 @@ use tower_http::trace::TraceLayer;
 
 /// An Http server
 pub struct HttpServer {
-    context: AppContext,
     pub(crate) http_handle: Handle,
     pub(crate) http_socket: SocketAddr,
 }
@@ -22,7 +21,6 @@ impl HttpServer {
         let router = Self::create_router(&context);
         let (http_handle, http_socket) = Self::start_http_server(&context, router).await?;
         Ok(Self {
-            context,
             http_handle,
             http_socket,
         })
