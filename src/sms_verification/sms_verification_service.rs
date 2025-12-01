@@ -2,17 +2,16 @@ use crate::app_context::AppContext;
 use crate::persistence::db::Db;
 use crate::sms_verification::error::SmsVerificationError;
 use crate::sms_verification::prelude_api::{CheckCodeResponse, PreludeAPI, VerificationResponse};
+use crate::sms_verification::sms_verification_provider_api::SmsVerificationProviderApi;
 use regex::Regex;
 
-pub struct SmsVerificationService {
-    prelude_api: PreludeAPI,
+pub struct SmsVerificationService<T: SmsVerificationProviderApi> {
+    prelude_api: T,
     db: Db,
 }
 
-impl SmsVerificationService {
-    pub fn new(context: AppContext) -> Self {
-        let prelude_api = PreludeAPI::new(&context);
-        let db = context.db.clone();
+impl<T: SmsVerificationProviderApi> SmsVerificationService<T> {
+    pub fn new(prelude_api: T, db: Db) -> Self {
         Self { prelude_api, db }
     }
 
@@ -81,8 +80,22 @@ impl SmsVerificationService {
 }
 
 fn generate_signup_code() -> String {
-    todo!("Implement Base32 Crockford signup code generation")
+    use uuid::Uuid;
+    Uuid::new_v4().to_string()
 }
+
+// Production-specific convenience methods
+impl SmsVerificationService<PreludeAPI> {
+    pub fn from_context(context: AppContext) -> Self {
+        let prelude_api = PreludeAPI::new(&context);
+        let db = context.db.clone();
+        Self::new(prelude_api, db)
+    }
+}
+
+// Type alias for backward compatibility
+#[allow(dead_code)]
+pub type DefaultSmsVerificationService = SmsVerificationService<PreludeAPI>;
 
 #[cfg(test)]
 mod tests {
@@ -90,20 +103,35 @@ mod tests {
 
     #[test]
     fn test_validate_phone_number() {
-        assert!(SmsVerificationService::validate_phone_number("+30123456789").is_ok());
-        assert!(SmsVerificationService::validate_phone_number("+1234567890123").is_ok());
-        assert!(SmsVerificationService::validate_phone_number("+12").is_ok());
+        assert!(
+            SmsVerificationService::<PreludeAPI>::validate_phone_number("+30123456789").is_ok()
+        );
+        assert!(
+            SmsVerificationService::<PreludeAPI>::validate_phone_number("+1234567890123").is_ok()
+        );
+        assert!(SmsVerificationService::<PreludeAPI>::validate_phone_number("+12").is_ok());
         // Missing +
-        assert!(SmsVerificationService::validate_phone_number("30123456789").is_err());
+        assert!(
+            SmsVerificationService::<PreludeAPI>::validate_phone_number("30123456789").is_err()
+        );
         // Starts with +0
-        assert!(SmsVerificationService::validate_phone_number("+0123456789").is_err());
+        assert!(
+            SmsVerificationService::<PreludeAPI>::validate_phone_number("+0123456789").is_err()
+        );
         // Contains spaces
-        assert!(SmsVerificationService::validate_phone_number("+30 123 456 789").is_err());
+        assert!(
+            SmsVerificationService::<PreludeAPI>::validate_phone_number("+30 123 456 789").is_err()
+        );
         // Contains hyphens
-        assert!(SmsVerificationService::validate_phone_number("+30-123-456-789").is_err());
+        assert!(
+            SmsVerificationService::<PreludeAPI>::validate_phone_number("+30-123-456-789").is_err()
+        );
         // Too short (only country code)
-        assert!(SmsVerificationService::validate_phone_number("+1").is_err());
+        assert!(SmsVerificationService::<PreludeAPI>::validate_phone_number("+1").is_err());
         // Too long (more than 15 digits)
-        assert!(SmsVerificationService::validate_phone_number("+1234567890123456").is_err());
+        assert!(
+            SmsVerificationService::<PreludeAPI>::validate_phone_number("+1234567890123456")
+                .is_err()
+        );
     }
 }

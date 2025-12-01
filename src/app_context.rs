@@ -17,6 +17,9 @@ impl AppContext {
         let sql_db = SqlDb::connect(&config.database_url)
             .await
             .map_err(|e| anyhow::Error::new(e).context("Failed to connect to database."))?;
-        Ok(Self { db: Db::new(sql_db), config })
+        Ok(Self {
+            db: Db::new(sql_db),
+            config,
+        })
     }
 }

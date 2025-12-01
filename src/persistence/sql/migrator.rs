@@ -2,7 +2,10 @@ use sea_query::{ColumnDef, Expr, PostgresQueryBuilder, Query, SimpleExpr, Table}
 use sea_query_binder::SqlxBinder;
 use sqlx::{Row, Transaction};
 
-use crate::persistence::sql::{migration::MigrationTrait, migrations::m20251201_create_sms_verifications::M20251201CreateSmsVerifications, sql_db::SqlDb};
+use crate::persistence::sql::{
+    migration::MigrationTrait,
+    migrations::m20251201_create_sms_verifications::M20251201CreateSmsVerifications, sql_db::SqlDb,
+};
 
 /// The name of the migration table to keep track of which migrations have been applied.
 const MIGRATION_TABLE: &str = "migrations";
@@ -22,9 +25,7 @@ impl<'a> Migrator<'a> {
     /// Returns a list of migrations to run.
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         // Add new migrations here. They run from top to bottom.
-        vec![
-            Box::new(M20251201CreateSmsVerifications),
-        ]
+        vec![Box::new(M20251201CreateSmsVerifications)]
     }
 
     /// Runs all migrations that are not yet applied.

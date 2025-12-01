@@ -1,5 +1,7 @@
 use crate::app_context::AppContext;
 use crate::sms_verification::error::SmsVerificationError;
+use crate::sms_verification::sms_verification_provider_api::SmsVerificationProviderApi;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 pub struct PreludeAPI {
@@ -56,9 +58,12 @@ impl PreludeAPI {
             base_url: context.config.prelude_api_url.clone(),
         }
     }
+}
+#[async_trait]
 
+impl SmsVerificationProviderApi for PreludeAPI {
     /// Creates a verification request for the given phone number
-    pub async fn create_verification(
+    async fn create_verification(
         &self,
         phone_number: &str,
         ip_address: Option<&str>,
@@ -103,7 +108,7 @@ impl PreludeAPI {
     }
 
     /// Checks a verification code for the given phone number
-    pub async fn check_code(
+    async fn check_code(
         &self,
         phone_number: &str,
         code: &str,

@@ -130,11 +130,15 @@ mod tests {
         let db = Db::new(sql_db);
 
         // Try to verify without creating
-        let result = db.verify_sms("nonexistent_prelude_id", "test_signup_code").await;
+        let result = db
+            .verify_sms("nonexistent_prelude_id", "test_signup_code")
+            .await;
         assert!(matches!(result, Err(DbError::NotFound(_))));
 
         // Create verification
-        db.create_sms("+30123456789", "prelude_id_xyz").await.unwrap();
+        db.create_sms("+30123456789", "prelude_id_xyz")
+            .await
+            .unwrap();
 
         // Verify
         db.verify_sms("prelude_id_xyz", "signup_code_123")

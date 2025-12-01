@@ -10,7 +10,6 @@ use axum_server::Handle;
 use futures_util::TryFutureExt;
 use tower_http::trace::TraceLayer;
 
-/// An Http server
 pub struct HttpServer {
     pub(crate) http_handle: Handle,
     pub(crate) http_socket: SocketAddr,
