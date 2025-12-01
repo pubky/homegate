@@ -26,10 +26,7 @@ impl SqlDb {
     /// Connect to the database.
     pub async fn connect(con_string: &ConnectionString) -> Result<Self, sqlx::Error> {
         let pool: PgPool = PgPool::connect(con_string.as_str()).await?;
-        Ok(Self {
-            pool,
-
-        })
+        Ok(Self { pool })
     }
 
     /// Get the connection pool
@@ -61,7 +58,6 @@ impl From<PgPool> for SqlDb {
         Self { pool }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

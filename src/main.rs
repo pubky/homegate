@@ -1,6 +1,7 @@
-mod persistence;
-mod app_context;
+mod homegate_service;
 
+use homegate::AppContext;
+use homegate_service::HomegateService;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -13,7 +14,18 @@ async fn main() -> anyhow::Result<()> {
         tracing::debug!("Failed to load .env file: {}", e);
     };
 
-    let context = app_context::AppContext::load().await.map_err(|e| e.context("Failed to load application context"))?;
-    
+    let context = AppContext::load()
+        .await
+        .map_err(|e| e.context("Failed to load application context"))?;
+    let homegate_service = HomegateService::start(context).await?;
+
+    tracing::info!(
+        "Homeserver HTTP listening on {}",
+        homegate_service.client_server().url_string()
+    );
+
+    tracing::info!("Press Ctrl+C to stop the Homeserver");
+    tokio::signal::ctrl_c().await?;
+    tracing::info!("Shutting down Homeserver");
     Ok(())
 }

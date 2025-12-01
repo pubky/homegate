@@ -13,9 +13,10 @@ impl AppContext {
     /// Load the application context from the environment.
     pub async fn load() -> anyhow::Result<Self> {
         let config = EnvConfig::load()
-        .map_err(|e| anyhow::Error::new(e).context("Failed to load config."))?;
-        let db = SqlDb::connect(&config.database_url).await
-        .map_err(|e| anyhow::Error::new(e).context("Failed to connect to database."))?;
+            .map_err(|e| anyhow::Error::new(e).context("Failed to load config."))?;
+        let db = SqlDb::connect(&config.database_url)
+            .await
+            .map_err(|e| anyhow::Error::new(e).context("Failed to connect to database."))?;
         Ok(Self { db, config })
     }
 }

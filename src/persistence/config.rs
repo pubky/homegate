@@ -1,5 +1,6 @@
-use crate::persistence::sql::connection_string::ConnectionString;
+use std::net::SocketAddr;
 
+use crate::persistence::sql::connection_string::ConnectionString;
 
 /// The environment configuration.
 /// This is the configuration that is loaded from the environment variables.
@@ -7,6 +8,7 @@ use crate::persistence::sql::connection_string::ConnectionString;
 pub struct EnvConfig {
     #[serde(default)]
     pub database_url: ConnectionString,
+    pub http_listen_socket: SocketAddr,
     pub prelude_api_key: String,
 }
 
@@ -17,7 +19,6 @@ impl EnvConfig {
         envy::prefixed("HG_").from_env::<EnvConfig>()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -31,13 +32,20 @@ mod tests {
                 String::from("postgres://localhost:5432/pubky_homegate"),
             ),
             (
+                String::from("HTTP_LISTEN_SOCKET"),
+                String::from("127.0.0.1:5000"),
+            ),
+            (
                 String::from("PRELUDE_API_KEY"),
                 String::from("test-prelude-api-key"),
             ),
         ])
-            .expect("Failed to load config");
+        .expect("Failed to load config");
 
-        assert_eq!(config.database_url.as_str(), "postgres://localhost:5432/pubky_homegate");
+        assert_eq!(
+            config.database_url.as_str(),
+            "postgres://localhost:5432/pubky_homegate"
+        );
         assert_eq!(config.prelude_api_key, "test-prelude-api-key");
     }
 }

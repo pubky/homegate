@@ -2,10 +2,7 @@ use sea_query::{ColumnDef, Expr, PostgresQueryBuilder, Query, SimpleExpr, Table}
 use sea_query_binder::SqlxBinder;
 use sqlx::{Row, Transaction};
 
-use crate::persistence::sql::{
-    migration::MigrationTrait,
-    sql_db::SqlDb,
-};
+use crate::persistence::sql::{migration::MigrationTrait, sql_db::SqlDb};
 
 /// The name of the migration table to keep track of which migrations have been applied.
 const MIGRATION_TABLE: &str = "migrations";
