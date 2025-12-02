@@ -1,24 +1,91 @@
-use crate::app_context::AppContext;
-use crate::external_apis::{
-    CheckCodeResponse, HomeserverAdminApi, HomeserverAdminApiTrait, PreludeAPI,
-    SmsVerificationProviderApi, VerificationResponse,
-};
+use crate::external_apis::{HomeserverAdminApiTrait, SmsVerificationProviderApi};
 use crate::persistence::db::Db;
 use crate::sms_verification::error::SmsVerificationError;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SendCodeStatus {
+    Success,
+    Retry,
+    Blocked,
+}
+impl SendCodeStatus {
+    pub fn from_prelude_status(status: &str) -> Result<Self, SmsVerificationError> {
+        match status {
+            "success" => Ok(Self::Success),
+            "retry" => Ok(Self::Retry),
+            "blocked" => Ok(Self::Blocked),
+            _ => Err(SmsVerificationError::InvalidResponse(format!(
+                "Unknown send code status from Prelude: {}",
+                status
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SendCodeRequest {
+    pub phone_number: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ip_address: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SendCodeResponse {
+    pub status: SendCodeStatus,
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VerifyCodeStatus {
+    Success,
+    Failure,
+    ExpiredOrNotFound,
+}
+
+impl VerifyCodeStatus {
+    pub fn from_prelude_status(status: &str) -> Result<Self, SmsVerificationError> {
+        match status {
+            "success" => Ok(Self::Success),
+            "failure" => Ok(Self::Failure),
+            "expired_or_not_found" => Ok(Self::ExpiredOrNotFound),
+            _ => Err(SmsVerificationError::InvalidResponse(format!(
+                "Unknown verify code status from Prelude: {}",
+                status
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VerifyCodeRequest {
+    pub phone_number: String,
+    pub code: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct VerifyCodeResponse {
+    pub status: VerifyCodeStatus,
+    pub signup_code: Option<String>,
+    pub homeserver_pubky: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct SmsVerificationService<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> {
-    prelude_api: T,
     db: Db,
-    signup_token_provider: S,
+    prelude_api: T,
+    homeserver_admin_api: S,
 }
 
 impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationService<T, S> {
-    pub fn new(prelude_api: T, db: Db, signup_token_provider: S) -> Self {
+    pub fn new(prelude_api: T, db: Db, homeserver_admin_api: S) -> Self {
         Self {
-            prelude_api,
             db,
-            signup_token_provider,
+            prelude_api,
+            homeserver_admin_api,
         }
     }
 
@@ -37,12 +104,11 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
     }
 
     /// Initiates a phone number verification process
-    pub async fn verify_init(
+    pub async fn send_code(
         &self,
-        phone_number: &str,
-        ip_address: Option<&str>,
-    ) -> Result<VerificationResponse, SmsVerificationError> {
-        Self::validate_phone_number(phone_number)?;
+        request: SendCodeRequest,
+    ) -> Result<SendCodeResponse, SmsVerificationError> {
+        Self::validate_phone_number(&request.phone_number)?;
 
         // TODO: Make database call to check/store verification attempt before calling PreludeAPI
         // This should:
@@ -50,23 +116,28 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
         // - Check rate limits for this phone number/IP
         // - Store the verification attempt in the database
 
-        let response = self
+        let ip_ref = request.ip_address.as_deref();
+        let prelude_response = self
             .prelude_api
-            .create_verification(phone_number, ip_address)
+            .create_verification(&request.phone_number, ip_ref)
             .await?;
 
-        self.db.create_sms(phone_number, &response.id).await?;
+        self.db
+            .create_sms(&request.phone_number, &prelude_response.id)
+            .await?;
 
-        Ok(response)
+        Ok(SendCodeResponse {
+            status: SendCodeStatus::from_prelude_status(&prelude_response.status)?,
+            reason: prelude_response.reason,
+        })
     }
 
     /// Validates a verification code for a phone number
-    pub async fn verify_finalise(
+    pub async fn verify_code(
         &self,
-        phone_number: &str,
-        code: &str,
-    ) -> Result<CheckCodeResponse, SmsVerificationError> {
-        Self::validate_phone_number(phone_number)?;
+        request: VerifyCodeRequest,
+    ) -> Result<VerifyCodeResponse, SmsVerificationError> {
+        Self::validate_phone_number(&request.phone_number)?;
 
         // TODO: Make database call to check verification attempt before calling PreludeAPI
         // This should:
@@ -74,35 +145,33 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
         // - Check that the verification hasn't expired
         // - Check rate limits for failed attempts
 
-        let response = self.prelude_api.check_code(phone_number, code).await?;
+        let prelude_response = self
+            .prelude_api
+            .check_code(&request.phone_number, &request.code)
+            .await?;
 
-        // If verification successful then update database
-        if response.status == "success" {
-            let signup_code = self.signup_token_provider.generate_signup_token().await?;
-            self.db.verify_sms(&response.id, &signup_code).await?;
-        }
+        let status = VerifyCodeStatus::from_prelude_status(&prelude_response.status)?;
 
-        Ok(response)
+        let signup_code = if status == VerifyCodeStatus::Success {
+            let code = self.homeserver_admin_api.generate_signup_token().await?;
+            self.db.verify_sms(&prelude_response.id, &code).await?;
+            Some(code)
+        } else {
+            None
+        };
+
+        Ok(VerifyCodeResponse {
+            status,
+            signup_code,
+            homeserver_pubky: None, // TODO: Get from homeserver_admin_api
+        })
     }
 }
-
-// Production-specific convenience methods
-impl SmsVerificationService<PreludeAPI, HomeserverAdminApi> {
-    pub fn from_context(context: AppContext) -> Self {
-        let prelude_api = PreludeAPI::new(&context);
-        let db = context.db.clone();
-        let signup_token_provider = HomeserverAdminApi::new(&context);
-        Self::new(prelude_api, db, signup_token_provider)
-    }
-}
-
-// Type alias for backward compatibility
-#[allow(dead_code)]
-pub type DefaultSmsVerificationService = SmsVerificationService<PreludeAPI, HomeserverAdminApi>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::external_apis::{HomeserverAdminApi, PreludeAPI};
 
     #[test]
     fn test_validate_phone_number() {

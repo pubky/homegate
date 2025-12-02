@@ -3,8 +3,9 @@ mod tests {
     use crate::external_apis::homeserver::mock_homeserver_admin_api::MockHomeserverAdminApi;
     use crate::external_apis::prelude::mock_prelude_api::MockSmsVerificationProviderApi;
     use crate::persistence::db::Db;
-    use crate::persistence::sql::SqlDb;
-    use crate::sms_verification::sms_verification_service::SmsVerificationService;
+    use crate::sms_verification::sms_verification_service::{
+        SendCodeStatus, SmsVerificationService, VerifyCodeStatus,
+    };
     use sqlx::PgPool;
 
     fn create_mock_service(
@@ -18,52 +19,59 @@ mod tests {
     #[sqlx::test]
     async fn test_full_verification_flow_with_mock(pool: PgPool) {
         // Setup: Mock API + Real Database
-        let sql_db = SqlDb::test(pool).await;
-        let db = Db::new(sql_db.clone());
-        let service = create_mock_service(db);
+        let db = Db::from_pool(pool.clone())
+            .await
+            .expect("Failed to create Db");
+        let service = create_mock_service(db.clone());
 
         let phone = "+30123456789";
 
         // Step 1: Initiate verification
         let verify_response = service
-            .verify_init(phone, Some("127.0.0.1"))
+            .send_code(crate::sms_verification::SendCodeRequest {
+                phone_number: phone.to_string(),
+                ip_address: Some("127.0.0.1".to_string()),
+            })
             .await
             .expect("verify_init should succeed");
 
-        assert_eq!(verify_response.status, "success");
-        let verification_id = verify_response.id.clone();
+        assert_eq!(verify_response.status, SendCodeStatus::Success);
 
         // Step 1.5: Check database after initiation - should have record but not verified yet
-        let after_init: (String, Option<chrono::DateTime<chrono::Utc>>, Option<Vec<u8>>) =
-            sqlx::query_as(
-                "SELECT phone_number, verified_at, signup_code FROM sms_verifications WHERE prelude_id = $1",
-            )
-            .bind(&verification_id)
-            .fetch_one(sql_db.pool())
-            .await
-            .expect("Should find verification after init");
+        let after_init: (
+            String,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<Vec<u8>>,
+        ) = sqlx::query_as(
+            "SELECT phone_number, prelude_id, verified_at, signup_code FROM sms_verifications WHERE phone_number = $1",
+        )
+        .bind(phone)
+        .fetch_one(db.pool())
+        .await
+        .expect("Should find verification after init");
 
         assert_eq!(after_init.0, phone, "Phone number should match");
+        let verification_id = after_init.1.clone();
         assert!(
-            after_init.1.is_none(),
+            after_init.2.is_none(),
             "verified_at should be NULL after init"
         );
         assert!(
-            after_init.2.is_none(),
+            after_init.3.is_none(),
             "signup_code should be NULL after init"
         );
 
         // Step 2: Verify code (mock uses "123456")
         let check_response = service
-            .verify_finalise(phone, "123456")
+            .verify_code(crate::sms_verification::VerifyCodeRequest {
+                phone_number: phone.to_string(),
+                code: "123456".to_string(),
+            })
             .await
             .expect("verify_finalise should succeed");
 
-        assert_eq!(check_response.status, "success");
-        assert_eq!(
-            check_response.id, verification_id,
-            "Response should have same verification ID"
-        );
+        assert_eq!(check_response.status, VerifyCodeStatus::Success);
 
         // Step 3: Query database to verify state updated correctly
         let after_verify: (
@@ -74,7 +82,7 @@ mod tests {
             "SELECT phone_number, verified_at, signup_code FROM sms_verifications WHERE prelude_id = $1",
         )
         .bind(&verification_id)
-        .fetch_one(sql_db.pool())
+        .fetch_one(db.pool())
         .await
         .expect("Should find verification in database");
 
@@ -116,32 +124,39 @@ mod tests {
 
     #[sqlx::test]
     async fn test_invalid_verification_code(pool: PgPool) {
-        let sql_db = SqlDb::test(pool).await;
-        let db = Db::new(sql_db.clone());
-        let service = create_mock_service(db);
+        let db = Db::from_pool(pool.clone())
+            .await
+            .expect("Failed to create Db");
+        let service = create_mock_service(db.clone());
 
         let phone = "+30987654321";
 
         // Initiate verification
         service
-            .verify_init(phone, None)
+            .send_code(crate::sms_verification::SendCodeRequest {
+                phone_number: phone.to_string(),
+                ip_address: None,
+            })
             .await
             .expect("verify_init should succeed");
 
         // Try wrong code
         let check_response = service
-            .verify_finalise(phone, "wrong_code")
+            .verify_code(crate::sms_verification::VerifyCodeRequest {
+                phone_number: phone.to_string(),
+                code: "wrong_code".to_string(),
+            })
             .await
             .expect("API should respond");
 
-        assert_eq!(check_response.status, "failed");
+        assert_eq!(check_response.status, VerifyCodeStatus::Failure);
 
         // Verify database NOT updated
         let count: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1 AND verified_at IS NOT NULL"
         )
         .bind(phone)
-        .fetch_one(sql_db.pool())
+        .fetch_one(db.pool())
         .await
         .unwrap();
 

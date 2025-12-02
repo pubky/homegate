@@ -4,7 +4,7 @@ use sea_query_binder::SqlxBinder;
 use sqlx::Row;
 use thiserror::Error;
 
-use crate::persistence::sql::SqlDb;
+use crate::persistence::sql::{Migrator, SqlDb};
 
 #[derive(Error, Debug)]
 pub enum DbError {
@@ -35,8 +35,41 @@ pub struct Db {
 }
 
 impl Db {
-    pub fn new(sql_db: SqlDb) -> Self {
-        Self { sql_db }
+    /// Connect to the database and run migrations.
+    pub async fn connect(
+        connection_string: &crate::persistence::sql::ConnectionString,
+    ) -> Result<Self, DbError> {
+        let sql_db = SqlDb::connect(connection_string)
+            .await
+            .map_err(DbError::Database)?;
+
+        let migrator = Migrator::new(&sql_db);
+        migrator
+            .run()
+            .await
+            .map_err(|e| DbError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        Ok(Self { sql_db })
+    }
+
+    /// Create a Db from an existing connection pool and run migrations.
+    /// This is primarily used in tests with #[sqlx::test] fixtures.
+    pub async fn from_pool(pool: sqlx::PgPool) -> Result<Self, DbError> {
+        let sql_db = SqlDb::from(pool);
+        let migrator = Migrator::new(&sql_db);
+        migrator
+            .run()
+            .await
+            .map_err(|e| DbError::Database(sqlx::Error::Protocol(e.to_string())))?;
+
+        Ok(Self { sql_db })
+    }
+
+    /// Get access to the underlying connection pool.
+    /// This is primarily used in tests for direct database queries.
+    #[cfg(test)]
+    pub fn pool(&self) -> &sqlx::PgPool {
+        self.sql_db.pool()
     }
 
     /// Create a new SMS verification record
@@ -115,8 +148,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_create_multiple_sms_same_phone(pool: PgPool) {
-        let sql_db = SqlDb::test(pool).await;
-        let db = Db::new(sql_db);
+        let db = Db::from_pool(pool).await.unwrap();
 
         // Should be able to create multiple verifications for same phone with different prelude_ids
         db.create_sms("+30123456789", "prelude_id_1").await.unwrap();
@@ -126,8 +158,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_full_flow(pool: PgPool) {
-        let sql_db = SqlDb::test(pool).await;
-        let db = Db::new(sql_db);
+        let db = Db::from_pool(pool).await.unwrap();
 
         // Try to verify without creating
         let result = db

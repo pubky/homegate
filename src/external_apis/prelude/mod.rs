@@ -1,8 +1,7 @@
+pub mod mock_prelude_api;
 mod prelude_api;
 
+pub use mock_prelude_api::MockSmsVerificationProviderApi;
 pub use prelude_api::{
-    CheckCodeResponse, PreludeAPI, SmsVerificationProviderApi, VerificationResponse,
+    PreludeAPI, PreludeCheckCodeResponse, PreludeVerificationResponse, SmsVerificationProviderApi,
 };
-
-#[cfg(test)]
-pub mod mock_prelude_api;

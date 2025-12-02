@@ -2,8 +2,10 @@ mod error;
 mod sms_verification_service;
 
 #[cfg(test)]
-mod e2e_tests;
+mod tests;
 
 pub use error::SmsVerificationError;
-#[allow(unused_imports)]
-pub use sms_verification_service::{DefaultSmsVerificationService, SmsVerificationService};
+pub use sms_verification_service::{
+    SendCodeRequest, SendCodeResponse, SmsVerificationService, VerifyCodeRequest,
+    VerifyCodeResponse,
+};

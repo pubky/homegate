@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use crate::app_context::AppContext;
+use crate::external_apis::{HomeserverAdminApiTrait, SmsVerificationProviderApi};
 use crate::http_server::{AppState, routes};
 use axum::{Router, routing::get};
 use axum_server::Handle;
@@ -16,28 +16,36 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    pub async fn start(context: AppContext) -> anyhow::Result<Self> {
-        let router = Self::create_router(&context);
-        let (http_handle, http_socket) = Self::start_http_server(&context, router).await?;
+    pub async fn start<
+        T: SmsVerificationProviderApi + Clone + 'static,
+        S: HomeserverAdminApiTrait + Clone + 'static,
+    >(
+        listen_socket: std::net::SocketAddr,
+        state: AppState<T, S>,
+    ) -> anyhow::Result<Self> {
+        let router = Self::create_router(state);
+        let (http_handle, http_socket) = Self::start_http_server(listen_socket, router).await?;
         Ok(Self {
             http_handle,
             http_socket,
         })
     }
 
-    pub(crate) fn create_router(context: &AppContext) -> Router {
-        let state = AppState {
-            db: context.db.clone(),
-        };
+    pub(crate) fn create_router<
+        T: SmsVerificationProviderApi + Clone + 'static,
+        S: HomeserverAdminApiTrait + Clone + 'static,
+    >(
+        state: AppState<T, S>,
+    ) -> Router {
         base().layer(TraceLayer::new_for_http()).with_state(state)
     }
 
     /// Start the HTTP server
     async fn start_http_server(
-        context: &AppContext,
+        listen_socket: std::net::SocketAddr,
         router: Router,
     ) -> anyhow::Result<(Handle, SocketAddr)> {
-        let http_listener = TcpListener::bind(context.config.http_listen_socket)?;
+        let http_listener = TcpListener::bind(listen_socket)?;
         let http_socket = http_listener.local_addr()?;
         let http_handle = Handle::new();
         tokio::spawn(
@@ -69,6 +77,11 @@ impl Drop for HttpServer {
     }
 }
 
-fn base() -> Router<AppState> {
-    Router::new().route("/", get(routes::root::handler))
+fn base<
+    T: SmsVerificationProviderApi + Clone + 'static,
+    S: HomeserverAdminApiTrait + Clone + 'static,
+>() -> Router<AppState<T, S>> {
+    Router::new()
+        .route("/", get(routes::root::handler))
+        .nest("/v1", routes::sms_verification::routes())
 }

@@ -1,8 +1,8 @@
-use crate::app_context::AppContext;
 use crate::sms_verification::SmsVerificationError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug)]
 pub struct PreludeAPI {
     http_client: reqwest::Client,
     api_key: String,
@@ -28,8 +28,8 @@ struct Signals {
     ip_address: String,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct VerificationResponse {
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PreludeVerificationResponse {
     pub id: String,
     pub status: String,
     pub reason: Option<String>,
@@ -41,8 +41,8 @@ struct CheckCodeRequest {
     code: String,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct CheckCodeResponse {
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PreludeCheckCodeResponse {
     pub id: String,
     pub status: String,
     pub metadata: Option<serde_json::Value>,
@@ -50,11 +50,11 @@ pub struct CheckCodeResponse {
 }
 
 impl PreludeAPI {
-    pub fn new(context: &AppContext) -> Self {
+    pub fn from_config(config: &crate::persistence::config::EnvConfig) -> Self {
         Self {
             http_client: reqwest::Client::new(),
-            api_key: context.config.prelude_api_key.clone(),
-            base_url: context.config.prelude_api_url.clone(),
+            api_key: config.prelude_api_key.clone(),
+            base_url: config.prelude_api_url.clone(),
         }
     }
 }
@@ -67,14 +67,14 @@ pub trait SmsVerificationProviderApi: Send + Sync {
         &self,
         phone_number: &str,
         ip_address: Option<&str>,
-    ) -> Result<VerificationResponse, SmsVerificationError>;
+    ) -> Result<PreludeVerificationResponse, SmsVerificationError>;
 
     /// Checks a verification code for the given phone number
     async fn check_code(
         &self,
         phone_number: &str,
         code: &str,
-    ) -> Result<CheckCodeResponse, SmsVerificationError>;
+    ) -> Result<PreludeCheckCodeResponse, SmsVerificationError>;
 }
 
 #[async_trait]
@@ -84,7 +84,7 @@ impl SmsVerificationProviderApi for PreludeAPI {
         &self,
         phone_number: &str,
         ip_address: Option<&str>,
-    ) -> Result<VerificationResponse, SmsVerificationError> {
+    ) -> Result<PreludeVerificationResponse, SmsVerificationError> {
         let request_body = VerificationRequest {
             target: Target {
                 target_type: "phone_number".to_string(),
@@ -117,9 +117,12 @@ impl SmsVerificationProviderApi for PreludeAPI {
             });
         }
 
-        let verification_response = response.json::<VerificationResponse>().await.map_err(|e| {
-            SmsVerificationError::InvalidResponse(format!("Failed to parse response: {}", e))
-        })?;
+        let verification_response = response
+            .json::<PreludeVerificationResponse>()
+            .await
+            .map_err(|e| {
+                SmsVerificationError::InvalidResponse(format!("Failed to parse response: {}", e))
+            })?;
 
         Ok(verification_response)
     }
@@ -129,7 +132,7 @@ impl SmsVerificationProviderApi for PreludeAPI {
         &self,
         phone_number: &str,
         code: &str,
-    ) -> Result<CheckCodeResponse, SmsVerificationError> {
+    ) -> Result<PreludeCheckCodeResponse, SmsVerificationError> {
         let request_body = CheckCodeRequest {
             target: Target {
                 target_type: "phone_number".to_string(),
@@ -160,9 +163,12 @@ impl SmsVerificationProviderApi for PreludeAPI {
             });
         }
 
-        let check_response = response.json::<CheckCodeResponse>().await.map_err(|e| {
-            SmsVerificationError::InvalidResponse(format!("Failed to parse response: {}", e))
-        })?;
+        let check_response = response
+            .json::<PreludeCheckCodeResponse>()
+            .await
+            .map_err(|e| {
+                SmsVerificationError::InvalidResponse(format!("Failed to parse response: {}", e))
+            })?;
 
         Ok(check_response)
     }

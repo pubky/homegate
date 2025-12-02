@@ -1,4 +1,4 @@
-use crate::app_context::AppContext;
+use crate::persistence::config::EnvConfig;
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -11,6 +11,7 @@ pub enum HomeserverAdminApiError {
     ApiError { status: u16, message: String },
 }
 
+#[derive(Clone, Debug)]
 pub struct HomeserverAdminApi {
     http_client: reqwest::Client,
     admin_password: String,
@@ -18,18 +19,17 @@ pub struct HomeserverAdminApi {
 }
 
 impl HomeserverAdminApi {
-    pub fn new(context: &AppContext) -> Self {
+    pub fn from_config(config: &EnvConfig) -> Self {
         Self {
             http_client: reqwest::Client::new(),
-            admin_password: context.config.homeserver_admin_password.clone(),
-            base_url: context.config.homeserver_api_url.clone(),
+            admin_password: config.homeserver_admin_password.clone(),
+            base_url: config.homeserver_api_url.clone(),
         }
     }
 }
 
 #[async_trait]
 pub trait HomeserverAdminApiTrait: Send + Sync {
-    /// Generates a signup token
     async fn generate_signup_token(&self) -> Result<String, HomeserverAdminApiError>;
 }
 
@@ -37,11 +37,9 @@ pub trait HomeserverAdminApiTrait: Send + Sync {
 impl HomeserverAdminApiTrait for HomeserverAdminApi {
     /// Generates a signup token by calling the homeserver admin API
     async fn generate_signup_token(&self) -> Result<String, HomeserverAdminApiError> {
-        let url = format!("{}/generate_signup_token", self.base_url);
-
         let response = self
             .http_client
-            .get(&url)
+            .get(format!("{}/generate_signup_token", self.base_url))
             .header("X-Admin-Password", &self.admin_password)
             .send()
             .await?;
