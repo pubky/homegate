@@ -18,4 +18,7 @@ pub enum SmsVerificationError {
 
     #[error("Database error: {0}")]
     DatabaseError(#[from] crate::persistence::db::DbError),
+
+    #[error("Homeserver admin API error: {0}")]
+    HomeserverAdminError(#[from] crate::external_apis::HomeserverAdminApiError),
 }

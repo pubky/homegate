@@ -4,9 +4,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-use crate::sms_verification::error::SmsVerificationError;
-use crate::sms_verification::prelude_api::{CheckCodeResponse, VerificationResponse};
-use crate::sms_verification::sms_verification_provider_api::SmsVerificationProviderApi;
+use crate::external_apis::prelude::prelude_api::{
+    CheckCodeResponse, SmsVerificationProviderApi, VerificationResponse,
+};
+use crate::sms_verification::SmsVerificationError;
 
 /// Mock SMS verification provider API for testing
 ///

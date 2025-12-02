@@ -1,18 +1,26 @@
 #[cfg(test)]
 mod tests {
+    use crate::external_apis::homeserver::mock_homeserver_admin_api::MockHomeserverAdminApi;
+    use crate::external_apis::prelude::mock_prelude_api::MockSmsVerificationProviderApi;
     use crate::persistence::db::Db;
     use crate::persistence::sql::SqlDb;
-    use crate::sms_verification::mock_provider_api::MockSmsVerificationProviderApi;
     use crate::sms_verification::sms_verification_service::SmsVerificationService;
     use sqlx::PgPool;
+
+    fn create_mock_service(
+        db: Db,
+    ) -> SmsVerificationService<MockSmsVerificationProviderApi, MockHomeserverAdminApi> {
+        let mock_api = MockSmsVerificationProviderApi::new();
+        let mock_signup_token_provider = MockHomeserverAdminApi::new();
+        SmsVerificationService::new(mock_api, db, mock_signup_token_provider)
+    }
 
     #[sqlx::test]
     async fn test_full_verification_flow_with_mock(pool: PgPool) {
         // Setup: Mock API + Real Database
         let sql_db = SqlDb::test(pool).await;
         let db = Db::new(sql_db.clone());
-        let mock_api = MockSmsVerificationProviderApi::new();
-        let service = SmsVerificationService::new(mock_api, db);
+        let service = create_mock_service(db);
 
         let phone = "+30123456789";
 
@@ -110,8 +118,7 @@ mod tests {
     async fn test_invalid_verification_code(pool: PgPool) {
         let sql_db = SqlDb::test(pool).await;
         let db = Db::new(sql_db.clone());
-        let mock_api = MockSmsVerificationProviderApi::new();
-        let service = SmsVerificationService::new(mock_api, db);
+        let service = create_mock_service(db);
 
         let phone = "+30987654321";
 

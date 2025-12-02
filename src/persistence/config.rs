@@ -12,6 +12,8 @@ pub struct EnvConfig {
     pub prelude_api_key: String,
     #[serde(default = "default_prelude_api_url")]
     pub prelude_api_url: String,
+    pub homeserver_api_url: String,
+    pub homeserver_admin_password: String,
 }
 
 fn default_prelude_api_url() -> String {
@@ -45,6 +47,14 @@ mod tests {
                 String::from("PRELUDE_API_KEY"),
                 String::from("test-prelude-api-key"),
             ),
+            (
+                String::from("HOMESERVER_API_URL"),
+                String::from("http://localhost:6288"),
+            ),
+            (
+                String::from("HOMESERVER_ADMIN_PASSWORD"),
+                String::from("test-admin-password"),
+            ),
         ])
         .expect("Failed to load config");
 
@@ -53,5 +63,7 @@ mod tests {
             "postgres://localhost:5432/pubky_homegate"
         );
         assert_eq!(config.prelude_api_key, "test-prelude-api-key");
+        assert_eq!(config.homeserver_api_url, "http://localhost:6288");
+        assert_eq!(config.homeserver_admin_password, "test-admin-password");
     }
 }
