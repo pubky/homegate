@@ -20,8 +20,12 @@ impl AppState<PreludeAPI, HomeserverAdminApi> {
         let db = Db::connect(&config.database_url).await?;
         let prelude_api = PreludeAPI::from_config(config);
         let homeserver_admin_api = HomeserverAdminApi::from_config(config);
-        let sms_verification_service =
-            SmsVerificationService::new(db.clone(), prelude_api, homeserver_admin_api);
+        let sms_verification_service = SmsVerificationService::new(
+            db.clone(),
+            prelude_api,
+            homeserver_admin_api,
+            config.max_verified_sessions,
+        );
 
         Ok(Self {
             db,
@@ -42,8 +46,12 @@ impl
         let mock_prelude_api = crate::MockSmsVerificationProviderApi::new();
         let mock_homeserver_admin_api =
             crate::external_apis::homeserver::MockHomeserverAdminApi::new();
-        let sms_verification_service =
-            SmsVerificationService::new(db.clone(), mock_prelude_api, mock_homeserver_admin_api);
+        let sms_verification_service = SmsVerificationService::new(
+            db.clone(),
+            mock_prelude_api,
+            mock_homeserver_admin_api,
+            config.max_verified_sessions,
+        );
 
         Ok(Self {
             db,

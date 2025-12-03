@@ -14,10 +14,16 @@ pub struct EnvConfig {
     pub prelude_api_url: String,
     pub homeserver_api_url: String,
     pub homeserver_admin_password: String,
+    #[serde(default = "default_max_verified_sessions")]
+    pub max_verified_sessions: u32,
 }
 
 fn default_prelude_api_url() -> String {
     "https://api.prelude.dev".to_string()
+}
+
+fn default_max_verified_sessions() -> u32 {
+    10
 }
 
 impl EnvConfig {

@@ -76,14 +76,21 @@ pub struct SmsVerificationService<T: SmsVerificationProviderApi, S: HomeserverAd
     db: Db,
     prelude_api: T,
     homeserver_admin_api: S,
+    max_verified_sessions: u32,
 }
 
 impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationService<T, S> {
-    pub fn new(db: Db, prelude_api: T, homeserver_admin_api: S) -> Self {
+    pub fn new(
+        db: Db,
+        prelude_api: T,
+        homeserver_admin_api: S,
+        max_verified_sessions: u32,
+    ) -> Self {
         Self {
             db,
             prelude_api,
             homeserver_admin_api,
+            max_verified_sessions,
         }
     }
 
@@ -111,7 +118,7 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
             .count_verified_sessions(phone_number)
             .await
             .map_err(SmsVerificationError::DatabaseError)?;
-        if count >= 10 {
+        if count >= self.max_verified_sessions as i64 {
             return Err(SmsVerificationError::TooManyVerifiedSessions);
         }
         Ok(())
@@ -160,11 +167,10 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
     ) -> Result<VerifyCodeResponse, SmsVerificationError> {
         Self::validate_phone_number(&request.phone_number)?;
 
-        // TODO: Make database call to check verification attempt before calling PreludeAPI
-        // This should:
-        // - Verify that a verification was initiated for this phone number
-        // - Check that the verification hasn't expired
-        // - Check rate limits for failed attempts
+        // Check if there's an active verification session in our database
+        self.db
+            .check_pending_verification_exists(&request.phone_number)
+            .await?;
 
         let prelude_response = self
             .prelude_api
@@ -173,19 +179,36 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
 
         let status = VerifyCodeStatus::from_prelude_status(&prelude_response.status)?;
 
-        let signup_code = if status == VerifyCodeStatus::Success {
-            let code = self.homeserver_admin_api.generate_signup_token().await?;
-            self.db.verify_sms(&prelude_response.id, &code).await?;
-            Some(code)
-        } else {
-            None
-        };
-
-        Ok(VerifyCodeResponse {
-            status,
-            signup_code,
-            homeserver_pubky: None, // TODO: Get from homeserver_admin_api
-        })
+        match status {
+            VerifyCodeStatus::Success => {
+                let code = self.homeserver_admin_api.generate_signup_token().await?;
+                self.db.verify_sms(&prelude_response.id, &code).await?;
+                Ok(VerifyCodeResponse {
+                    status,
+                    signup_code: Some(code),
+                    homeserver_pubky: None, // TODO: Get from homeserver_admin_api
+                })
+            }
+            VerifyCodeStatus::ExpiredOrNotFound => {
+                // Mark session as permanently failed
+                self.db
+                    .mark_verification_failed(&prelude_response.id, "expired_or_not_found")
+                    .await?;
+                Ok(VerifyCodeResponse {
+                    status,
+                    signup_code: None,
+                    homeserver_pubky: None,
+                })
+            }
+            VerifyCodeStatus::Failure => {
+                // Wrong code - don't mark as failed, allow retries
+                Ok(VerifyCodeResponse {
+                    status,
+                    signup_code: None,
+                    homeserver_pubky: None,
+                })
+            }
+        }
     }
 }
 

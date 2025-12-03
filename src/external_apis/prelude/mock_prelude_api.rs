@@ -39,13 +39,23 @@ impl SmsVerificationProviderApi for MockSmsVerificationProviderApi {
         phone_number: &str,
         _ip_address: Option<&str>,
     ) -> Result<PreludeVerificationResponse, SmsVerificationError> {
+        let mut verifications = self.verifications.lock().unwrap();
+
+        // Check if verification already exists for this phone number
+        if let Some((existing_id, _)) = verifications.get(phone_number) {
+            // Return retry status with existing verification ID
+            return Ok(PreludeVerificationResponse {
+                id: existing_id.clone(),
+                status: "retry".to_string(),
+                reason: Some("Verification already in progress".to_string()),
+            });
+        }
+
+        // Create new verification
         let verification_id = Uuid::new_v4().to_string();
         let code = "123456".to_string();
 
-        self.verifications
-            .lock()
-            .unwrap()
-            .insert(phone_number.to_string(), (verification_id.clone(), code));
+        verifications.insert(phone_number.to_string(), (verification_id.clone(), code));
 
         Ok(PreludeVerificationResponse {
             id: verification_id,
@@ -59,7 +69,7 @@ impl SmsVerificationProviderApi for MockSmsVerificationProviderApi {
         phone_number: &str,
         code: &str,
     ) -> Result<PreludeCheckCodeResponse, SmsVerificationError> {
-        let verifications = self.verifications.lock().unwrap();
+        let mut verifications = self.verifications.lock().unwrap();
 
         if let Some((verification_id, stored_code)) = verifications.get(phone_number) {
             let status = if code == stored_code {
@@ -68,12 +78,20 @@ impl SmsVerificationProviderApi for MockSmsVerificationProviderApi {
                 "failure"
             };
 
-            Ok(PreludeCheckCodeResponse {
+            let response = PreludeCheckCodeResponse {
                 id: verification_id.clone(),
                 status: status.to_string(),
                 metadata: None,
                 request_id: None,
-            })
+            };
+
+            // Remove verification from state after successful check
+            // This allows a new send_code to create a fresh verification
+            if status == "success" {
+                verifications.remove(phone_number);
+            }
+
+            Ok(response)
         } else {
             Err(SmsVerificationError::InvalidResponse(
                 "No verification found for phone number".to_string(),

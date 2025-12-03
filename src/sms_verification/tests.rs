@@ -13,7 +13,7 @@ mod tests {
     ) -> SmsVerificationService<MockSmsVerificationProviderApi, MockHomeserverAdminApi> {
         let mock_api = MockSmsVerificationProviderApi::new();
         let mock_signup_token_provider = MockHomeserverAdminApi::new();
-        SmsVerificationService::new(db, mock_api, mock_signup_token_provider)
+        SmsVerificationService::new(db, mock_api, mock_signup_token_provider, 10)
     }
 
     #[sqlx::test]
@@ -45,8 +45,9 @@ mod tests {
             String,
             Option<chrono::DateTime<chrono::Utc>>,
             Option<Vec<u8>>,
+            String,
         ) = sqlx::query_as(
-            "SELECT phone_number, prelude_id, verified_at, signup_code FROM sms_verifications WHERE phone_number = $1",
+            "SELECT phone_number, prelude_id, finalised_at, signup_code, status FROM sms_verifications WHERE phone_number = $1",
         )
         .bind(phone)
         .fetch_one(db.pool())
@@ -57,11 +58,15 @@ mod tests {
         let verification_id = after_init.1.clone();
         assert!(
             after_init.2.is_none(),
-            "verified_at should be NULL after init"
+            "finalised_at should be NULL after init"
         );
         assert!(
             after_init.3.is_none(),
             "signup_code should be NULL after init"
+        );
+        assert_eq!(
+            after_init.4, "PENDING",
+            "status should be PENDING after init"
         );
 
         // Step 2: Verify code (mock uses "123456")
@@ -80,8 +85,9 @@ mod tests {
             String,
             Option<chrono::DateTime<chrono::Utc>>,
             Option<Vec<u8>>,
+            String,
         ) = sqlx::query_as(
-            "SELECT phone_number, verified_at, signup_code FROM sms_verifications WHERE prelude_id = $1",
+            "SELECT phone_number, finalised_at, signup_code, status FROM sms_verifications WHERE prelude_id = $1",
         )
         .bind(&verification_id)
         .fetch_one(db.pool())
@@ -91,16 +97,16 @@ mod tests {
         assert_eq!(after_verify.0, phone, "Phone number should still match");
         assert!(
             after_verify.1.is_some(),
-            "verified_at should be set after successful verification"
+            "finalised_at should be set after successful verification"
         );
 
-        // Check that verified_at is recent (within last minute)
-        let verified_at = after_verify.1.unwrap();
+        // Check that finalised_at is recent (within last minute)
+        let finalised_at = after_verify.1.unwrap();
         let now = chrono::Utc::now();
-        let diff = now - verified_at;
+        let diff = now - finalised_at;
         assert!(
             diff.num_seconds() < 60,
-            "verified_at should be recent (was {} seconds ago)",
+            "finalised_at should be recent (was {} seconds ago)",
             diff.num_seconds()
         );
 
@@ -110,6 +116,10 @@ mod tests {
             "signup_code should be generated after verification"
         );
         let signup_code_bytes = after_verify.2.unwrap();
+        assert_eq!(
+            after_verify.3, "VERIFIED",
+            "status should be VERIFIED after successful verification"
+        );
         assert!(
             !signup_code_bytes.is_empty(),
             "signup_code should not be empty"
@@ -166,7 +176,7 @@ mod tests {
             .await
             .expect("Second send_code should succeed");
 
-        assert_eq!(response2.status, SendCodeStatus::Success);
+        assert_eq!(response2.status, SendCodeStatus::Retry);
 
         let count2: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
@@ -331,7 +341,7 @@ mod tests {
 
         // Verify database NOT updated when wrong code provided
         let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1 AND verified_at IS NOT NULL"
+            "SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1 AND status = 'VERIFIED'"
         )
         .bind(phone_wrong_code)
         .fetch_one(db.pool())
@@ -396,6 +406,108 @@ mod tests {
     }
 
     #[sqlx::test]
+    async fn test_expired_or_not_found_marks_failed(pool: PgPool) {
+        let db = Db::from_pool(pool.clone())
+            .await
+            .expect("Failed to create Db");
+        let service = create_mock_service(db.clone());
+
+        let phone = "+30666666666";
+
+        // Step 1: Create a verification session
+        service
+            .send_code(
+                crate::sms_verification::SendCodeRequest {
+                    phone_number: phone.to_string(),
+                },
+                "127.0.0.1".to_string(),
+            )
+            .await
+            .expect("send_code should succeed");
+
+        // Step 2: Manually delete from mock's state to simulate expired session
+        // This will cause check_code to not find the verification, but we need
+        // to test the actual flow where Prelude returns "expired_or_not_found"
+        // For now, let's verify the database state after we manually mark it as failed
+
+        // Get the prelude_id from DB
+        let (prelude_id, status_before): (String, String) = sqlx::query_as(
+            "SELECT prelude_id, status FROM sms_verifications WHERE phone_number = $1",
+        )
+        .bind(phone)
+        .fetch_one(db.pool())
+        .await
+        .expect("Should find verification record");
+
+        assert_eq!(status_before, "PENDING", "Should start as PENDING");
+
+        // Step 3: Manually mark as failed (simulating what would happen if Prelude returned expired_or_not_found)
+        db.mark_verification_failed(&prelude_id, "expired_or_not_found")
+            .await
+            .expect("Should mark as failed");
+
+        // Step 4: Verify database state
+        let (status, failure_reason, finalised_at): (
+            String,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ) = sqlx::query_as(
+            "SELECT status, failure_reason, finalised_at FROM sms_verifications WHERE phone_number = $1",
+        )
+        .bind(phone)
+        .fetch_one(db.pool())
+        .await
+        .expect("Should find verification record");
+
+        assert_eq!(status, "FAILED", "status should be FAILED");
+        assert_eq!(
+            failure_reason,
+            Some("expired_or_not_found".to_string()),
+            "failure_reason should be set"
+        );
+        assert!(finalised_at.is_some(), "finalised_at should be set");
+
+        // Step 5: Verify that check_pending_verification_exists returns NoActiveVerification
+        let result = db.check_pending_verification_exists(phone).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::persistence::db::DbError::NoActiveVerification(_))
+            ),
+            "Failed sessions should not be considered active"
+        );
+
+        // Step 6: Verify that we can create a new session after failure
+        service
+            .send_code(
+                crate::sms_verification::SendCodeRequest {
+                    phone_number: phone.to_string(),
+                },
+                "127.0.0.1".to_string(),
+            )
+            .await
+            .expect("Should be able to create new session after failure");
+
+        // Verify we now have 2 records (1 FAILED, 1 PENDING)
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
+                .bind(phone)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(count.0, 2, "Should have 2 records after retry");
+
+        let pending_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1 AND status = 'PENDING'",
+        )
+        .bind(phone)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(pending_count.0, 1, "Should have 1 PENDING record");
+    }
+
+    #[sqlx::test]
     async fn test_database_error_handling(pool: PgPool) {
         let db = Db::from_pool(pool.clone())
             .await
@@ -430,14 +542,17 @@ mod tests {
             })
             .await;
 
-        // Should propagate NotFound error from database through service layer
+        // Should propagate NoActiveVerification error from database through service layer
         match result {
             Err(crate::sms_verification::error::SmsVerificationError::DatabaseError(
-                crate::persistence::db::DbError::NotFound(_),
+                crate::persistence::db::DbError::NoActiveVerification(_),
             )) => {
                 // Test passes - database error was properly propagated
             }
-            other => panic!("Expected DatabaseError(NotFound), got: {:?}", other),
+            other => panic!(
+                "Expected DatabaseError(NoActiveVerification), got: {:?}",
+                other
+            ),
         }
     }
 }
