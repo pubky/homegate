@@ -162,4 +162,132 @@ mod tests {
 
         assert_eq!(count.0, 0, "Should not mark as verified with wrong code");
     }
+
+    #[sqlx::test]
+    async fn test_reuse_active_session(pool: PgPool) {
+        let db = Db::from_pool(pool.clone())
+            .await
+            .expect("Failed to create Db");
+        let service = create_mock_service(db.clone());
+        let phone = "+30999999999";
+
+        // First call
+        let response1 = service
+            .send_code(crate::sms_verification::SendCodeRequest {
+                phone_number: phone.to_string(),
+                ip_address: None,
+            })
+            .await
+            .expect("First send_code should succeed");
+
+        assert_eq!(response1.status, SendCodeStatus::Success);
+
+        let count1: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
+                .bind(phone)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(count1.0, 1);
+
+        // Second call - should skip DB write since active session exists
+        let response2 = service
+            .send_code(crate::sms_verification::SendCodeRequest {
+                phone_number: phone.to_string(),
+                ip_address: None,
+            })
+            .await
+            .expect("Second send_code should succeed");
+
+        assert_eq!(response2.status, SendCodeStatus::Success);
+
+        let count2: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
+                .bind(phone)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(count2.0, 1, "Should still have only 1 record");
+    }
+
+    #[sqlx::test]
+    async fn test_new_session_after_verification(pool: PgPool) {
+        let db = Db::from_pool(pool.clone())
+            .await
+            .expect("Failed to create Db");
+        let service = create_mock_service(db.clone());
+        let phone = "+30000000000";
+
+        service
+            .send_code(crate::sms_verification::SendCodeRequest {
+                phone_number: phone.to_string(),
+                ip_address: None,
+            })
+            .await
+            .unwrap();
+
+        service
+            .verify_code(crate::sms_verification::VerifyCodeRequest {
+                phone_number: phone.to_string(),
+                code: "123456".to_string(),
+            })
+            .await
+            .unwrap();
+
+        service
+            .send_code(crate::sms_verification::SendCodeRequest {
+                phone_number: phone.to_string(),
+                ip_address: None,
+            })
+            .await
+            .unwrap();
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
+                .bind(phone)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(count.0, 2, "Should have 2 records (1 verified, 1 active)");
+    }
+
+    #[sqlx::test]
+    async fn test_max_verified_sessions_limit(pool: PgPool) {
+        let db = Db::from_pool(pool.clone())
+            .await
+            .expect("Failed to create Db");
+        let service = create_mock_service(db.clone());
+        let phone = "+30111111112";
+
+        for i in 0..10 {
+            service
+                .send_code(crate::sms_verification::SendCodeRequest {
+                    phone_number: phone.to_string(),
+                    ip_address: None,
+                })
+                .await
+                .expect(&format!("send_code {} should succeed", i));
+
+            service
+                .verify_code(crate::sms_verification::VerifyCodeRequest {
+                    phone_number: phone.to_string(),
+                    code: "123456".to_string(),
+                })
+                .await
+                .expect(&format!("verify_code {} should succeed", i));
+        }
+
+        let result = service
+            .send_code(crate::sms_verification::SendCodeRequest {
+                phone_number: phone.to_string(),
+                ip_address: None,
+            })
+            .await;
+
+        assert!(result.is_err(), "11th send_code should fail");
+        match result {
+            Err(crate::sms_verification::error::SmsVerificationError::TooManyVerifiedSessions) => {}
+            _ => panic!("Expected TooManyVerifiedSessions error"),
+        }
+    }
 }

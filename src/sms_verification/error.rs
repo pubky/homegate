@@ -7,6 +7,9 @@ pub enum SmsVerificationError {
     )]
     InvalidPhoneNumber(String),
 
+    #[error("Phone number has too many verified sessions. Maximum allowed: 10")]
+    TooManyVerifiedSessions,
+
     #[error("HTTP request failed: {0}")]
     RequestFailed(#[from] reqwest::Error),
 

@@ -103,6 +103,22 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
         }
     }
 
+    /// Check if a phone number can create a new verification
+    async fn check_verification_limit(
+        &self,
+        phone_number: &str,
+    ) -> Result<(), SmsVerificationError> {
+        let count = self
+            .db
+            .count_verified_sessions(phone_number)
+            .await
+            .map_err(SmsVerificationError::DatabaseError)?;
+        if count >= 10 {
+            return Err(SmsVerificationError::TooManyVerifiedSessions);
+        }
+        Ok(())
+    }
+
     /// Initiates a phone number verification process
     pub async fn send_code(
         &self,
@@ -110,18 +126,25 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
     ) -> Result<SendCodeResponse, SmsVerificationError> {
         Self::validate_phone_number(&request.phone_number)?;
 
-        // TODO: Make database call to check/store verification attempt before calling PreludeAPI
-        // This should:
-        // - Check if phone number already has a pending verification
-        // - Check rate limits for this phone number/IP
-        // - Store the verification attempt in the database
+        // Check if phone number has reached the maximum verified sessions limit
+        self.check_verification_limit(&request.phone_number).await?;
 
+        // Always call Prelude API to validate/create verification session
         let ip_ref = request.ip_address.as_deref();
         let prelude_response = self
             .prelude_api
             .create_verification(&request.phone_number, ip_ref)
             .await?;
 
+        if prelude_response.status == "retry" {
+            tracing::info!(
+                phone_number = %request.phone_number,
+                prelude_id = %prelude_response.id,
+                "User retrying verification code"
+            );
+        }
+
+        // Create SMS record (will skip if active session already exists)
         self.db
             .create_sms(&request.phone_number, &prelude_response.id)
             .await?;

@@ -15,6 +15,11 @@ impl IntoResponse for SmsVerificationError {
                 "invalid_phone_number",
                 self.to_string(),
             ),
+            SmsVerificationError::TooManyVerifiedSessions => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_verified_sessions",
+                self.to_string(),
+            ),
             SmsVerificationError::RequestFailed(_) => (
                 StatusCode::BAD_GATEWAY,
                 "external_service_error",

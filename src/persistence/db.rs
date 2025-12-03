@@ -72,13 +72,27 @@ impl Db {
         self.sql_db.pool()
     }
 
-    /// Create a new SMS verification record
-    /// Perhaps dont need phone_number here
+    /// Create a new SMS verification record only if no active session exists for this phone_number and prelude_id
     pub async fn create_sms(&self, phone_number: &str, prelude_id: &str) -> Result<(), DbError> {
+        // Build subquery to check for existing active sessions
+        let subquery = Query::select()
+            .expr(Expr::value(1))
+            .from("sms_verifications")
+            .and_where(Expr::col("phone_number").eq(phone_number))
+            .and_where(Expr::col("verified_at").is_null())
+            .to_owned();
+
+        // Build INSERT statement with NOT EXISTS condition
         let statement = Query::insert()
             .into_table("sms_verifications")
             .columns(["phone_number", "prelude_id"])
-            .values([phone_number.into(), prelude_id.into()])
+            .select_from(
+                Query::select()
+                    .expr(Expr::value(phone_number))
+                    .expr(Expr::value(prelude_id))
+                    .cond_where(Expr::exists(subquery).not())
+                    .to_owned(),
+            )
             .map_err(|e| DbError::QueryBuild(format!("Failed to build insert query: {}", e)))?
             .to_owned();
 
@@ -88,6 +102,21 @@ impl Db {
             .await?;
 
         Ok(())
+    }
+
+    pub async fn count_verified_sessions(&self, phone_number: &str) -> Result<i64, DbError> {
+        let statement = Query::select()
+            .expr(Expr::col("unique_id").count())
+            .from("sms_verifications")
+            .and_where(Expr::col("phone_number").eq(phone_number))
+            .and_where(Expr::col("verified_at").is_not_null())
+            .to_owned();
+        let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
+        let row = sqlx::query_with(&query, values)
+            .fetch_one(self.sql_db.pool())
+            .await?;
+        let count: i64 = row.try_get(0)?;
+        Ok(count)
     }
 
     /// Verify an SMS by setting verified_at and signup_code
@@ -147,37 +176,83 @@ mod tests {
     use sqlx::PgPool;
 
     #[sqlx::test]
-    async fn test_create_multiple_sms_same_phone(pool: PgPool) {
+    async fn test_one_active_session_per_phone(pool: PgPool) {
         let db = Db::from_pool(pool).await.unwrap();
+        let phone = "+30123456789";
 
-        // Should be able to create multiple verifications for same phone with different prelude_ids
-        db.create_sms("+30123456789", "prelude_id_1").await.unwrap();
-        let result = db.create_sms("+30123456789", "prelude_id_2").await;
-        assert!(result.is_ok());
-    }
-
-    #[sqlx::test]
-    async fn test_full_flow(pool: PgPool) {
-        let db = Db::from_pool(pool).await.unwrap();
-
-        // Try to verify without creating
+        // Try to verify without creating first
         let result = db
             .verify_sms("nonexistent_prelude_id", "test_signup_code")
             .await;
         assert!(matches!(result, Err(DbError::NotFound(_))));
 
-        // Create verification
-        db.create_sms("+30123456789", "prelude_id_xyz")
+        // Create first verification
+        db.create_sms(phone, "prelude_id_1").await.unwrap();
+
+        // Try to create second verification before first is verified - should be ignored
+        db.create_sms(phone, "prelude_id_2").await.unwrap();
+
+        // Should only have one record (second was not created)
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
+                .bind(phone)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(count.0, 1, "Should only have 1 active session");
+
+        // Verify the record is the first one
+        let prelude_id: (String,) =
+            sqlx::query_as("SELECT prelude_id FROM sms_verifications WHERE phone_number = $1")
+                .bind(phone)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            prelude_id.0, "prelude_id_1",
+            "Should keep the first prelude_id"
+        );
+
+        // Verify the first session
+        db.verify_sms("prelude_id_1", "signup_code_1")
             .await
             .unwrap();
 
-        // Verify
-        db.verify_sms("prelude_id_xyz", "signup_code_123")
-            .await
-            .unwrap();
-
-        // Verify again should fail
-        let result = db.verify_sms("prelude_id_xyz", "signup_code_123").await;
+        // Try to verify again - should fail
+        let result = db.verify_sms("prelude_id_1", "signup_code_1").await;
         assert!(matches!(result, Err(DbError::AlreadyVerified)));
+
+        // Should be able to create a new verification after the first is verified
+        db.create_sms(phone, "prelude_id_3").await.unwrap();
+
+        // Should now have 2 records total
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
+                .bind(phone)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(count.0, 2, "Should have 2 records after verification");
+    }
+
+    #[sqlx::test]
+    async fn test_count_verified_sessions_mixed(pool: PgPool) {
+        let db = Db::from_pool(pool).await.unwrap();
+        let phone = "+30666666666";
+
+        let count = db.count_verified_sessions(phone).await.unwrap();
+        assert_eq!(count, 0);
+
+        db.create_sms(phone, "prelude_1").await.unwrap();
+        db.verify_sms("prelude_1", "code_1").await.unwrap();
+
+        db.create_sms(phone, "prelude_2").await.unwrap();
+        db.verify_sms("prelude_2", "code_2").await.unwrap();
+
+        db.create_sms(phone, "prelude_3").await.unwrap();
+        // Don't verify prelude_3
+
+        let count = db.count_verified_sessions(phone).await.unwrap();
+        assert_eq!(count, 2, "Should only count verified sessions");
     }
 }
