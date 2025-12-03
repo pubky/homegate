@@ -1,4 +1,4 @@
-use crate::persistence::config::EnvConfig;
+use crate::EnvConfig;
 use async_trait::async_trait;
 use thiserror::Error;
 

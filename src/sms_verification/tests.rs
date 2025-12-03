@@ -13,7 +13,7 @@ mod tests {
     ) -> SmsVerificationService<MockSmsVerificationProviderApi, MockHomeserverAdminApi> {
         let mock_api = MockSmsVerificationProviderApi::new();
         let mock_signup_token_provider = MockHomeserverAdminApi::new();
-        SmsVerificationService::new(mock_api, db, mock_signup_token_provider)
+        SmsVerificationService::new(db, mock_api, mock_signup_token_provider)
     }
 
     #[sqlx::test]

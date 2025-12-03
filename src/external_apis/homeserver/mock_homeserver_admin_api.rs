@@ -1,4 +1,3 @@
-#[cfg(test)]
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -9,7 +8,7 @@ use crate::external_apis::homeserver::homeserver_admin_api::{
 /// Mock signup token provider for testing
 ///
 /// Always returns a new UUID as the signup token
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MockHomeserverAdminApi;
 
 impl MockHomeserverAdminApi {

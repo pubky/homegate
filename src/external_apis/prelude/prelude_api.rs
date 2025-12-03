@@ -1,3 +1,4 @@
+use crate::EnvConfig;
 use crate::sms_verification::SmsVerificationError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -50,7 +51,7 @@ pub struct PreludeCheckCodeResponse {
 }
 
 impl PreludeAPI {
-    pub fn from_config(config: &crate::persistence::config::EnvConfig) -> Self {
+    pub fn from_config(config: &EnvConfig) -> Self {
         Self {
             http_client: reqwest::Client::new(),
             api_key: config.prelude_api_key.clone(),

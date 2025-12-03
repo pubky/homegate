@@ -17,7 +17,7 @@ pub struct EnvConfig {
 }
 
 fn default_prelude_api_url() -> String {
-    "https://api.prelude.so".to_string()
+    "https://api.prelude.dev".to_string()
 }
 
 impl EnvConfig {

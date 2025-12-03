@@ -79,7 +79,7 @@ pub struct SmsVerificationService<T: SmsVerificationProviderApi, S: HomeserverAd
 }
 
 impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationService<T, S> {
-    pub fn new(prelude_api: T, db: Db, homeserver_admin_api: S) -> Self {
+    pub fn new(db: Db, prelude_api: T, homeserver_admin_api: S) -> Self {
         Self {
             db,
             prelude_api,

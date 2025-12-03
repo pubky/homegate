@@ -1,8 +1,5 @@
 use anyhow::Context;
-use homegate::{
-    AppState, HomeserverAdminApi, HttpServer, MockSmsVerificationProviderApi,
-    SmsVerificationService,
-};
+use homegate::{AppState, EnvConfig, HttpServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -15,22 +12,15 @@ async fn main() -> anyhow::Result<()> {
         tracing::debug!("Failed to load .env file: {}", e);
     };
 
-    let config = homegate::EnvConfig::load().context("Failed to load config")?;
+    let config = EnvConfig::load().context("Failed to load config")?;
 
-    let db = homegate::Db::connect(&config.database_url)
+    let state = AppState::create_mock_state(&config)
         .await
-        .context("Failed to connect to database and run migrations")?;
+        .context("Failed to create mock app state")?;
 
-    // Initialize SMS verification service with mock Prelude API and real Homeserver Admin API
-    let mock_prelude_api = MockSmsVerificationProviderApi::new();
-    let homeserver_admin_api = HomeserverAdminApi::from_config(&config);
-    let sms_verification_service =
-        SmsVerificationService::new(mock_prelude_api, db.clone(), homeserver_admin_api);
-
-    let state = AppState {
-        db,
-        sms_verification_service,
-    };
+    // let state = AppState::from_config(&config)
+    //     .await
+    //     .context("Failed to create app state")?;
 
     let http_server = HttpServer::start(config.http_listen_socket, state).await?;
 
