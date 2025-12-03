@@ -1,6 +1,12 @@
 mod error;
 
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{
+    Json, Router,
+    extract::{ConnectInfo, State},
+    http::HeaderMap,
+    routing::post,
+};
+use std::net::SocketAddr;
 
 use crate::{
     external_apis::{HomeserverAdminApiTrait, SmsVerificationProviderApi},
@@ -10,6 +16,29 @@ use crate::{
         VerifyCodeResponse,
     },
 };
+
+/// Extract client IP address from request, checking proxy headers first
+fn extract_client_ip(addr: SocketAddr, headers: &HeaderMap) -> String {
+    // Check X-Forwarded-For header first (standard proxy header)
+    if let Some(forwarded) = headers.get("x-forwarded-for")
+        && let Ok(value) = forwarded.to_str()
+    {
+        // Take first IP in comma-separated list (original client)
+        if let Some(ip) = value.split(',').next() {
+            return ip.trim().to_string();
+        }
+    }
+
+    // Check X-Real-IP header (alternative proxy header)
+    if let Some(real_ip) = headers.get("x-real-ip")
+        && let Ok(value) = real_ip.to_str()
+    {
+        return value.trim().to_string();
+    }
+
+    // Fallback to direct TCP connection IP
+    addr.ip().to_string()
+}
 
 /// Mount SMS verification routes
 pub fn routes<
@@ -28,10 +57,16 @@ async fn sms_send_code_handler<
     T: SmsVerificationProviderApi + Clone + 'static,
     S: HomeserverAdminApiTrait + Clone + 'static,
 >(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<AppState<T, S>>,
     Json(request): Json<SendCodeRequest>,
 ) -> Result<Json<SendCodeResponse>, SmsVerificationError> {
-    let response = state.sms_verification_service.send_code(request).await?;
+    let ip_address = extract_client_ip(addr, &headers);
+    let response = state
+        .sms_verification_service
+        .send_code(request, ip_address)
+        .await?;
     Ok(Json(response))
 }
 

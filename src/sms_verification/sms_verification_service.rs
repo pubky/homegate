@@ -28,8 +28,6 @@ impl SendCodeStatus {
 #[derive(Debug, Deserialize)]
 pub struct SendCodeRequest {
     pub phone_number: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ip_address: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -123,6 +121,7 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
     pub async fn send_code(
         &self,
         request: SendCodeRequest,
+        ip_address: String,
     ) -> Result<SendCodeResponse, SmsVerificationError> {
         Self::validate_phone_number(&request.phone_number)?;
 
@@ -130,10 +129,9 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
         self.check_verification_limit(&request.phone_number).await?;
 
         // Always call Prelude API to validate/create verification session
-        let ip_ref = request.ip_address.as_deref();
         let prelude_response = self
             .prelude_api
-            .create_verification(&request.phone_number, ip_ref)
+            .create_verification(&request.phone_number, Some(&ip_address))
             .await?;
 
         if prelude_response.status == "retry" {
