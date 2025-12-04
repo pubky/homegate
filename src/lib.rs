@@ -5,6 +5,9 @@ mod http_server;
 mod persistence;
 mod sms_verification;
 
+#[cfg(test)]
+mod e2e;
+
 pub use app_state::AppState;
 pub use config::EnvConfig;
 pub use external_apis::{

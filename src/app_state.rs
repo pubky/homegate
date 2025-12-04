@@ -41,8 +41,15 @@ impl
     >
 {
     /// Creates a mock AppState for testing with mock SMS verification provider and mock homeserver admin API
-    pub async fn create_mock_state(config: &EnvConfig) -> Result<Self, DbError> {
-        let db = Db::connect(&config.database_url).await?;
+    pub async fn create_mock_state(
+        config: &EnvConfig,
+        pool: Option<sqlx::PgPool>,
+    ) -> Result<Self, DbError> {
+        let db = match pool {
+            Some(p) => Db::from_pool(p).await?,
+            None => Db::connect(&config.database_url).await?,
+        };
+
         let mock_prelude_api = crate::MockSmsVerificationProviderApi::new();
         let mock_homeserver_admin_api =
             crate::external_apis::homeserver::MockHomeserverAdminApi::new();
