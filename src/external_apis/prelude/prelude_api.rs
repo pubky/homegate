@@ -2,6 +2,7 @@ use crate::EnvConfig;
 use crate::sms_verification::SmsVerificationError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use url::Url;
 
 /// Caller of Prelude's v2 API. Ref: https://docs.prelude.so/verify/v2/api-reference/
@@ -124,7 +125,7 @@ pub trait SmsVerificationProviderApi: Send + Sync {
     async fn create_verification(
         &self,
         phone_number: &str,
-        ip_address: Option<&str>,
+        ip_address: Option<IpAddr>,
     ) -> Result<PreludeVerificationResponse, SmsVerificationError>;
 
     /// Checks a verification code for the given phone number
@@ -141,7 +142,7 @@ impl SmsVerificationProviderApi for PreludeAPI {
     async fn create_verification(
         &self,
         phone_number: &str,
-        ip_address: Option<&str>,
+        ip_address: Option<IpAddr>,
     ) -> Result<PreludeVerificationResponse, SmsVerificationError> {
         let request_body = VerificationRequest {
             target: Target {

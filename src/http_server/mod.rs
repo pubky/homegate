@@ -38,7 +38,7 @@ impl HttpServer {
         })
     }
 
-    pub(crate) fn create_router<T, S>(state: AppState<T, S>) -> Router
+    pub fn create_router<T, S>(state: AppState<T, S>) -> Router
     where
         T: SmsVerificationProviderApi + Clone + 'static,
         S: HomeserverAdminApiTrait + Clone + 'static,

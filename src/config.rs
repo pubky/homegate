@@ -13,7 +13,7 @@ pub struct EnvConfig {
     pub prelude_api_key: String,
     #[serde(default = "default_prelude_api_url")]
     pub prelude_api_url: Url,
-    pub homeserver_api_url: Url,
+    pub homeserver_admin_api_url: Url,
     pub homeserver_admin_password: String,
     pub homeserver_pubky: String,
     #[serde(default = "default_max_verified_sessions")]
@@ -75,7 +75,10 @@ mod tests {
             "postgres://localhost:5432/pubky_homegate"
         );
         assert_eq!(config.prelude_api_key, "test-prelude-api-key");
-        assert_eq!(config.homeserver_api_url.as_str(), "http://localhost:6288/");
+        assert_eq!(
+            config.homeserver_admin_api_url.as_str(),
+            "http://localhost:6288/"
+        );
         assert_eq!(config.homeserver_admin_password, "test-admin-password");
     }
 }

@@ -6,6 +6,7 @@ mod tests {
     use crate::persistence::db::Db;
     use crate::sms_verification::sms_verification_service::SmsVerificationService;
     use sqlx::PgPool;
+    use std::net::IpAddr;
 
     fn create_mock_service(
         db: Db,
@@ -31,7 +32,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await
             .expect("verify_init should succeed");
@@ -149,7 +150,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone1.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await
             .expect("First send_code should succeed");
@@ -170,7 +171,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone1.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await
             .expect("Second send_code should succeed");
@@ -193,7 +194,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone2.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await
             .expect("send_code should succeed");
@@ -212,7 +213,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone2.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await
             .expect("send_code after verification should succeed");
@@ -243,7 +244,7 @@ mod tests {
                     crate::sms_verification::SendCodeRequest {
                         phone_number: phone.to_string(),
                     },
-                    "127.0.0.1".to_string(),
+                    "127.0.0.1".parse::<IpAddr>().unwrap(),
                 )
                 .await
                 .expect(&format!("send_code {} should succeed", i));
@@ -262,7 +263,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await;
 
@@ -286,7 +287,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: "invalid-phone".to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await;
         assert!(
@@ -319,7 +320,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone_wrong_code.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await
             .expect("send_code should succeed");
@@ -357,7 +358,7 @@ mod tests {
                     crate::sms_verification::SendCodeRequest {
                         phone_number: phone.to_string(),
                     },
-                    "127.0.0.1".to_string(),
+                    "127.0.0.1".parse::<IpAddr>().unwrap(),
                 )
                 .await
                 .expect(&format!("send_code {} should succeed", i));
@@ -374,7 +375,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await;
         assert!(result.is_ok(), "10th verification should succeed");
@@ -392,7 +393,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await;
         assert!(
@@ -419,7 +420,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await
             .expect("send_code should succeed");
@@ -482,7 +483,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await
             .expect("Should be able to create new session after failure");
@@ -522,7 +523,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone_send.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await
             .expect("send_code should succeed");
@@ -571,7 +572,7 @@ mod tests {
                 crate::sms_verification::SendCodeRequest {
                     phone_number: phone.to_string(),
                 },
-                "127.0.0.1".to_string(),
+                "127.0.0.1".parse::<IpAddr>().unwrap(),
             )
             .await
             .expect("send_code should succeed");

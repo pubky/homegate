@@ -6,6 +6,7 @@ use crate::persistence::db::Db;
 use crate::sms_verification::error::SmsVerificationError;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 
 #[derive(Debug, Deserialize)]
 pub struct SendCodeRequest {
@@ -91,7 +92,7 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
     pub async fn send_code(
         &self,
         request: SendCodeRequest,
-        ip_address: String,
+        ip_address: IpAddr,
     ) -> Result<SendCodeResponse, SmsVerificationError> {
         Self::validate_phone_number(&request.phone_number)?;
 
@@ -101,7 +102,7 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
         // Always call Prelude API to validate/create verification session
         let prelude_response = self
             .prelude_api
-            .create_verification(&request.phone_number, Some(&ip_address))
+            .create_verification(&request.phone_number, Some(ip_address))
             .await?;
 
         let status = PreludeSendCodeStatus::from_prelude_status(&prelude_response.status)?;

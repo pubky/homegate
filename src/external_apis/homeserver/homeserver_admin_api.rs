@@ -25,7 +25,7 @@ impl HomeserverAdminApi {
         Self {
             http_client: reqwest::Client::new(),
             admin_password: config.homeserver_admin_password.clone(),
-            base_url: config.homeserver_api_url.clone(),
+            base_url: config.homeserver_admin_api_url.clone(),
             homeserver_pubky: config.homeserver_pubky.clone(),
         }
     }

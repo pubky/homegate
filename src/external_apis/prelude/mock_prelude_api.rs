@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -36,7 +37,7 @@ impl SmsVerificationProviderApi for MockSmsVerificationProviderApi {
     async fn create_verification(
         &self,
         phone_number: &str,
-        _ip_address: Option<&str>,
+        _ip_address: Option<IpAddr>,
     ) -> Result<PreludeVerificationResponse, SmsVerificationError> {
         let mut verifications = self.verifications.lock().unwrap();
 
