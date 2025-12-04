@@ -5,6 +5,6 @@ pub use homeserver::{
     HomeserverAdminApi, HomeserverAdminApiError, HomeserverAdminApiTrait, MockHomeserverAdminApi,
 };
 pub use prelude::{
-    MockSmsVerificationProviderApi, PreludeAPI, PreludeCheckCodeResponse,
-    PreludeVerificationResponse, SmsVerificationProviderApi,
+    MockSmsVerificationProviderApi, PreludeAPI, PreludeCheckCodeResponse, PreludeSendCodeStatus,
+    PreludeVerificationResponse, PreludeVerifyCodeStatus, SmsVerificationProviderApi,
 };

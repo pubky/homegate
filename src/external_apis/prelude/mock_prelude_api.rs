@@ -8,10 +8,9 @@ use crate::external_apis::prelude::prelude_api::{
 };
 use crate::sms_verification::SmsVerificationError;
 
-/// Mock SMS verification provider API for testing
+/// Mock SMS verification provider API for testing which attempts to mimic Prelude's v2 api's behaviour.
 ///
 /// Always uses code "123456" for all verifications
-/// Stores state in-memory for verification lookups
 #[derive(Clone)]
 pub struct MockSmsVerificationProviderApi {
     // Maps phone_number -> (verification_id, code)

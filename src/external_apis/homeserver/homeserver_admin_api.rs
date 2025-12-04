@@ -1,6 +1,7 @@
 use crate::EnvConfig;
 use async_trait::async_trait;
 use thiserror::Error;
+use url::Url;
 
 #[derive(Error, Debug)]
 pub enum HomeserverAdminApiError {
@@ -15,7 +16,8 @@ pub enum HomeserverAdminApiError {
 pub struct HomeserverAdminApi {
     http_client: reqwest::Client,
     admin_password: String,
-    base_url: String,
+    base_url: Url,
+    homeserver_pubky: String,
 }
 
 impl HomeserverAdminApi {
@@ -24,6 +26,7 @@ impl HomeserverAdminApi {
             http_client: reqwest::Client::new(),
             admin_password: config.homeserver_admin_password.clone(),
             base_url: config.homeserver_api_url.clone(),
+            homeserver_pubky: config.homeserver_pubky.clone(),
         }
     }
 }
@@ -31,15 +34,20 @@ impl HomeserverAdminApi {
 #[async_trait]
 pub trait HomeserverAdminApiTrait: Send + Sync {
     async fn generate_signup_token(&self) -> Result<String, HomeserverAdminApiError>;
+    fn get_homeserver_pubky(&self) -> String;
 }
 
 #[async_trait]
 impl HomeserverAdminApiTrait for HomeserverAdminApi {
     /// Generates a signup token by calling the homeserver admin API
     async fn generate_signup_token(&self) -> Result<String, HomeserverAdminApiError> {
+        let url = self
+            .base_url
+            .join("generate_signup_token")
+            .expect("Failed to join URL path");
         let response = self
             .http_client
-            .get(format!("{}/generate_signup_token", self.base_url))
+            .get(url)
             .header("X-Admin-Password", &self.admin_password)
             .send()
             .await?;
@@ -58,5 +66,9 @@ impl HomeserverAdminApiTrait for HomeserverAdminApi {
 
         let token = response.text().await?;
         Ok(token)
+    }
+
+    fn get_homeserver_pubky(&self) -> String {
+        self.homeserver_pubky.clone()
     }
 }

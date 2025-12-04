@@ -20,34 +20,49 @@ impl IntoResponse for SmsVerificationError {
                 "too_many_verified_sessions",
                 self.to_string(),
             ),
-            SmsVerificationError::RequestFailed(_) => (
-                StatusCode::BAD_GATEWAY,
-                "external_service_error",
-                "Failed to communicate with SMS provider".to_string(),
-            ),
+            SmsVerificationError::RequestFailed(ref err) => {
+                tracing::error!(error = %err, "Failed to communicate with SMS provider");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    "external_service_error",
+                    "Failed to communicate with SMS provider".to_string(),
+                )
+            }
             SmsVerificationError::ApiError {
                 status,
                 ref message,
-            } => (
-                StatusCode::BAD_GATEWAY,
-                "external_service_error",
-                format!("SMS provider error ({}): {}", status, message),
-            ),
-            SmsVerificationError::InvalidResponse(ref msg) => (
-                StatusCode::BAD_GATEWAY,
-                "external_service_error",
-                format!("Invalid response from SMS provider: {}", msg),
-            ),
-            SmsVerificationError::DatabaseError(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "database_error",
-                "Database operation failed".to_string(),
-            ),
-            SmsVerificationError::HomeserverAdminError(_) => (
-                StatusCode::BAD_GATEWAY,
-                "homeserver_error",
-                "Failed to generate signup token".to_string(),
-            ),
+            } => {
+                tracing::error!(status = status, message = %message, "SMS provider API error");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    "external_service_error",
+                    format!("SMS provider error ({}): {}", status, message),
+                )
+            }
+            SmsVerificationError::InvalidResponse(ref msg) => {
+                tracing::error!(message = %msg, "Invalid response from SMS provider");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    "external_service_error",
+                    format!("Invalid response from SMS provider: {}", msg),
+                )
+            }
+            SmsVerificationError::DatabaseError(ref err) => {
+                tracing::error!(error = %err, "Database operation failed");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "database_error",
+                    "Database operation failed".to_string(),
+                )
+            }
+            SmsVerificationError::HomeserverAdminError(ref msg) => {
+                tracing::error!(message = %msg, "Homeserver admin API error");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    "homeserver_error",
+                    format!("Failed to generate signup token: {}", msg),
+                )
+            }
         };
 
         let body = Json(json!({

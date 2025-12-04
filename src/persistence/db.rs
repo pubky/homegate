@@ -31,6 +31,16 @@ pub enum VerificationStatus {
     Failed,
 }
 
+impl VerificationStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            VerificationStatus::Pending => "PENDING",
+            VerificationStatus::Verified => "VERIFIED",
+            VerificationStatus::Failed => "FAILED",
+        }
+    }
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 #[allow(dead_code)]
 pub struct SmsVerification {
@@ -94,7 +104,7 @@ impl Db {
             .expr(Expr::value(1))
             .from("sms_verifications")
             .and_where(Expr::col("phone_number").eq(phone_number))
-            .and_where(Expr::col("status").eq("PENDING"))
+            .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
         // Build INSERT statement with NOT EXISTS condition
@@ -124,7 +134,7 @@ impl Db {
             .expr(Expr::col("unique_id").count())
             .from("sms_verifications")
             .and_where(Expr::col("phone_number").eq(phone_number))
-            .and_where(Expr::col("status").eq("VERIFIED"))
+            .and_where(Expr::col("status").eq(VerificationStatus::Verified.as_str()))
             .to_owned();
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(&query, values)
@@ -143,7 +153,7 @@ impl Db {
             .expr(Expr::value(1))
             .from("sms_verifications")
             .and_where(Expr::col("phone_number").eq(phone_number))
-            .and_where(Expr::col("status").eq("PENDING"))
+            .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -165,10 +175,10 @@ impl Db {
             .values([
                 ("finalised_at", Expr::current_timestamp().into()),
                 ("signup_code", signup_code.as_bytes().to_vec().into()),
-                ("status", "VERIFIED".into()),
+                ("status", VerificationStatus::Verified.as_str().into()),
             ])
             .and_where(Expr::col("prelude_id").eq(prelude_id))
-            .and_where(Expr::col("status").eq("PENDING")) // Safety: only update if pending
+            .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str())) // Safety: only update if pending
             .to_owned();
 
         let (query, values) = update_statement.build_sqlx(PostgresQueryBuilder);
@@ -192,12 +202,12 @@ impl Db {
         let update_statement = Query::update()
             .table("sms_verifications")
             .values([
-                ("status", "FAILED".into()),
+                ("status", VerificationStatus::Failed.as_str().into()),
                 ("finalised_at", Expr::current_timestamp().into()),
                 ("failure_reason", failure_reason.into()),
             ])
             .and_where(Expr::col("prelude_id").eq(prelude_id))
-            .and_where(Expr::col("status").eq("PENDING")) // Safety: only update if pending
+            .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str())) // Safety: only update if pending
             .to_owned();
 
         let (query, values) = update_statement.build_sqlx(PostgresQueryBuilder);

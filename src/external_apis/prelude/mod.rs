@@ -3,5 +3,6 @@ mod prelude_api;
 
 pub use mock_prelude_api::MockSmsVerificationProviderApi;
 pub use prelude_api::{
-    PreludeAPI, PreludeCheckCodeResponse, PreludeVerificationResponse, SmsVerificationProviderApi,
+    PreludeAPI, PreludeCheckCodeResponse, PreludeSendCodeStatus, PreludeVerificationResponse,
+    PreludeVerifyCodeStatus, SmsVerificationProviderApi,
 };

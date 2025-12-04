@@ -2,12 +2,14 @@ use crate::EnvConfig;
 use crate::sms_verification::SmsVerificationError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
+/// Caller of Prelude's v2 API. Ref: https://docs.prelude.so/verify/v2/api-reference/
 #[derive(Clone, Debug)]
 pub struct PreludeAPI {
     http_client: reqwest::Client,
     api_key: String,
-    base_url: String,
+    base_url: Url,
 }
 
 #[derive(Serialize)]
@@ -48,6 +50,61 @@ pub struct PreludeCheckCodeResponse {
     pub status: String,
     pub metadata: Option<serde_json::Value>,
     pub request_id: Option<String>,
+}
+
+/// Status returned by Prelude's send verification API
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PreludeSendCodeStatus {
+    Success,
+    Retry,
+    Blocked,
+}
+
+impl PreludeSendCodeStatus {
+    pub fn from_prelude_status(status: &str) -> Result<Self, SmsVerificationError> {
+        match status {
+            "success" => Ok(Self::Success),
+            "retry" => Ok(Self::Retry),
+            "blocked" => Ok(Self::Blocked),
+            _ => Err(SmsVerificationError::InvalidResponse(format!(
+                "Unknown send code status from Prelude: {}",
+                status
+            ))),
+        }
+    }
+}
+
+/// Status returned by Prelude's verify code API
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PreludeVerifyCodeStatus {
+    Success,
+    Failure,
+    ExpiredOrNotFound,
+}
+
+impl PreludeVerifyCodeStatus {
+    pub fn from_prelude_status(status: &str) -> Result<Self, SmsVerificationError> {
+        match status {
+            "success" => Ok(Self::Success),
+            "failure" => Ok(Self::Failure),
+            "expired_or_not_found" => Ok(Self::ExpiredOrNotFound),
+            _ => Err(SmsVerificationError::InvalidResponse(format!(
+                "Unknown verify code status from Prelude: {}",
+                status
+            ))),
+        }
+    }
+
+    /// Converts the status back to its Prelude API string representation
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::ExpiredOrNotFound => "expired_or_not_found",
+        }
+    }
 }
 
 impl PreludeAPI {
@@ -96,10 +153,13 @@ impl SmsVerificationProviderApi for PreludeAPI {
             }),
         };
 
-        let url = format!("{}/v2/verification", self.base_url);
+        let url = self
+            .base_url
+            .join("v2/verification")
+            .expect("Failed to join URL path");
         let response = self
             .http_client
-            .post(&url)
+            .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&request_body)
@@ -142,10 +202,13 @@ impl SmsVerificationProviderApi for PreludeAPI {
             code: code.to_string(),
         };
 
-        let url = format!("{}/v2/verification/check", self.base_url);
+        let url = self
+            .base_url
+            .join("v2/verification/check")
+            .expect("Failed to join URL path");
         let response = self
             .http_client
-            .post(&url)
+            .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&request_body)

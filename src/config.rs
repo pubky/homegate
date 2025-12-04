@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::persistence::sql::connection_string::ConnectionString;
+use url::Url;
 
 /// The environment configuration.
 /// This is the configuration that is loaded from the environment variables.
@@ -11,15 +12,16 @@ pub struct EnvConfig {
     pub http_listen_socket: SocketAddr,
     pub prelude_api_key: String,
     #[serde(default = "default_prelude_api_url")]
-    pub prelude_api_url: String,
-    pub homeserver_api_url: String,
+    pub prelude_api_url: Url,
+    pub homeserver_api_url: Url,
     pub homeserver_admin_password: String,
+    pub homeserver_pubky: String,
     #[serde(default = "default_max_verified_sessions")]
     pub max_verified_sessions: u32,
 }
 
-fn default_prelude_api_url() -> String {
-    "https://api.prelude.dev".to_string()
+fn default_prelude_api_url() -> Url {
+    Url::parse("https://api.prelude.dev").expect("Default Prelude API URL is valid")
 }
 
 fn default_max_verified_sessions() -> u32 {
@@ -61,6 +63,10 @@ mod tests {
                 String::from("HOMESERVER_ADMIN_PASSWORD"),
                 String::from("test-admin-password"),
             ),
+            (
+                String::from("HOMESERVER_PUBKY"),
+                String::from("test-homeserver-pubky"),
+            ),
         ])
         .expect("Failed to load config");
 
@@ -69,7 +75,7 @@ mod tests {
             "postgres://localhost:5432/pubky_homegate"
         );
         assert_eq!(config.prelude_api_key, "test-prelude-api-key");
-        assert_eq!(config.homeserver_api_url, "http://localhost:6288");
+        assert_eq!(config.homeserver_api_url.as_str(), "http://localhost:6288/");
         assert_eq!(config.homeserver_admin_password, "test-admin-password");
     }
 }

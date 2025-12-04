@@ -1,29 +1,11 @@
-use crate::external_apis::{HomeserverAdminApiTrait, SmsVerificationProviderApi};
+use crate::external_apis::{
+    HomeserverAdminApiTrait, PreludeSendCodeStatus, PreludeVerifyCodeStatus,
+    SmsVerificationProviderApi,
+};
 use crate::persistence::db::Db;
 use crate::sms_verification::error::SmsVerificationError;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum SendCodeStatus {
-    Success,
-    Retry,
-    Blocked,
-}
-impl SendCodeStatus {
-    pub fn from_prelude_status(status: &str) -> Result<Self, SmsVerificationError> {
-        match status {
-            "success" => Ok(Self::Success),
-            "retry" => Ok(Self::Retry),
-            "blocked" => Ok(Self::Blocked),
-            _ => Err(SmsVerificationError::InvalidResponse(format!(
-                "Unknown send code status from Prelude: {}",
-                status
-            ))),
-        }
-    }
-}
 
 #[derive(Debug, Deserialize)]
 pub struct SendCodeRequest {
@@ -32,30 +14,10 @@ pub struct SendCodeRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SendCodeResponse {
-    pub status: SendCodeStatus,
+    // Return the Prelude Status directly back to caller
+    pub status: PreludeSendCodeStatus,
+    // There are a number of Prelude `reason` values, most of which are not blockers. Return them directly for now.
     pub reason: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum VerifyCodeStatus {
-    Success,
-    Failure,
-    ExpiredOrNotFound,
-}
-
-impl VerifyCodeStatus {
-    pub fn from_prelude_status(status: &str) -> Result<Self, SmsVerificationError> {
-        match status {
-            "success" => Ok(Self::Success),
-            "failure" => Ok(Self::Failure),
-            "expired_or_not_found" => Ok(Self::ExpiredOrNotFound),
-            _ => Err(SmsVerificationError::InvalidResponse(format!(
-                "Unknown verify code status from Prelude: {}",
-                status
-            ))),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,7 +28,8 @@ pub struct VerifyCodeRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VerifyCodeResponse {
-    pub status: VerifyCodeStatus,
+    // Return the Prelude Status directly back to caller
+    pub status: PreludeVerifyCodeStatus,
     pub signup_code: Option<String>,
     pub homeserver_pubky: Option<String>,
 }
@@ -141,7 +104,8 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
             .create_verification(&request.phone_number, Some(&ip_address))
             .await?;
 
-        if prelude_response.status == "retry" {
+        let status = PreludeSendCodeStatus::from_prelude_status(&prelude_response.status)?;
+        if status == PreludeSendCodeStatus::Retry {
             tracing::info!(
                 phone_number = %request.phone_number,
                 prelude_id = %prelude_response.id,
@@ -155,7 +119,7 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
             .await?;
 
         Ok(SendCodeResponse {
-            status: SendCodeStatus::from_prelude_status(&prelude_response.status)?,
+            status,
             reason: prelude_response.reason,
         })
     }
@@ -167,7 +131,7 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
     ) -> Result<VerifyCodeResponse, SmsVerificationError> {
         Self::validate_phone_number(&request.phone_number)?;
 
-        // Check if there's an active verification session in our database
+        // Confirm first that there's an active verification session in our database
         self.db
             .check_pending_verification_exists(&request.phone_number)
             .await?;
@@ -177,22 +141,21 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
             .check_code(&request.phone_number, &request.code)
             .await?;
 
-        let status = VerifyCodeStatus::from_prelude_status(&prelude_response.status)?;
-
+        let status = PreludeVerifyCodeStatus::from_prelude_status(&prelude_response.status)?;
         match status {
-            VerifyCodeStatus::Success => {
+            PreludeVerifyCodeStatus::Success => {
                 let code = self.homeserver_admin_api.generate_signup_token().await?;
                 self.db.verify_sms(&prelude_response.id, &code).await?;
                 Ok(VerifyCodeResponse {
                     status,
                     signup_code: Some(code),
-                    homeserver_pubky: None, // TODO: Get from homeserver_admin_api
+                    homeserver_pubky: Some(self.homeserver_admin_api.get_homeserver_pubky()),
                 })
             }
-            VerifyCodeStatus::ExpiredOrNotFound => {
+            PreludeVerifyCodeStatus::ExpiredOrNotFound => {
                 // Mark session as permanently failed
                 self.db
-                    .mark_verification_failed(&prelude_response.id, "expired_or_not_found")
+                    .mark_verification_failed(&prelude_response.id, status.as_str())
                     .await?;
                 Ok(VerifyCodeResponse {
                     status,
@@ -200,7 +163,7 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
                     homeserver_pubky: None,
                 })
             }
-            VerifyCodeStatus::Failure => {
+            PreludeVerifyCodeStatus::Failure => {
                 // Wrong code - don't mark as failed, allow retries
                 Ok(VerifyCodeResponse {
                     status,

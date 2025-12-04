@@ -22,4 +22,8 @@ impl HomeserverAdminApiTrait for MockHomeserverAdminApi {
     async fn generate_signup_token(&self) -> Result<String, HomeserverAdminApiError> {
         Ok(Uuid::new_v4().to_string())
     }
+
+    fn get_homeserver_pubky(&self) -> String {
+        "mock-homeserver-pubky".to_string()
+    }
 }

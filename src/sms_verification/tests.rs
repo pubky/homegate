@@ -2,10 +2,9 @@
 mod tests {
     use crate::external_apis::homeserver::mock_homeserver_admin_api::MockHomeserverAdminApi;
     use crate::external_apis::prelude::mock_prelude_api::MockSmsVerificationProviderApi;
+    use crate::external_apis::{PreludeSendCodeStatus, PreludeVerifyCodeStatus};
     use crate::persistence::db::Db;
-    use crate::sms_verification::sms_verification_service::{
-        SendCodeStatus, SmsVerificationService, VerifyCodeStatus,
-    };
+    use crate::sms_verification::sms_verification_service::SmsVerificationService;
     use sqlx::PgPool;
 
     fn create_mock_service(
@@ -37,7 +36,7 @@ mod tests {
             .await
             .expect("verify_init should succeed");
 
-        assert_eq!(verify_response.status, SendCodeStatus::Success);
+        assert_eq!(verify_response.status, PreludeSendCodeStatus::Success);
 
         // Step 1.5: Check database after initiation - should have record but not verified yet
         let after_init: (
@@ -78,7 +77,7 @@ mod tests {
             .await
             .expect("verify_finalise should succeed");
 
-        assert_eq!(check_response.status, VerifyCodeStatus::Success);
+        assert_eq!(check_response.status, PreludeVerifyCodeStatus::Success);
 
         // Step 3: Query database to verify state updated correctly
         let after_verify: (
@@ -155,7 +154,7 @@ mod tests {
             .await
             .expect("First send_code should succeed");
 
-        assert_eq!(response1.status, SendCodeStatus::Success);
+        assert_eq!(response1.status, PreludeSendCodeStatus::Success);
 
         let count1: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
@@ -176,7 +175,7 @@ mod tests {
             .await
             .expect("Second send_code should succeed");
 
-        assert_eq!(response2.status, SendCodeStatus::Retry);
+        assert_eq!(response2.status, PreludeSendCodeStatus::Retry);
 
         let count2: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
@@ -335,7 +334,7 @@ mod tests {
 
         assert_eq!(
             check_response.status,
-            VerifyCodeStatus::Failure,
+            PreludeVerifyCodeStatus::Failure,
             "Wrong code should return Failure status"
         );
 
@@ -505,6 +504,56 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(pending_count.0, 1, "Should have 1 PENDING record");
+    }
+
+    #[sqlx::test]
+    async fn test_verify_code_with_wrong_phone_number(pool: PgPool) {
+        let db = Db::from_pool(pool.clone())
+            .await
+            .expect("Failed to create Db");
+        let service = create_mock_service(db.clone());
+
+        let phone_send = "+30666666666";
+        let phone_verify = "+30888888889";
+
+        // Step 1: Send verification code to phone_send
+        service
+            .send_code(
+                crate::sms_verification::SendCodeRequest {
+                    phone_number: phone_send.to_string(),
+                },
+                "127.0.0.1".to_string(),
+            )
+            .await
+            .expect("send_code should succeed");
+
+        // Step 2: Try to verify with a different phone number
+        let result = service
+            .verify_code(crate::sms_verification::VerifyCodeRequest {
+                phone_number: phone_verify.to_string(),
+                code: "123456".to_string(),
+            })
+            .await;
+
+        // Should fail with NoActiveVerification error since there's no pending verification for phone_verify
+        match result {
+            Err(crate::sms_verification::error::SmsVerificationError::DatabaseError(
+                crate::persistence::db::DbError::NoActiveVerification(_),
+            )) => {
+                // Test passes - correct error type
+            }
+            other => panic!(
+                "Expected DatabaseError(NoActiveVerification), got: {:?}",
+                other
+            ),
+        }
+
+        // Step 3: Verify that the original phone number still has a pending verification
+        let check_result = db.check_pending_verification_exists(phone_send).await;
+        assert!(
+            check_result.is_ok(),
+            "Original phone number should still have pending verification"
+        );
     }
 
     #[sqlx::test]
