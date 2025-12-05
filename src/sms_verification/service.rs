@@ -9,6 +9,7 @@ use crate::sms_verification::types::{
 };
 use regex::Regex;
 use std::net::IpAddr;
+use std::sync::OnceLock;
 
 #[derive(Clone, Debug)]
 pub struct SmsVerificationService<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> {
@@ -36,7 +37,11 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
     /// Validates that a phone number is in E.164 format
     fn validate_phone_number(phone_number: &str) -> Result<(), SmsVerificationError> {
         // E.164 format: starts with +, followed by 1-15 digits
-        let e164_regex = Regex::new(r"^\+[1-9]\d{1,14}$").unwrap();
+        static E164_REGEX: OnceLock<Regex> = OnceLock::new();
+        let e164_regex = E164_REGEX.get_or_init(|| {
+            Regex::new(r"^\+[1-9]\d{1,14}$")
+                .expect("E.164 regex pattern is valid and should compile")
+        });
 
         if e164_regex.is_match(phone_number) {
             Ok(())

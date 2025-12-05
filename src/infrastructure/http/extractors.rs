@@ -1,33 +1,56 @@
 use axum::http::HeaderMap;
 use std::net::{IpAddr, SocketAddr};
 
-/// Extract client IP address from request, checking proxy headers first
-pub fn extract_client_ip(addr: SocketAddr, headers: &HeaderMap) -> IpAddr {
-    // Check X-Forwarded-For header first (standard proxy header)
-    if let Some(forwarded) = headers.get("x-forwarded-for")
-        && let Ok(value) = forwarded.to_str()
-    {
-        // Take first IP in comma-separated list (original client)
-        if let Some(ip) = value.split(',').next() {
-            let trimmed = ip.trim();
-            if let Ok(parsed_ip) = trimmed.parse::<IpAddr>() {
-                return parsed_ip;
-            }
-        }
-    }
+// From https://github.com/benwis/tower-governor/blob/main/src/key_extractor.rs#L121
+const X_REAL_IP: &str = "x-real-ip";
+const X_FORWARDED_FOR: &str = "x-forwarded-for";
 
-    // Check X-Real-IP header (alternative proxy header)
-    if let Some(real_ip) = headers.get("x-real-ip")
-        && let Ok(value) = real_ip.to_str()
-    {
-        let trimmed = value.trim();
-        if let Ok(parsed_ip) = trimmed.parse::<IpAddr>() {
-            return parsed_ip;
-        }
-    }
+/// Tries to parse the `x-forwarded-for` header
+fn maybe_x_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
+    headers
+        .get(X_FORWARDED_FOR)
+        .and_then(|hv| hv.to_str().ok())
+        .and_then(|s| s.split(',').find_map(|s| s.trim().parse::<IpAddr>().ok()))
+}
 
-    // Fallback to direct TCP connection IP
-    addr.ip()
+/// Tries to parse the `x-real-ip` header
+fn maybe_x_real_ip(headers: &HeaderMap) -> Option<IpAddr> {
+    headers
+        .get(X_REAL_IP)
+        .and_then(|hv| hv.to_str().ok())
+        .and_then(|s| s.parse::<IpAddr>().ok())
+}
+
+/// Extract the client IP address from headers and socket address
+///
+/// This is a convenience function for use in Axum handlers where you have
+/// separate extractors for headers and connection info.
+///
+/// # Arguments
+/// * `headers` - The HTTP request headers
+/// * `addr` - The socket address from ConnectInfo
+/// * `behind_proxy` - Whether to trust proxy headers (X-Forwarded-For, X-Real-IP)
+///
+/// # Security
+/// - When `behind_proxy` is `false`: Only uses the direct socket IP
+/// - When `behind_proxy` is `true`: Trusts proxy headers, which can be spoofed by attackers if misconfigured
+///
+/// # Returns
+/// The client's IP address for rate limiting
+pub fn extract_ip(
+    headers: &HeaderMap,
+    addr: SocketAddr,
+    behind_proxy: bool,
+) -> IpAddr {
+    if behind_proxy {
+        // Trust proxy headers and direct socket IP
+        maybe_x_forwarded_for(headers)
+            .or_else(|| maybe_x_real_ip(headers))
+            .unwrap_or_else(|| addr.ip())
+    } else {
+        // Only trust the direct socket IP
+        addr.ip()
+    }
 }
 
 #[cfg(test)]
@@ -42,7 +65,7 @@ mod tests {
         headers.insert("x-forwarded-for", "203.0.113.1".parse().unwrap());
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
 
-        let result = extract_client_ip(addr, &headers);
+        let result = extract_ip(&headers, addr, true);
         assert_eq!(result, "203.0.113.1".parse::<IpAddr>().unwrap());
     }
 
@@ -56,7 +79,7 @@ mod tests {
         );
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
 
-        let result = extract_client_ip(addr, &headers);
+        let result = extract_ip(&headers, addr, true);
         // Should extract the first IP (original client)
         assert_eq!(result, "203.0.113.1".parse::<IpAddr>().unwrap());
     }
@@ -67,7 +90,7 @@ mod tests {
         headers.insert("x-real-ip", "203.0.113.2".parse().unwrap());
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
 
-        let result = extract_client_ip(addr, &headers);
+        let result = extract_ip(&headers, addr, true);
         assert_eq!(result, "203.0.113.2".parse::<IpAddr>().unwrap());
     }
 
@@ -78,7 +101,7 @@ mod tests {
         headers.insert("x-real-ip", "203.0.113.2".parse().unwrap());
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
 
-        let result = extract_client_ip(addr, &headers);
+        let result = extract_ip(&headers, addr, true);
         // X-Forwarded-For should take precedence
         assert_eq!(result, "203.0.113.1".parse::<IpAddr>().unwrap());
     }
@@ -88,7 +111,7 @@ mod tests {
         let headers = HeaderMap::new();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 8080);
 
-        let result = extract_client_ip(addr, &headers);
+        let result = extract_ip(&headers, addr, true);
         // Should fall back to socket address
         assert_eq!(result, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
     }
@@ -100,7 +123,7 @@ mod tests {
         headers.insert("x-forwarded-for", "".parse().unwrap());
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 8080);
 
-        let result = extract_client_ip(addr, &headers);
+        let result = extract_ip(&headers, addr, true);
         // Should fall back to socket address when header is empty
         assert_eq!(result, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
     }
@@ -115,8 +138,20 @@ mod tests {
         );
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
 
-        let result = extract_client_ip(addr, &headers);
+        let result = extract_ip(&headers, addr, true);
         // Should trim whitespace
         assert_eq!(result, "203.0.113.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_behind_proxy_false_ignores_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.1".parse().unwrap());
+        headers.insert("x-real-ip", "203.0.113.2".parse().unwrap());
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 8080);
+
+        let result = extract_ip(&headers, addr, false);
+        // Should only use socket address when behind_proxy is false
+        assert_eq!(result, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
     }
 }
