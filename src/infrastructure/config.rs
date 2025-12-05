@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use crate::persistence::sql::connection_string::ConnectionString;
+use crate::infrastructure::database::ConnectionString;
 use url::Url;
 
 /// The environment configuration.
@@ -56,7 +56,7 @@ mod tests {
                 String::from("test-prelude-api-key"),
             ),
             (
-                String::from("HOMESERVER_API_URL"),
+                String::from("HOMESERVER_ADMIN_API_URL"),
                 String::from("http://localhost:6288"),
             ),
             (

@@ -1,11 +1,64 @@
 use axum::{
-    Json,
-    http::StatusCode,
+    Json, Router,
+    extract::{ConnectInfo, State},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
+    routing::post,
 };
 use serde_json::json;
+use std::net::SocketAddr;
 
-use crate::sms_verification::SmsVerificationError;
+use crate::infrastructure::http::{AppState, extractors::extract_client_ip};
+use crate::shared::HomeserverAdminApiTrait;
+use crate::sms_verification::{
+    error::SmsVerificationError,
+    prelude_api::SmsVerificationProviderApi,
+    types::{SendCodeRequest, SendCodeResponse, VerifyCodeRequest, VerifyCodeResponse},
+};
+
+/// Mount SMS verification routes
+pub fn routes<T, S>() -> Router<AppState<T, S>>
+where
+    T: SmsVerificationProviderApi + Clone + 'static,
+    S: HomeserverAdminApiTrait + Clone + 'static,
+{
+    Router::new().nest(
+        "/sms_verification",
+        Router::new()
+            .route("/send_code", post(send_code_handler))
+            .route("/verify_code", post(verify_code_handler)),
+    )
+}
+
+async fn send_code_handler<T, S>(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    State(state): State<AppState<T, S>>,
+    Json(request): Json<SendCodeRequest>,
+) -> Result<Json<SendCodeResponse>, SmsVerificationError>
+where
+    T: SmsVerificationProviderApi + Clone + 'static,
+    S: HomeserverAdminApiTrait + Clone + 'static,
+{
+    let ip_address = extract_client_ip(addr, &headers);
+    let response = state
+        .sms_verification
+        .send_code(request, ip_address)
+        .await?;
+    Ok(Json(response))
+}
+
+async fn verify_code_handler<T, S>(
+    State(state): State<AppState<T, S>>,
+    Json(request): Json<VerifyCodeRequest>,
+) -> Result<Json<VerifyCodeResponse>, SmsVerificationError>
+where
+    T: SmsVerificationProviderApi + Clone + 'static,
+    S: HomeserverAdminApiTrait + Clone + 'static,
+{
+    let response = state.sms_verification.verify_code(request).await?;
+    Ok(Json(response))
+}
 
 impl IntoResponse for SmsVerificationError {
     fn into_response(self) -> Response {

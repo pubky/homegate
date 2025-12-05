@@ -4,10 +4,10 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-use crate::external_apis::prelude::prelude_api::{
+use crate::sms_verification::SmsVerificationError;
+use crate::sms_verification::prelude_api::client::{
     PreludeCheckCodeResponse, PreludeVerificationResponse, SmsVerificationProviderApi,
 };
-use crate::sms_verification::SmsVerificationError;
 
 /// Mock SMS verification provider API for testing which attempts to mimic Prelude's v2 api's behaviour.
 ///

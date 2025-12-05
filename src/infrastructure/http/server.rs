@@ -1,17 +1,14 @@
-mod error;
-mod ip_extraction;
-mod routes;
-
 use std::{
     net::{SocketAddr, TcpListener},
     time::Duration,
 };
 
 use crate::{
-    app_state::AppState,
-    external_apis::{HomeserverAdminApiTrait, SmsVerificationProviderApi},
+    infrastructure::http::AppState, shared::HomeserverAdminApiTrait,
+    sms_verification::prelude_api::SmsVerificationProviderApi,
 };
-use axum::{Router, routing::get};
+
+use axum::{Router, response::IntoResponse, routing::get};
 use axum_server::Handle;
 use futures_util::TryFutureExt;
 use tower_http::trace::TraceLayer;
@@ -30,7 +27,7 @@ impl HttpServer {
         T: SmsVerificationProviderApi + Clone + 'static,
         S: HomeserverAdminApiTrait + Clone + 'static,
     {
-        let router = Self::create_router(state);
+        let router = Self::create_router::<T, S>(state);
         let (http_handle, http_socket) = Self::start_http_server(listen_socket, router).await?;
         Ok(Self {
             http_handle,
@@ -43,7 +40,11 @@ impl HttpServer {
         T: SmsVerificationProviderApi + Clone + 'static,
         S: HomeserverAdminApiTrait + Clone + 'static,
     {
-        base().layer(TraceLayer::new_for_http()).with_state(state)
+        Router::new()
+            .route("/", get(root))
+            .nest("/v1", v1_routes::<T, S>())
+            .layer(TraceLayer::new_for_http())
+            .with_state(state)
     }
 
     /// Start the HTTP server
@@ -83,12 +84,14 @@ impl Drop for HttpServer {
     }
 }
 
-fn base<T, S>() -> Router<AppState<T, S>>
+pub async fn root() -> Result<impl IntoResponse, String> {
+    Ok("Homegate Service")
+}
+
+fn v1_routes<T, S>() -> Router<AppState<T, S>>
 where
     T: SmsVerificationProviderApi + Clone + 'static,
     S: HomeserverAdminApiTrait + Clone + 'static,
 {
-    Router::new()
-        .route("/", get(routes::root::handler))
-        .nest("/v1", routes::sms_verification::routes())
+    Router::new().merge(crate::sms_verification::routes())
 }

@@ -1,27 +1,30 @@
 #[cfg(test)]
 mod tests {
-    use crate::external_apis::homeserver::mock_homeserver_admin_api::MockHomeserverAdminApi;
-    use crate::external_apis::prelude::mock_prelude_api::MockSmsVerificationProviderApi;
-    use crate::external_apis::{PreludeSendCodeStatus, PreludeVerifyCodeStatus};
-    use crate::persistence::db::Db;
-    use crate::sms_verification::sms_verification_service::SmsVerificationService;
+    use crate::infrastructure::database::SqlDb;
+    use crate::shared::homeserver::mock_homeserver_admin_api::MockHomeserverAdminApi;
+    use crate::sms_verification::prelude_api::{
+        MockSmsVerificationProviderApi, PreludeSendCodeStatus, PreludeVerifyCodeStatus,
+    };
+    use crate::sms_verification::repository::{
+        SmsVerificationRepository, SmsVerificationRepositoryError,
+    };
+    use crate::sms_verification::service::SmsVerificationService;
     use sqlx::PgPool;
     use std::net::IpAddr;
 
     fn create_mock_service(
-        db: Db,
+        db: SqlDb,
     ) -> SmsVerificationService<MockSmsVerificationProviderApi, MockHomeserverAdminApi> {
         let mock_api = MockSmsVerificationProviderApi::new();
         let mock_signup_token_provider = MockHomeserverAdminApi::new();
-        SmsVerificationService::new(db, mock_api, mock_signup_token_provider, 10)
+        let repository = SmsVerificationRepository::new(db);
+        SmsVerificationService::new(repository, mock_api, mock_signup_token_provider, 10)
     }
 
     #[sqlx::test]
     async fn test_full_verification_flow_with_mock(pool: PgPool) {
         // Setup: Mock API + Real Database
-        let db = Db::from_pool(pool.clone())
-            .await
-            .expect("Failed to create Db");
+        let db = SqlDb::test(pool.clone()).await;
         let service = create_mock_service(db.clone());
 
         let phone = "+30123456789";
@@ -103,11 +106,11 @@ mod tests {
         // Check that finalised_at is recent (within last minute)
         let finalised_at = after_verify.1.unwrap();
         let now = chrono::Utc::now();
-        let diff = now - finalised_at;
+        let diff_secs = (now.timestamp() - finalised_at.timestamp()).abs();
         assert!(
-            diff.num_seconds() < 60,
+            diff_secs < 60,
             "finalised_at should be recent (was {} seconds ago)",
-            diff.num_seconds()
+            diff_secs
         );
 
         // Check signup code
@@ -136,9 +139,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_session_lifecycle(pool: PgPool) {
-        let db = Db::from_pool(pool.clone())
-            .await
-            .expect("Failed to create Db");
+        let db = SqlDb::test(pool.clone()).await;
         let service = create_mock_service(db.clone());
 
         // Test 1: Active session reuse
@@ -232,9 +233,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_max_verified_sessions_limit(pool: PgPool) {
-        let db = Db::from_pool(pool.clone())
-            .await
-            .expect("Failed to create Db");
+        let db = SqlDb::test(pool.clone()).await;
         let service = create_mock_service(db.clone());
         let phone = "+30111111112";
 
@@ -276,9 +275,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_input_validation_and_errors(pool: PgPool) {
-        let db = Db::from_pool(pool.clone())
-            .await
-            .expect("Failed to create Db");
+        let db = SqlDb::test(pool.clone()).await;
         let service = create_mock_service(db.clone());
 
         // Invalid phone - send_code
@@ -407,9 +404,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_expired_or_not_found_marks_failed(pool: PgPool) {
-        let db = Db::from_pool(pool.clone())
-            .await
-            .expect("Failed to create Db");
+        let db = SqlDb::test(pool.clone()).await;
         let service = create_mock_service(db.clone());
 
         let phone = "+30666666666";
@@ -442,7 +437,9 @@ mod tests {
         assert_eq!(status_before, "PENDING", "Should start as PENDING");
 
         // Step 3: Manually mark as failed (simulating what would happen if Prelude returned expired_or_not_found)
-        db.mark_verification_failed(&prelude_id, "expired_or_not_found")
+        let repository = SmsVerificationRepository::new(db.clone());
+        repository
+            .mark_failed(&prelude_id, "expired_or_not_found")
             .await
             .expect("Should mark as failed");
 
@@ -468,11 +465,11 @@ mod tests {
         assert!(finalised_at.is_some(), "finalised_at should be set");
 
         // Step 5: Verify that check_pending_verification_exists returns NoActiveVerification
-        let result = db.check_pending_verification_exists(phone).await;
+        let result = repository.check_pending_exists(phone).await;
         assert!(
             matches!(
                 result,
-                Err(crate::persistence::db::DbError::NoActiveVerification(_))
+                Err(SmsVerificationRepositoryError::NoActiveVerification(_))
             ),
             "Failed sessions should not be considered active"
         );
@@ -509,9 +506,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_verify_code_with_wrong_phone_number(pool: PgPool) {
-        let db = Db::from_pool(pool.clone())
-            .await
-            .expect("Failed to create Db");
+        let db = SqlDb::test(pool.clone()).await;
         let service = create_mock_service(db.clone());
 
         let phone_send = "+30666666666";
@@ -539,7 +534,7 @@ mod tests {
         // Should fail with NoActiveVerification error since there's no pending verification for phone_verify
         match result {
             Err(crate::sms_verification::error::SmsVerificationError::DatabaseError(
-                crate::persistence::db::DbError::NoActiveVerification(_),
+                SmsVerificationRepositoryError::NoActiveVerification(_),
             )) => {
                 // Test passes - correct error type
             }
@@ -550,7 +545,8 @@ mod tests {
         }
 
         // Step 3: Verify that the original phone number still has a pending verification
-        let check_result = db.check_pending_verification_exists(phone_send).await;
+        let repository = SmsVerificationRepository::new(db.clone());
+        let check_result = repository.check_pending_exists(phone_send).await;
         assert!(
             check_result.is_ok(),
             "Original phone number should still have pending verification"
@@ -559,9 +555,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_database_error_handling(pool: PgPool) {
-        let db = Db::from_pool(pool.clone())
-            .await
-            .expect("Failed to create Db");
+        let db = SqlDb::test(pool.clone()).await;
         let service = create_mock_service(db.clone());
 
         let phone = "+30777777777";
@@ -595,7 +589,7 @@ mod tests {
         // Should propagate NoActiveVerification error from database through service layer
         match result {
             Err(crate::sms_verification::error::SmsVerificationError::DatabaseError(
-                crate::persistence::db::DbError::NoActiveVerification(_),
+                SmsVerificationRepositoryError::NoActiveVerification(_),
             )) => {
                 // Test passes - database error was properly propagated
             }

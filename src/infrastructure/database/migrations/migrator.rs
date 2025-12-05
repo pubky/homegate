@@ -2,9 +2,12 @@ use sea_query::{ColumnDef, Expr, PostgresQueryBuilder, Query, SimpleExpr, Table}
 use sea_query_binder::SqlxBinder;
 use sqlx::{Row, Transaction};
 
-use crate::persistence::sql::{
-    migration::MigrationTrait,
-    migrations::m20251201_create_sms_verifications::M20251201CreateSmsVerifications, sql_db::SqlDb,
+use crate::infrastructure::database::{
+    connection::SqlDb,
+    migrations::{
+        m20251201_create_sms_verifications::M20251201CreateSmsVerifications,
+        migration::MigrationTrait,
+    },
 };
 
 /// The name of the migration table to keep track of which migrations have been applied.
@@ -29,7 +32,14 @@ impl<'a> Migrator<'a> {
     }
 
     /// Runs all migrations that are not yet applied.
-    pub async fn run(&self) -> anyhow::Result<()> {
+    /// This is a convenience method that creates a new migrator and runs migrations.
+    pub async fn run(db: &'a SqlDb) -> anyhow::Result<()> {
+        let migrator = Self::new(db);
+        migrator.run_all().await
+    }
+
+    /// Runs all migrations that are not yet applied.
+    pub async fn run_all(&self) -> anyhow::Result<()> {
         self.run_migrations(Self::migrations()).await
     }
 

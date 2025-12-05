@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::external_apis::homeserver::homeserver_admin_api::{
+use crate::shared::homeserver::homeserver_admin_api::{
     HomeserverAdminApiError, HomeserverAdminApiTrait,
 };
 

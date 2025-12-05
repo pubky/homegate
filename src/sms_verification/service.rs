@@ -1,43 +1,18 @@
-use crate::external_apis::{
-    HomeserverAdminApiTrait, PreludeSendCodeStatus, PreludeVerifyCodeStatus,
-    SmsVerificationProviderApi,
-};
-use crate::persistence::db::Db;
+use crate::shared::HomeserverAdminApiTrait;
 use crate::sms_verification::error::SmsVerificationError;
+use crate::sms_verification::prelude_api::{
+    PreludeSendCodeStatus, PreludeVerifyCodeStatus, SmsVerificationProviderApi,
+};
+use crate::sms_verification::repository::SmsVerificationRepository;
+use crate::sms_verification::types::{
+    SendCodeRequest, SendCodeResponse, VerifyCodeRequest, VerifyCodeResponse,
+};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-
-#[derive(Debug, Deserialize)]
-pub struct SendCodeRequest {
-    pub phone_number: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SendCodeResponse {
-    // Return the Prelude Status directly back to caller
-    pub status: PreludeSendCodeStatus,
-    // There are a number of Prelude `reason` values, most of which are not blockers. Return them directly for now.
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct VerifyCodeRequest {
-    pub phone_number: String,
-    pub code: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VerifyCodeResponse {
-    // Return the Prelude Status directly back to caller
-    pub status: PreludeVerifyCodeStatus,
-    pub signup_code: Option<String>,
-    pub homeserver_pubky: Option<String>,
-}
 
 #[derive(Clone, Debug)]
 pub struct SmsVerificationService<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> {
-    db: Db,
+    repository: SmsVerificationRepository,
     prelude_api: T,
     homeserver_admin_api: S,
     max_verified_sessions: u32,
@@ -45,13 +20,13 @@ pub struct SmsVerificationService<T: SmsVerificationProviderApi, S: HomeserverAd
 
 impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationService<T, S> {
     pub fn new(
-        db: Db,
+        repository: SmsVerificationRepository,
         prelude_api: T,
         homeserver_admin_api: S,
         max_verified_sessions: u32,
     ) -> Self {
         Self {
-            db,
+            repository,
             prelude_api,
             homeserver_admin_api,
             max_verified_sessions,
@@ -78,7 +53,7 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
         phone_number: &str,
     ) -> Result<(), SmsVerificationError> {
         let count = self
-            .db
+            .repository
             .count_verified_sessions(phone_number)
             .await
             .map_err(SmsVerificationError::DatabaseError)?;
@@ -96,10 +71,8 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
     ) -> Result<SendCodeResponse, SmsVerificationError> {
         Self::validate_phone_number(&request.phone_number)?;
 
-        // Check if phone number has reached the maximum verified sessions limit
         self.check_verification_limit(&request.phone_number).await?;
 
-        // Always call Prelude API to validate/create verification session
         let prelude_response = self
             .prelude_api
             .create_verification(&request.phone_number, Some(ip_address))
@@ -115,8 +88,8 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
         }
 
         // Create SMS record (will skip if active session already exists)
-        self.db
-            .create_sms(&request.phone_number, &prelude_response.id)
+        self.repository
+            .create_verification(&request.phone_number, &prelude_response.id)
             .await?;
 
         Ok(SendCodeResponse {
@@ -133,8 +106,8 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
         Self::validate_phone_number(&request.phone_number)?;
 
         // Confirm first that there's an active verification session in our database
-        self.db
-            .check_pending_verification_exists(&request.phone_number)
+        self.repository
+            .check_pending_exists(&request.phone_number)
             .await?;
 
         let prelude_response = self
@@ -146,7 +119,9 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
         match status {
             PreludeVerifyCodeStatus::Success => {
                 let code = self.homeserver_admin_api.generate_signup_token().await?;
-                self.db.verify_sms(&prelude_response.id, &code).await?;
+                self.repository
+                    .mark_verified(&prelude_response.id, &code)
+                    .await?;
                 Ok(VerifyCodeResponse {
                     status,
                     signup_code: Some(code),
@@ -155,8 +130,8 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
             }
             PreludeVerifyCodeStatus::ExpiredOrNotFound => {
                 // Mark session as permanently failed
-                self.db
-                    .mark_verification_failed(&prelude_response.id, status.as_str())
+                self.repository
+                    .mark_failed(&prelude_response.id, status.as_str())
                     .await?;
                 Ok(VerifyCodeResponse {
                     status,
@@ -179,7 +154,8 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::external_apis::{HomeserverAdminApi, PreludeAPI};
+    use crate::shared::HomeserverAdminApi;
+    use crate::sms_verification::prelude_api::PreludeAPI;
 
     #[test]
     fn test_validate_phone_number() {
