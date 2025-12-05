@@ -1,5 +1,5 @@
 use anyhow::Context;
-use homegate::{AppState, EnvConfig, HttpServer};
+use homegate::{EnvConfig, HttpServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -14,15 +14,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = EnvConfig::load().context("Failed to load config")?;
 
-    // let state = AppState::create_mock_state(&config)
-    //     .await
-    //     .context("Failed to create mock app state")?;
-
-    let state = AppState::from_config(&config)
-        .await
-        .context("Failed to create app state")?;
-
-    let http_server = HttpServer::start(config.http_listen_socket, state).await?;
+    let http_server = HttpServer::start(config).await?;
 
     tracing::info!("Homeserver HTTP listening on {}", http_server.url_string());
 

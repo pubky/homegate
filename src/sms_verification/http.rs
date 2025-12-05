@@ -7,26 +7,41 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::infrastructure::http::{AppState, RequestOrigin};
 use crate::shared::HomeserverAdminApiTrait;
 use crate::sms_verification::{
     error::SmsVerificationError,
     prelude_api::SmsVerificationProviderApi,
     types::{SendCodeRequest, SendCodeResponse, VerifyCodeRequest, VerifyCodeResponse},
 };
+use crate::{
+    EnvConfig, infrastructure::http::RequestOrigin, sms_verification::app_state::AppState,
+};
 
-/// Mount SMS verification routes
-pub fn routes<T, S>() -> Router<AppState<T, S>>
-where
-    T: SmsVerificationProviderApi + Clone + 'static,
-    S: HomeserverAdminApiTrait + Clone + 'static,
-{
-    Router::new().nest(
-        "/sms_verification",
-        Router::new()
-            .route("/send_code", post(send_code_handler))
-            .route("/verify_code", post(verify_code_handler)),
-    )
+pub async fn router(config: &EnvConfig) -> Result<Router, SmsVerificationError> {
+    // let state = AppState::create_mock_state(&config)
+    //     .await
+    //     .context("Failed to create mock app state")?;
+    let state = AppState::from_config(config).await?;
+
+    Ok(Router::new()
+        .route("/send_code", post(send_code_handler))
+        .route("/verify_code", post(verify_code_handler))
+        .with_state(state))
+}
+
+#[cfg(test)]
+pub async fn test_router(
+    config: &EnvConfig,
+    pool: Option<sqlx::PgPool>,
+) -> Result<Router, SmsVerificationError> {
+    use crate::sms_verification::app_state::AppState;
+
+    let state = AppState::create_mock_state(config, pool).await?;
+
+    Ok(Router::new()
+        .route("/send_code", post(send_code_handler))
+        .route("/verify_code", post(verify_code_handler))
+        .with_state(state))
 }
 
 async fn send_code_handler<T, S>(

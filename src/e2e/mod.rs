@@ -1,6 +1,6 @@
 mod http;
 
-use crate::{AppState, EnvConfig, HttpServer};
+use crate::EnvConfig;
 use axum_test::TestServer;
 use sqlx::PgPool;
 
@@ -9,12 +9,13 @@ pub async fn create_test_server(pool: PgPool) -> (TestServer, PgPool) {
     use std::net::SocketAddr;
 
     let config = create_test_config();
-    let state = AppState::create_mock_state(&config, Some(pool.clone()))
-        .await
-        .expect("Failed to create mock state");
+    let sms_verification_router =
+        crate::sms_verification::http::test_router(&config, Some(pool.clone()))
+            .await
+            .expect("Failed to create test router");
 
-    let router = HttpServer::create_router(state);
-    // Convert router to MakeService with ConnectInfo to provide SocketAddr
+    let router = crate::HttpServer::create_router(sms_verification_router);
+
     let app = router.into_make_service_with_connect_info::<SocketAddr>();
     let server = TestServer::new(app).expect("Failed to create test server");
 

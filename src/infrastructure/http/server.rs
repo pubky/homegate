@@ -3,10 +3,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    infrastructure::http::AppState, shared::HomeserverAdminApiTrait,
-    sms_verification::prelude_api::SmsVerificationProviderApi,
-};
+use crate::{EnvConfig, sms_verification::http::router};
 
 use axum::{Router, response::IntoResponse, routing::get};
 use axum_server::Handle;
@@ -19,32 +16,23 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    pub async fn start<T, S>(
-        listen_socket: std::net::SocketAddr,
-        state: AppState<T, S>,
-    ) -> anyhow::Result<Self>
-    where
-        T: SmsVerificationProviderApi + Clone + 'static,
-        S: HomeserverAdminApiTrait + Clone + 'static,
-    {
-        let router = Self::create_router::<T, S>(state);
-        let (http_handle, http_socket) = Self::start_http_server(listen_socket, router).await?;
+    pub fn create_router(sms_verification_router: Router) -> Router {
+        Router::new()
+            .route("/", get(root))
+            .nest("/v1/sms_verification", sms_verification_router)
+            .layer(TraceLayer::new_for_http())
+    }
+
+    pub async fn start(config: EnvConfig) -> anyhow::Result<Self> {
+        let sms_verification_router = router(&config).await?;
+        let router = Self::create_router(sms_verification_router);
+
+        let (http_handle, http_socket) =
+            Self::start_http_server(config.http_listen_socket, router).await?;
         Ok(Self {
             http_handle,
             http_socket,
         })
-    }
-
-    pub fn create_router<T, S>(state: AppState<T, S>) -> Router
-    where
-        T: SmsVerificationProviderApi + Clone + 'static,
-        S: HomeserverAdminApiTrait + Clone + 'static,
-    {
-        Router::new()
-            .route("/", get(root))
-            .nest("/v1", v1_routes::<T, S>())
-            .layer(TraceLayer::new_for_http())
-            .with_state(state)
     }
 
     /// Start the HTTP server
@@ -86,12 +74,4 @@ impl Drop for HttpServer {
 
 pub async fn root() -> Result<impl IntoResponse, String> {
     Ok("Homegate Service")
-}
-
-fn v1_routes<T, S>() -> Router<AppState<T, S>>
-where
-    T: SmsVerificationProviderApi + Clone + 'static,
-    S: HomeserverAdminApiTrait + Clone + 'static,
-{
-    Router::new().merge(crate::sms_verification::routes())
 }

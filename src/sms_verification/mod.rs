@@ -1,3 +1,4 @@
+mod app_state;
 mod error;
 pub mod http;
 pub mod prelude_api;
@@ -10,7 +11,6 @@ mod tests;
 
 // Public API
 pub use error::SmsVerificationError;
-pub use http::routes;
 pub use repository::SmsVerificationRepository;
 pub use service::SmsVerificationService;
 pub use types::{SendCodeRequest, SendCodeResponse, VerifyCodeRequest, VerifyCodeResponse};

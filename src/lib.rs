@@ -5,11 +5,7 @@ pub mod sms_verification;
 #[cfg(test)]
 mod e2e;
 
-pub use infrastructure::{
-    EnvConfig,
-    database::SqlDb,
-    http::{AppState, HttpServer},
-};
+pub use infrastructure::{EnvConfig, database::SqlDb, http::HttpServer};
 
 pub use shared::{HomeserverAdminApi, HomeserverAdminApiError, MockHomeserverAdminApi};
 

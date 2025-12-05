@@ -1,12 +1,10 @@
 use crate::{
-    infrastructure::{
-        config::EnvConfig,
-        database::{DbError, SqlDb},
-    },
+    SmsVerificationError,
+    infrastructure::{config::EnvConfig, database::SqlDb},
     shared::{HomeserverAdminApi, HomeserverAdminApiTrait},
     sms_verification::{
         prelude_api::{PreludeAPI, SmsVerificationProviderApi},
-        repository::SmsVerificationRepository,
+        repository::{SmsVerificationRepository, SmsVerificationRepositoryError},
         service::SmsVerificationService,
     },
 };
@@ -17,17 +15,16 @@ where
     T: SmsVerificationProviderApi + Clone + 'static,
     S: HomeserverAdminApiTrait + Clone + 'static,
 {
-    pub db: SqlDb,
     pub sms_verification: SmsVerificationService<T, S>,
 }
 
 impl AppState<PreludeAPI, HomeserverAdminApi> {
     /// Creates a production AppState from config
-    pub async fn from_config(config: &EnvConfig) -> Result<Self, DbError> {
+    pub async fn from_config(config: &EnvConfig) -> Result<Self, SmsVerificationError> {
         // Connect to database (migrations run automatically)
         let db = SqlDb::connect(&config.database_url)
             .await
-            .map_err(DbError::Database)?;
+            .map_err(SmsVerificationRepositoryError::Database)?;
 
         let prelude_api = PreludeAPI::from_config(config);
         let homeserver_admin_api = HomeserverAdminApi::from_config(config);
@@ -41,13 +38,11 @@ impl AppState<PreludeAPI, HomeserverAdminApi> {
             config.max_verified_sessions,
         );
 
-        Ok(Self {
-            db,
-            sms_verification,
-        })
+        Ok(Self { sms_verification })
     }
 }
 
+#[cfg(test)]
 impl
     AppState<
         crate::sms_verification::prelude_api::MockSmsVerificationProviderApi,
@@ -58,7 +53,7 @@ impl
     pub async fn create_mock_state(
         config: &EnvConfig,
         pool: Option<sqlx::PgPool>,
-    ) -> Result<Self, DbError> {
+    ) -> Result<Self, SmsVerificationRepositoryError> {
         let db = match pool {
             Some(p) => {
                 // For tests, use SqlDb::test() which handles migrations
@@ -68,7 +63,7 @@ impl
                 // Connect normally (migrations run automatically)
                 SqlDb::connect(&config.database_url)
                     .await
-                    .map_err(DbError::Database)?
+                    .map_err(SmsVerificationRepositoryError::Database)?
             }
         };
 
@@ -85,9 +80,6 @@ impl
             config.max_verified_sessions,
         );
 
-        Ok(Self {
-            db,
-            sms_verification,
-        })
+        Ok(Self { sms_verification })
     }
 }
