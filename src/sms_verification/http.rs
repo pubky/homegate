@@ -1,14 +1,13 @@
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, State},
-    http::{HeaderMap, StatusCode},
+    extract::State,
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
 };
 use serde_json::json;
-use std::net::SocketAddr;
 
-use crate::infrastructure::http::{AppState, extractors::extract_ip};
+use crate::infrastructure::http::{AppState, RequestOrigin};
 use crate::shared::HomeserverAdminApiTrait;
 use crate::sms_verification::{
     error::SmsVerificationError,
@@ -32,16 +31,13 @@ where
 
 async fn send_code_handler<T, S>(
     State(state): State<AppState<T, S>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    RequestOrigin(ip_address): RequestOrigin,
     Json(request): Json<SendCodeRequest>,
 ) -> Result<Json<SendCodeResponse>, SmsVerificationError>
 where
     T: SmsVerificationProviderApi + Clone + 'static,
     S: HomeserverAdminApiTrait + Clone + 'static,
 {
-    let ip_address = extract_ip(&headers, addr, true);
-
     let response = state
         .sms_verification
         .send_code(request, ip_address)
