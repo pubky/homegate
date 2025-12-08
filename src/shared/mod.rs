@@ -1,5 +1,3 @@
 pub mod homeserver;
 
-pub use homeserver::{
-    HomeserverAdminApi, HomeserverAdminApiError, HomeserverAdminApiTrait, MockHomeserverAdminApi,
-};
+pub use homeserver::{HomeserverAdminAPI, HomeserverAdminApiError};

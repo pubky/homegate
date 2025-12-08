@@ -176,7 +176,6 @@ impl SmsVerificationRepository {
         Ok(())
     }
 
-    /// Mark an SMS verification as failed
     pub async fn mark_failed(
         &self,
         prelude_id: &str,

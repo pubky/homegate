@@ -1,8 +1,5 @@
 mod client;
-pub mod mock_prelude_api;
 
 pub use client::{
-    PreludeAPI, PreludeCheckCodeResponse, PreludeSendCodeStatus, PreludeVerificationResponse,
-    PreludeVerifyCodeStatus, SmsVerificationProviderApi,
+    PreludeAPI, PreludeBlockedReason, PreludeCheckCodeResponse, PreludeCreateVerificationResponse,
 };
-pub use mock_prelude_api::MockSmsVerificationProviderApi;

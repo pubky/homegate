@@ -7,8 +7,8 @@ mod e2e;
 
 pub use infrastructure::{EnvConfig, database::SqlDb, http::HttpServer};
 
-pub use shared::{HomeserverAdminApi, HomeserverAdminApiError, MockHomeserverAdminApi};
+pub use shared::{HomeserverAdminAPI, HomeserverAdminApiError};
 
 pub use sms_verification::{
-    SendCodeResponse, SmsVerificationError, SmsVerificationService, VerifyCodeResponse,
+    CreateVerificationResponse, SendCodeResponse, SmsVerificationError, SmsVerificationService,
 };

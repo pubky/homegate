@@ -7,22 +7,18 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::shared::HomeserverAdminApiTrait;
 use crate::sms_verification::{
     error::SmsVerificationError,
-    prelude_api::SmsVerificationProviderApi,
-    types::{SendCodeRequest, SendCodeResponse, VerifyCodeRequest, VerifyCodeResponse},
+    types::{
+        CreateVerificationRequest, CreateVerificationResponse, SendCodeRequest, SendCodeResponse,
+    },
 };
 use crate::{
     EnvConfig, infrastructure::http::RequestOrigin, sms_verification::app_state::AppState,
 };
 
 pub async fn router(config: &EnvConfig) -> Result<Router, SmsVerificationError> {
-    // let state = AppState::create_mock_state(&config)
-    //     .await
-    //     .context("Failed to create mock app state")?;
     let state = AppState::from_config(config).await?;
-
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/verify_code", post(verify_code_handler))
@@ -30,13 +26,13 @@ pub async fn router(config: &EnvConfig) -> Result<Router, SmsVerificationError> 
 }
 
 #[cfg(test)]
-pub async fn test_router(
+pub async fn router_with_db(
     config: &EnvConfig,
-    pool: Option<sqlx::PgPool>,
+    db: crate::infrastructure::database::SqlDb,
 ) -> Result<Router, SmsVerificationError> {
     use crate::sms_verification::app_state::AppState;
 
-    let state = AppState::create_mock_state(config, pool).await?;
+    let state = AppState::from_config_with_db(config, db)?;
 
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
@@ -44,31 +40,23 @@ pub async fn test_router(
         .with_state(state))
 }
 
-async fn send_code_handler<T, S>(
-    State(state): State<AppState<T, S>>,
+async fn send_code_handler(
+    State(state): State<AppState>,
     RequestOrigin(ip_address): RequestOrigin,
-    Json(request): Json<SendCodeRequest>,
-) -> Result<Json<SendCodeResponse>, SmsVerificationError>
-where
-    T: SmsVerificationProviderApi + Clone + 'static,
-    S: HomeserverAdminApiTrait + Clone + 'static,
-{
+    Json(request): Json<CreateVerificationRequest>,
+) -> Result<Json<CreateVerificationResponse>, SmsVerificationError> {
     let response = state
         .sms_verification
-        .send_code(request, ip_address)
+        .create_verification(request, ip_address)
         .await?;
     Ok(Json(response))
 }
 
-async fn verify_code_handler<T, S>(
-    State(state): State<AppState<T, S>>,
-    Json(request): Json<VerifyCodeRequest>,
-) -> Result<Json<VerifyCodeResponse>, SmsVerificationError>
-where
-    T: SmsVerificationProviderApi + Clone + 'static,
-    S: HomeserverAdminApiTrait + Clone + 'static,
-{
-    let response = state.sms_verification.verify_code(request).await?;
+async fn verify_code_handler(
+    State(state): State<AppState>,
+    Json(request): Json<SendCodeRequest>,
+) -> Result<Json<SendCodeResponse>, SmsVerificationError> {
+    let response = state.sms_verification.send_code(request).await?;
     Ok(Json(response))
 }
 

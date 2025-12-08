@@ -1,6 +1,5 @@
 use crate::EnvConfig;
 use crate::sms_verification::SmsVerificationError;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use url::Url;
@@ -14,13 +13,6 @@ pub struct PreludeAPI {
 }
 
 #[derive(Serialize)]
-struct VerificationRequest {
-    target: Target,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    signals: Option<Signals>,
-}
-
-#[derive(Serialize)]
 struct Target {
     #[serde(rename = "type")]
     target_type: String,
@@ -31,81 +23,79 @@ struct Target {
 struct Signals {
     ip_address: String,
 }
+#[derive(Serialize)]
+struct PreludeCreateVerificationRequest {
+    target: Target,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signals: Option<Signals>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PreludeBlockedReason {
+    /// The signature of the SDK signals is expired. They should be sent within the hour following their collection.
+    ExpiredSignature,
+    /// The phone number is part of the configured block list.
+    InBlockList,
+    /// The phone number is not a valid line number (e.g. landline).
+    InvalidPhoneLine,
+    /// The phone number is not a valid phone number (e.g. unallocated range).
+    InvalidPhoneNumber,
+    /// The signature of the SDK signals is invalid.
+    InvalidSignature,
+    /// The phone number has made too many verification attempts.
+    RepeatedAttempts,
+    /// The verification attempt was deemed suspicious by the anti-fraud system.
+    Suspicious,
+    /// Prelude API returned Blocked status without a reason.
+    Unknown,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct PreludeVerificationResponse {
-    pub id: String,
-    pub status: String,
-    pub reason: Option<String>,
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum PreludeCreateVerificationResponse {
+    Success {
+        id: String,
+    },
+    Retry {
+        id: String,
+    },
+    Blocked {
+        id: String,
+        reason: PreludeBlockedReason,
+    },
 }
 
 #[derive(Serialize)]
-struct CheckCodeRequest {
+struct PreludeCheckCodeRequest {
     target: Target,
     code: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct PreludeCheckCodeResponse {
-    pub id: String,
-    pub status: String,
-    pub metadata: Option<serde_json::Value>,
-    pub request_id: Option<String>,
-}
-
-/// Status returned by Prelude's send verification API
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum PreludeSendCodeStatus {
-    Success,
-    Retry,
-    Blocked,
-}
-
-impl PreludeSendCodeStatus {
-    pub fn from_prelude_status(status: &str) -> Result<Self, SmsVerificationError> {
-        match status {
-            "success" => Ok(Self::Success),
-            "retry" => Ok(Self::Retry),
-            "blocked" => Ok(Self::Blocked),
-            _ => Err(SmsVerificationError::InvalidResponse(format!(
-                "Unknown send code status from Prelude: {}",
-                status
-            ))),
-        }
-    }
-}
-
-/// Status returned by Prelude's verify code API
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PreludeVerifyCodeStatus {
-    Success,
-    Failure,
-    ExpiredOrNotFound,
-}
-
-impl PreludeVerifyCodeStatus {
-    pub fn from_prelude_status(status: &str) -> Result<Self, SmsVerificationError> {
-        match status {
-            "success" => Ok(Self::Success),
-            "failure" => Ok(Self::Failure),
-            "expired_or_not_found" => Ok(Self::ExpiredOrNotFound),
-            _ => Err(SmsVerificationError::InvalidResponse(format!(
-                "Unknown verify code status from Prelude: {}",
-                status
-            ))),
-        }
-    }
-
-    /// Converts the status back to its Prelude API string representation
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Success => "success",
-            Self::Failure => "failure",
-            Self::ExpiredOrNotFound => "expired_or_not_found",
-        }
-    }
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PreludeCheckCodeResponse {
+    Success {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
+    Failure {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
+    ExpiredOrNotFound {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
 }
 
 impl PreludeAPI {
@@ -116,35 +106,14 @@ impl PreludeAPI {
             base_url: config.prelude_api_url.clone(),
         }
     }
-}
 
-/// Trait for SMS verification provider API implementations
-#[async_trait]
-pub trait SmsVerificationProviderApi: Send + Sync {
     /// Creates a verification request for the given phone number
-    async fn create_verification(
+    pub async fn create_verification(
         &self,
         phone_number: &str,
         ip_address: Option<IpAddr>,
-    ) -> Result<PreludeVerificationResponse, SmsVerificationError>;
-
-    /// Checks a verification code for the given phone number
-    async fn check_code(
-        &self,
-        phone_number: &str,
-        code: &str,
-    ) -> Result<PreludeCheckCodeResponse, SmsVerificationError>;
-}
-
-#[async_trait]
-impl SmsVerificationProviderApi for PreludeAPI {
-    /// Creates a verification request for the given phone number
-    async fn create_verification(
-        &self,
-        phone_number: &str,
-        ip_address: Option<IpAddr>,
-    ) -> Result<PreludeVerificationResponse, SmsVerificationError> {
-        let request_body = VerificationRequest {
+    ) -> Result<PreludeCreateVerificationResponse, SmsVerificationError> {
+        let request_body = PreludeCreateVerificationRequest {
             target: Target {
                 target_type: "phone_number".to_string(),
                 value: phone_number.to_string(),
@@ -180,7 +149,7 @@ impl SmsVerificationProviderApi for PreludeAPI {
         }
 
         let verification_response = response
-            .json::<PreludeVerificationResponse>()
+            .json::<PreludeCreateVerificationResponse>()
             .await
             .map_err(|e| {
                 SmsVerificationError::InvalidResponse(format!("Failed to parse response: {}", e))
@@ -190,12 +159,12 @@ impl SmsVerificationProviderApi for PreludeAPI {
     }
 
     /// Checks a verification code for the given phone number
-    async fn check_code(
+    pub async fn check_code(
         &self,
         phone_number: &str,
         code: &str,
     ) -> Result<PreludeCheckCodeResponse, SmsVerificationError> {
-        let request_body = CheckCodeRequest {
+        let request_body = PreludeCheckCodeRequest {
             target: Target {
                 target_type: "phone_number".to_string(),
                 value: phone_number.to_string(),

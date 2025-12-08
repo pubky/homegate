@@ -1,29 +1,29 @@
-use crate::shared::HomeserverAdminApiTrait;
+use crate::HomeserverAdminAPI;
 use crate::sms_verification::error::SmsVerificationError;
 use crate::sms_verification::prelude_api::{
-    PreludeSendCodeStatus, PreludeVerifyCodeStatus, SmsVerificationProviderApi,
+    PreludeAPI, PreludeCheckCodeResponse, PreludeCreateVerificationResponse,
 };
 use crate::sms_verification::repository::SmsVerificationRepository;
 use crate::sms_verification::types::{
-    SendCodeRequest, SendCodeResponse, VerifyCodeRequest, VerifyCodeResponse,
+    CreateVerificationRequest, CreateVerificationResponse, SendCodeRequest, SendCodeResponse,
 };
 use regex::Regex;
 use std::net::IpAddr;
 use std::sync::OnceLock;
 
 #[derive(Clone, Debug)]
-pub struct SmsVerificationService<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> {
+pub struct SmsVerificationService {
     repository: SmsVerificationRepository,
-    prelude_api: T,
-    homeserver_admin_api: S,
+    prelude_api: PreludeAPI,
+    homeserver_admin_api: HomeserverAdminAPI,
     max_verified_sessions: u32,
 }
 
-impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationService<T, S> {
+impl SmsVerificationService {
     pub fn new(
         repository: SmsVerificationRepository,
-        prelude_api: T,
-        homeserver_admin_api: S,
+        prelude_api: PreludeAPI,
+        homeserver_admin_api: HomeserverAdminAPI,
         max_verified_sessions: u32,
     ) -> Self {
         Self {
@@ -53,7 +53,7 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
     }
 
     /// Check if a phone number can create a new verification
-    async fn check_verification_limit(
+    pub async fn check_verification_limit(
         &self,
         phone_number: &str,
     ) -> Result<(), SmsVerificationError> {
@@ -69,11 +69,11 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
     }
 
     /// Initiates a phone number verification process
-    pub async fn send_code(
+    pub async fn create_verification(
         &self,
-        request: SendCodeRequest,
+        request: CreateVerificationRequest,
         ip_address: IpAddr,
-    ) -> Result<SendCodeResponse, SmsVerificationError> {
+    ) -> Result<CreateVerificationResponse, SmsVerificationError> {
         Self::validate_phone_number(&request.phone_number)?;
 
         self.check_verification_limit(&request.phone_number).await?;
@@ -83,31 +83,40 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
             .create_verification(&request.phone_number, Some(ip_address))
             .await?;
 
-        let status = PreludeSendCodeStatus::from_prelude_status(&prelude_response.status)?;
-        if status == PreludeSendCodeStatus::Retry {
-            tracing::info!(
-                phone_number = %request.phone_number,
-                prelude_id = %prelude_response.id,
-                "User retrying verification code"
-            );
-        }
+        let id = match &prelude_response {
+            PreludeCreateVerificationResponse::Success { id } => id,
+            PreludeCreateVerificationResponse::Retry { id } => {
+                tracing::info!(
+                    phone_number = %request.phone_number,
+                    prelude_id = %id,
+                    "User retrying verification code"
+                );
+                id
+            }
+            PreludeCreateVerificationResponse::Blocked { id, .. } => id,
+        };
 
         // Create SMS record (will skip if active session already exists)
         self.repository
-            .create_verification(&request.phone_number, &prelude_response.id)
+            .create_verification(&request.phone_number, id)
             .await?;
 
-        Ok(SendCodeResponse {
-            status,
-            reason: prelude_response.reason,
+        Ok(match prelude_response {
+            PreludeCreateVerificationResponse::Success { .. } => {
+                CreateVerificationResponse::Success
+            }
+            PreludeCreateVerificationResponse::Retry { .. } => CreateVerificationResponse::Retry,
+            PreludeCreateVerificationResponse::Blocked { reason, .. } => {
+                CreateVerificationResponse::Blocked { reason }
+            }
         })
     }
 
     /// Validates a verification code for a phone number
-    pub async fn verify_code(
+    pub async fn send_code(
         &self,
-        request: VerifyCodeRequest,
-    ) -> Result<VerifyCodeResponse, SmsVerificationError> {
+        request: SendCodeRequest,
+    ) -> Result<SendCodeResponse, SmsVerificationError> {
         Self::validate_phone_number(&request.phone_number)?;
 
         // Confirm first that there's an active verification session in our database
@@ -120,37 +129,24 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
             .check_code(&request.phone_number, &request.code)
             .await?;
 
-        let status = PreludeVerifyCodeStatus::from_prelude_status(&prelude_response.status)?;
-        match status {
-            PreludeVerifyCodeStatus::Success => {
+        match prelude_response {
+            PreludeCheckCodeResponse::Success { id, .. } => {
                 let code = self.homeserver_admin_api.generate_signup_token().await?;
-                self.repository
-                    .mark_verified(&prelude_response.id, &code)
-                    .await?;
-                Ok(VerifyCodeResponse {
-                    status,
-                    signup_code: Some(code),
-                    homeserver_pubky: Some(self.homeserver_admin_api.get_homeserver_pubky()),
+                self.repository.mark_verified(&id, &code).await?;
+                Ok(SendCodeResponse::Success {
+                    signup_code: code,
+                    homeserver_pubky: self.homeserver_admin_api.get_homeserver_pubky(),
                 })
             }
-            PreludeVerifyCodeStatus::ExpiredOrNotFound => {
-                // Mark session as permanently failed
+            PreludeCheckCodeResponse::ExpiredOrNotFound { id, .. } => {
                 self.repository
-                    .mark_failed(&prelude_response.id, status.as_str())
+                    .mark_failed(&id, "expired_or_not_found")
                     .await?;
-                Ok(VerifyCodeResponse {
-                    status,
-                    signup_code: None,
-                    homeserver_pubky: None,
-                })
+                Ok(SendCodeResponse::ExpiredOrNotFound)
             }
-            PreludeVerifyCodeStatus::Failure => {
+            PreludeCheckCodeResponse::Failure { .. } => {
                 // Wrong code - don't mark as failed, allow retries
-                Ok(VerifyCodeResponse {
-                    status,
-                    signup_code: None,
-                    homeserver_pubky: None,
-                })
+                Ok(SendCodeResponse::Failure)
             }
         }
     }
@@ -159,66 +155,23 @@ impl<T: SmsVerificationProviderApi, S: HomeserverAdminApiTrait> SmsVerificationS
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::HomeserverAdminApi;
-    use crate::sms_verification::prelude_api::PreludeAPI;
 
     #[test]
     fn test_validate_phone_number() {
-        assert!(
-            SmsVerificationService::<PreludeAPI, HomeserverAdminApi>::validate_phone_number(
-                "+30123456789"
-            )
-            .is_ok()
-        );
-        assert!(
-            SmsVerificationService::<PreludeAPI, HomeserverAdminApi>::validate_phone_number(
-                "+1234567890123"
-            )
-            .is_ok()
-        );
-        assert!(
-            SmsVerificationService::<PreludeAPI, HomeserverAdminApi>::validate_phone_number("+12")
-                .is_ok()
-        );
+        assert!(SmsVerificationService::validate_phone_number("+30123456789").is_ok());
+        assert!(SmsVerificationService::validate_phone_number("+1234567890123").is_ok());
+        assert!(SmsVerificationService::validate_phone_number("+12").is_ok());
         // Missing +
-        assert!(
-            SmsVerificationService::<PreludeAPI, HomeserverAdminApi>::validate_phone_number(
-                "30123456789"
-            )
-            .is_err()
-        );
+        assert!(SmsVerificationService::validate_phone_number("30123456789").is_err());
         // Starts with +0
-        assert!(
-            SmsVerificationService::<PreludeAPI, HomeserverAdminApi>::validate_phone_number(
-                "+0123456789"
-            )
-            .is_err()
-        );
+        assert!(SmsVerificationService::validate_phone_number("+0123456789").is_err());
         // Contains spaces
-        assert!(
-            SmsVerificationService::<PreludeAPI, HomeserverAdminApi>::validate_phone_number(
-                "+30 123 456 789"
-            )
-            .is_err()
-        );
+        assert!(SmsVerificationService::validate_phone_number("+30 123 456 789").is_err());
         // Contains hyphens
-        assert!(
-            SmsVerificationService::<PreludeAPI, HomeserverAdminApi>::validate_phone_number(
-                "+30-123-456-789"
-            )
-            .is_err()
-        );
+        assert!(SmsVerificationService::validate_phone_number("+30-123-456-789").is_err());
         // Too short (only country code)
-        assert!(
-            SmsVerificationService::<PreludeAPI, HomeserverAdminApi>::validate_phone_number("+1")
-                .is_err()
-        );
+        assert!(SmsVerificationService::validate_phone_number("+1").is_err());
         // Too long (more than 15 digits)
-        assert!(
-            SmsVerificationService::<PreludeAPI, HomeserverAdminApi>::validate_phone_number(
-                "+1234567890123456"
-            )
-            .is_err()
-        );
+        assert!(SmsVerificationService::validate_phone_number("+1234567890123456").is_err());
     }
 }

@@ -1,5 +1,4 @@
 use crate::EnvConfig;
-use async_trait::async_trait;
 use thiserror::Error;
 use url::Url;
 
@@ -13,14 +12,14 @@ pub enum HomeserverAdminApiError {
 }
 
 #[derive(Clone, Debug)]
-pub struct HomeserverAdminApi {
+pub struct HomeserverAdminAPI {
     http_client: reqwest::Client,
     admin_password: String,
     base_url: Url,
     homeserver_pubky: String,
 }
 
-impl HomeserverAdminApi {
+impl HomeserverAdminAPI {
     pub fn from_config(config: &EnvConfig) -> Self {
         Self {
             http_client: reqwest::Client::new(),
@@ -29,18 +28,9 @@ impl HomeserverAdminApi {
             homeserver_pubky: config.homeserver_pubky.clone(),
         }
     }
-}
 
-#[async_trait]
-pub trait HomeserverAdminApiTrait: Send + Sync {
-    async fn generate_signup_token(&self) -> Result<String, HomeserverAdminApiError>;
-    fn get_homeserver_pubky(&self) -> String;
-}
-
-#[async_trait]
-impl HomeserverAdminApiTrait for HomeserverAdminApi {
     /// Generates a signup token by calling the homeserver admin API
-    async fn generate_signup_token(&self) -> Result<String, HomeserverAdminApiError> {
+    pub async fn generate_signup_token(&self) -> Result<String, HomeserverAdminApiError> {
         let url = self
             .base_url
             .join("generate_signup_token")
@@ -68,7 +58,7 @@ impl HomeserverAdminApiTrait for HomeserverAdminApi {
         Ok(token)
     }
 
-    fn get_homeserver_pubky(&self) -> String {
+    pub fn get_homeserver_pubky(&self) -> String {
         self.homeserver_pubky.clone()
     }
 }

@@ -1,36 +1,31 @@
 mod http;
 
-use crate::EnvConfig;
-use axum_test::TestServer;
+#[cfg(test)]
+mod sms_verification_service;
+
+#[cfg(test)]
+mod wiremock_helpers;
+
 use sqlx::PgPool;
+#[cfg(test)]
+pub use wiremock_helpers::*;
 
-/// Create test server with axum-test and isolated database
-pub async fn create_test_server(pool: PgPool) -> (TestServer, PgPool) {
-    use std::net::SocketAddr;
+use crate::{
+    HomeserverAdminAPI, SmsVerificationService, SqlDb,
+    sms_verification::{SmsVerificationRepository, prelude_api::PreludeAPI},
+};
 
-    let config = create_test_config();
-    let sms_verification_router =
-        crate::sms_verification::http::test_router(&config, Some(pool.clone()))
-            .await
-            .expect("Failed to create test router");
+/// Helper to create service with wiremock for direct service layer testing
+async fn create_service_with_mocked_apis(
+    pool: PgPool,
+    servers: &WiremockServers,
+) -> SmsVerificationService {
+    let config = servers.create_config();
+    let db = SqlDb::test(pool.clone()).await;
 
-    let router = crate::HttpServer::create_router(sms_verification_router);
+    let prelude_api = PreludeAPI::from_config(&config);
+    let homeserver_admin_api = HomeserverAdminAPI::from_config(&config);
 
-    let app = router.into_make_service_with_connect_info::<SocketAddr>();
-    let server = TestServer::new(app).expect("Failed to create test server");
-
-    (server, pool)
-}
-
-fn create_test_config() -> EnvConfig {
-    EnvConfig {
-        database_url: Default::default(),
-        http_listen_socket: "127.0.0.1:0".parse().unwrap(),
-        prelude_api_key: "test-key".to_string(),
-        prelude_api_url: "http://localhost".parse().unwrap(),
-        homeserver_admin_api_url: "http://localhost".parse().unwrap(),
-        homeserver_admin_password: "test-pass".to_string(),
-        homeserver_pubky: "test-homeserver-pubky".to_string(),
-        max_verified_sessions: 10,
-    }
+    let repository = SmsVerificationRepository::new(db);
+    SmsVerificationService::new(repository, prelude_api, homeserver_admin_api, 10)
 }
