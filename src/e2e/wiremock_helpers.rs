@@ -35,6 +35,7 @@ pub fn setup_prelude_create_verification(
     phone_number: &str,
     ip_address: Option<&str>,
     response_status: &str,
+    reason: Option<&str>,
 ) -> Mock {
     use wiremock::matchers::body_partial_json;
 
@@ -51,16 +52,26 @@ pub fn setup_prelude_create_verification(
         });
     }
 
+    let response_body = if let Some(r) = reason {
+        json!({
+            "id": "verification-id-123",
+            "status": response_status,
+            "reason": r
+        })
+    } else {
+        json!({
+            "id": "verification-id-123",
+            "status": response_status,
+            "reason": null
+        })
+    };
+
     Mock::given(method("POST"))
         .and(path("/v2/verification"))
         .and(header("Authorization", "Bearer test-key"))
         .and(header("Content-Type", "application/json"))
         .and(body_partial_json(&body))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "id": "verification-id-123",
-            "status": response_status,
-            "reason": null
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
 }
 
 /// Setup mock for Prelude API check_code endpoint (POST /v2/verification/check)

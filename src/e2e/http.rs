@@ -44,7 +44,7 @@ async fn test_http_full_verification_flow(pool: PgPool) {
     let phone = "+30123456789";
 
     // 2. Setup Prelude create_verification mock
-    setup_prelude_create_verification(phone, None, "success")
+    setup_prelude_create_verification(phone, None, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -126,6 +126,7 @@ async fn test_http_ip_extraction_with_x_forwarded_for(pool: PgPool) {
         phone,
         Some("203.0.113.1"), // Expect this IP to be sent
         "success",
+        None,
     )
     .expect(1)
     .mount(&servers.prelude_server)
@@ -156,6 +157,7 @@ async fn test_http_ip_extraction_with_x_real_ip(pool: PgPool) {
         phone,
         Some("198.51.100.1"), // Expect this IP to be sent
         "success",
+        None,
     )
     .expect(1)
     .mount(&servers.prelude_server)
@@ -239,7 +241,7 @@ async fn test_http_verify_code_status_codes(pool: PgPool) {
     let phone = "+30555555555";
 
     // Setup mock for send_code
-    setup_prelude_create_verification(phone, None, "success")
+    setup_prelude_create_verification(phone, None, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;

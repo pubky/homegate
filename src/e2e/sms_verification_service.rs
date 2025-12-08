@@ -26,7 +26,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Setup wiremock expectations
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success")
+    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -164,7 +164,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 
     // Setup mock - we can use "success" for both calls
     // The important thing is that the DB correctly handles session reuse
-    setup_prelude_create_verification(phone1, Some("127.0.0.1"), "success")
+    setup_prelude_create_verification(phone1, Some("127.0.0.1"), "success", None)
         .expect(2) // Both calls will use this mock
         .mount(&servers.prelude_server)
         .await;
@@ -216,7 +216,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 
     // Setup mocks for full verification flow + retry after verification
     // We'll call send_code twice (once before verification, once after)
-    setup_prelude_create_verification(phone2, Some("127.0.0.1"), "success")
+    setup_prelude_create_verification(phone2, Some("127.0.0.1"), "success", None)
         .expect(2)
         .mount(&servers.prelude_server)
         .await;
@@ -281,7 +281,7 @@ async fn test_service_max_verified_sessions_limit(pool: PgPool) {
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Setup mocks for 10 successful verifications
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success")
+    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
         .expect(10)
         .mount(&servers.prelude_server)
         .await;
@@ -376,7 +376,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     // Invalid verification code - should return Failure status
     let phone_wrong_code = "+30987654321";
 
-    setup_prelude_create_verification(phone_wrong_code, Some("127.0.0.1"), "success")
+    setup_prelude_create_verification(phone_wrong_code, Some("127.0.0.1"), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -424,7 +424,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     let phone = "+30888888888";
 
     // Setup mocks for 10 verifications (9 + 1 more)
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success")
+    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
         .expect(10)
         .mount(&servers.prelude_server)
         .await;
@@ -509,7 +509,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
 
     // Step 1: Create a verification session
     // We'll call send_code twice (once here, once after marking failed), so expect(2)
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success")
+    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
         .expect(2)
         .mount(&servers.prelude_server)
         .await;
@@ -629,7 +629,7 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Step 1: Send verification code to phone_send
-    setup_prelude_create_verification(phone_send, Some("127.0.0.1"), "success")
+    setup_prelude_create_verification(phone_send, Some("127.0.0.1"), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -684,7 +684,7 @@ async fn test_service_database_error_handling(pool: PgPool) {
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // First, create a session with send_code
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success")
+    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -732,4 +732,677 @@ async fn test_service_database_error_handling(pool: PgPool) {
             other
         ),
     }
+}
+
+#[sqlx::test]
+async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
+    let db = SqlDb::test(pool.clone()).await;
+
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Scenario 1: Attempt send_code on VERIFIED state
+    let phone_verified = "+30111111111";
+
+    // Setup mocks for successful verification flow
+    setup_prelude_create_verification(phone_verified, Some("127.0.0.1"), "success", None)
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_prelude_check_code(phone_verified, "123456", "success")
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_homeserver_signup_token("test-token-verified")
+        .expect(1)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    // Create and verify successfully
+    service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone_verified.to_string(),
+            },
+            ip,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    service
+        .send_code(SendCodeRequest {
+            phone_number: phone_verified.to_string(),
+            code: "123456".to_string(),
+        })
+        .await
+        .expect("send_code should succeed");
+
+    // Verify state is VERIFIED
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
+            .bind(phone_verified)
+            .fetch_one(db.pool())
+            .await
+            .expect("Should find verification");
+    assert_eq!(status, "VERIFIED", "Status should be VERIFIED");
+
+    // Attempt to send code again on VERIFIED state - should fail
+    let result = service
+        .send_code(SendCodeRequest {
+            phone_number: phone_verified.to_string(),
+            code: "123456".to_string(),
+        })
+        .await;
+
+    // Should return NoActiveVerification error
+    match result {
+        Err(crate::SmsVerificationError::DatabaseError(
+            SmsVerificationRepositoryError::NoActiveVerification(_),
+        )) => {
+            // Test passes - correct error type
+        }
+        other => panic!(
+            "Expected DatabaseError(NoActiveVerification) on VERIFIED state, got: {:?}",
+            other
+        ),
+    }
+
+    // Verify database state unchanged
+    let status_after: String =
+        sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
+            .bind(phone_verified)
+            .fetch_one(db.pool())
+            .await
+            .expect("Should find verification");
+    assert_eq!(
+        status_after, "VERIFIED",
+        "Status should remain VERIFIED after failed attempt"
+    );
+
+    // Scenario 2: Attempt send_code on FAILED state
+    let phone_failed = "+30222222222";
+
+    // Create verification
+    setup_prelude_create_verification(phone_failed, Some("127.0.0.1"), "success", None)
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone_failed.to_string(),
+            },
+            ip,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    // Mock expired_or_not_found to reach FAILED state
+    setup_prelude_check_code(phone_failed, "123456", "expired_or_not_found")
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    let verify_result = service
+        .send_code(SendCodeRequest {
+            phone_number: phone_failed.to_string(),
+            code: "123456".to_string(),
+        })
+        .await
+        .expect("send_code should succeed");
+
+    assert!(
+        matches!(verify_result, SendCodeResponse::ExpiredOrNotFound),
+        "Should return ExpiredOrNotFound"
+    );
+
+    // Verify state is FAILED
+    let status_failed: String =
+        sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
+            .bind(phone_failed)
+            .fetch_one(db.pool())
+            .await
+            .expect("Should find verification");
+    assert_eq!(status_failed, "FAILED", "Status should be FAILED");
+
+    // Attempt to send code again on FAILED state - should fail
+    let result = service
+        .send_code(SendCodeRequest {
+            phone_number: phone_failed.to_string(),
+            code: "999999".to_string(),
+        })
+        .await;
+
+    // Should return NoActiveVerification error
+    match result {
+        Err(crate::SmsVerificationError::DatabaseError(
+            SmsVerificationRepositoryError::NoActiveVerification(_),
+        )) => {
+            // Test passes - correct error type
+        }
+        other => panic!(
+            "Expected DatabaseError(NoActiveVerification) on FAILED state, got: {:?}",
+            other
+        ),
+    }
+
+    // Verify database state unchanged
+    let status_after_failed: String =
+        sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
+            .bind(phone_failed)
+            .fetch_one(db.pool())
+            .await
+            .expect("Should find verification");
+    assert_eq!(
+        status_after_failed, "FAILED",
+        "Status should remain FAILED after failed attempt"
+    );
+}
+
+#[sqlx::test]
+async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
+    let db = SqlDb::test(pool.clone()).await;
+
+    let phone = "+30333333333";
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Create verification
+    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone.to_string(),
+            },
+            ip,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    // Attempt 1: Wrong code
+    setup_prelude_check_code(phone, "111111", "failure")
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    let response1 = service
+        .send_code(SendCodeRequest {
+            phone_number: phone.to_string(),
+            code: "111111".to_string(),
+        })
+        .await
+        .expect("send_code should succeed");
+
+    assert!(
+        matches!(response1, SendCodeResponse::Failure),
+        "Wrong code should return Failure"
+    );
+
+    // Verify status remains PENDING
+    let (status1, finalised_at1): (String, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT status, finalised_at FROM sms_verifications WHERE phone_number = $1",
+    )
+    .bind(phone)
+    .fetch_one(db.pool())
+    .await
+    .expect("Should find verification");
+
+    assert_eq!(status1, "PENDING", "Status should remain PENDING");
+    assert!(
+        finalised_at1.is_none(),
+        "finalised_at should remain NULL after wrong code"
+    );
+
+    // Attempt 2: Wrong code
+    setup_prelude_check_code(phone, "222222", "failure")
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    let response2 = service
+        .send_code(SendCodeRequest {
+            phone_number: phone.to_string(),
+            code: "222222".to_string(),
+        })
+        .await
+        .expect("send_code should succeed");
+
+    assert!(
+        matches!(response2, SendCodeResponse::Failure),
+        "Wrong code should return Failure"
+    );
+
+    // Verify status still PENDING
+    let (status2, finalised_at2): (String, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT status, finalised_at FROM sms_verifications WHERE phone_number = $1",
+    )
+    .bind(phone)
+    .fetch_one(db.pool())
+    .await
+    .expect("Should find verification");
+
+    assert_eq!(status2, "PENDING", "Status should still be PENDING");
+    assert!(
+        finalised_at2.is_none(),
+        "finalised_at should remain NULL after second wrong code"
+    );
+
+    // Finally: Correct code
+    setup_prelude_check_code(phone, "123456", "success")
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_homeserver_signup_token("test-token-correct")
+        .expect(1)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    let response_success = service
+        .send_code(SendCodeRequest {
+            phone_number: phone.to_string(),
+            code: "123456".to_string(),
+        })
+        .await
+        .expect("send_code with correct code should succeed");
+
+    assert!(
+        matches!(response_success, SendCodeResponse::Success { .. }),
+        "Correct code should return Success"
+    );
+
+    // Verify final state is VERIFIED
+    let (status_final, finalised_at_final, signup_code): (
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<Vec<u8>>,
+    ) = sqlx::query_as(
+        "SELECT status, finalised_at, signup_code FROM sms_verifications WHERE phone_number = $1",
+    )
+    .bind(phone)
+    .fetch_one(db.pool())
+    .await
+    .expect("Should find verification");
+
+    assert_eq!(status_final, "VERIFIED", "Status should be VERIFIED");
+    assert!(
+        finalised_at_final.is_some(),
+        "finalised_at should be set after verification"
+    );
+    assert!(
+        signup_code.is_some(),
+        "signup_code should be set after verification"
+    );
+}
+
+#[sqlx::test]
+async fn test_service_blocked_phone_number(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
+    let db = SqlDb::test(pool.clone()).await;
+
+    let phone = "+30444444444";
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Mock Prelude to return "blocked" status with repeated_attempts reason
+    setup_prelude_create_verification(
+        phone,
+        Some("127.0.0.1"),
+        "blocked",
+        Some("repeated_attempts"),
+    )
+    .expect(1)
+    .mount(&servers.prelude_server)
+    .await;
+
+    // Call create_verification
+    let response = service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone.to_string(),
+            },
+            ip,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    // Assert response is Blocked with correct reason
+    use crate::sms_verification::prelude_api::PreludeBlockedReason;
+    match response {
+        CreateVerificationResponse::Blocked { reason } => {
+            assert_eq!(
+                reason,
+                PreludeBlockedReason::RepeatedAttempts,
+                "Blocked reason should be RepeatedAttempts"
+            );
+        }
+        other => panic!("Expected Blocked response, got: {:?}", other),
+    }
+
+    // Verify database state: record should be created and marked as FAILED
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
+            .bind(phone)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+
+    assert_eq!(
+        count.0, 1,
+        "Record should be created even for blocked response"
+    );
+
+    let (status, failure_reason, finalised_at): (
+        String,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as(
+        "SELECT status, failure_reason, finalised_at FROM sms_verifications WHERE phone_number = $1",
+    )
+    .bind(phone)
+    .fetch_one(db.pool())
+    .await
+    .expect("Should find verification");
+
+    assert_eq!(
+        status, "FAILED",
+        "Status should be FAILED for blocked phone"
+    );
+    assert!(
+        failure_reason.is_some(),
+        "failure_reason should be set for blocked phone"
+    );
+    let failure_reason = failure_reason.unwrap();
+    assert!(
+        failure_reason.contains("RepeatedAttempts"),
+        "failure_reason should contain the blocked reason, got: {}",
+        failure_reason
+    );
+    assert!(
+        finalised_at.is_some(),
+        "finalised_at should be set for blocked phone"
+    );
+
+    // Verify that check_pending_exists returns NoActiveVerification
+    let repository = SmsVerificationRepository::new(db.clone());
+    let result = repository.check_pending_exists(phone).await;
+    assert!(
+        matches!(
+            result,
+            Err(SmsVerificationRepositoryError::NoActiveVerification(_))
+        ),
+        "Blocked (FAILED) sessions should not be considered active"
+    );
+}
+
+#[sqlx::test]
+async fn test_service_retry_response_from_prelude(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
+    let db = SqlDb::test(pool.clone()).await;
+
+    let phone = "+30555555555";
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Mock Prelude to return "retry" status (rate limit response)
+    setup_prelude_create_verification(phone, Some("127.0.0.1"), "retry", None)
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    // Call create_verification - should get Retry response from Prelude
+    let response = service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone.to_string(),
+            },
+            ip,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    // Assert response is Retry
+    match response {
+        CreateVerificationResponse::Retry => {
+            // Test passes
+        }
+        other => panic!("Expected Retry response, got: {:?}", other),
+    }
+
+    // Verify that a PENDING session was created (even for retry response)
+    // Based on service.rs:88-94, retry responses still create a record
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
+            .bind(phone)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+
+    assert_eq!(
+        count.0, 1,
+        "Should have created 1 PENDING session even for retry response"
+    );
+
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
+            .bind(phone)
+            .fetch_one(db.pool())
+            .await
+            .expect("Should find verification");
+
+    assert_eq!(
+        status, "PENDING",
+        "Status should be PENDING for retry response"
+    );
+}
+
+#[sqlx::test]
+async fn test_repository_state_mutation_protection(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
+    let db = SqlDb::test(pool.clone()).await;
+    let repository = SmsVerificationRepository::new(db.clone());
+
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Scenario 1: mark_verified on already VERIFIED record
+    let phone1 = "+30666666666";
+
+    setup_prelude_create_verification(phone1, Some("127.0.0.1"), "success", None)
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_prelude_check_code(phone1, "123456", "success")
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_homeserver_signup_token("test-token-1")
+        .expect(1)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    // Create and verify successfully
+    service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone1.to_string(),
+            },
+            ip,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    service
+        .send_code(SendCodeRequest {
+            phone_number: phone1.to_string(),
+            code: "123456".to_string(),
+        })
+        .await
+        .expect("send_code should succeed");
+
+    // Get the prelude_id and original signup_code
+    let (prelude_id1, original_signup_code): (String, Vec<u8>) = sqlx::query_as(
+        "SELECT prelude_id, signup_code FROM sms_verifications WHERE phone_number = $1",
+    )
+    .bind(phone1)
+    .fetch_one(db.pool())
+    .await
+    .expect("Should find verification");
+
+    // Try to call mark_verified again with different signup code
+    let different_signup_code = "different-signup-code";
+    let result = repository
+        .mark_verified(&prelude_id1, different_signup_code)
+        .await;
+
+    // Should return NotFound error (0 rows affected)
+    match result {
+        Err(SmsVerificationRepositoryError::NotFound(_)) => {
+            // Test passes - correct error type
+        }
+        other => panic!(
+            "Expected NotFound error on VERIFIED record, got: {:?}",
+            other
+        ),
+    }
+
+    // Verify database unchanged (still has original signup code)
+    let signup_code_after: Vec<u8> =
+        sqlx::query_scalar("SELECT signup_code FROM sms_verifications WHERE prelude_id = $1")
+            .bind(&prelude_id1)
+            .fetch_one(db.pool())
+            .await
+            .expect("Should find verification");
+
+    assert_eq!(
+        signup_code_after, original_signup_code,
+        "Signup code should be unchanged"
+    );
+
+    // Scenario 2: mark_failed on already VERIFIED record
+    let result = repository.mark_failed(&prelude_id1, "test_reason").await;
+
+    // Should return NotFound error (0 rows affected)
+    match result {
+        Err(SmsVerificationRepositoryError::NotFound(_)) => {
+            // Test passes - correct error type
+        }
+        other => panic!(
+            "Expected NotFound error when marking VERIFIED as failed, got: {:?}",
+            other
+        ),
+    }
+
+    // Verify database unchanged (still VERIFIED)
+    let status1: String =
+        sqlx::query_scalar("SELECT status FROM sms_verifications WHERE prelude_id = $1")
+            .bind(&prelude_id1)
+            .fetch_one(db.pool())
+            .await
+            .expect("Should find verification");
+
+    assert_eq!(
+        status1, "VERIFIED",
+        "Status should remain VERIFIED after failed mark_failed attempt"
+    );
+
+    // Scenario 3: mark_verified on already FAILED record
+    // Use a different phone number than phone1
+    let phone2 = "+30777777777";
+
+    // Note: wiremock will return the same prelude_id for both phone1 and phone2,
+    // but since they have different phone_numbers, they are separate records in the database
+    setup_prelude_create_verification(phone2, Some("127.0.0.1"), "success", None)
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone2.to_string(),
+            },
+            ip,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    // Mock expired_or_not_found to reach FAILED state
+    setup_prelude_check_code(phone2, "123456", "expired_or_not_found")
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    service
+        .send_code(SendCodeRequest {
+            phone_number: phone2.to_string(),
+            code: "123456".to_string(),
+        })
+        .await
+        .expect("send_code should succeed");
+
+    // Verify we have a FAILED record before trying to mark it as verified
+    let (prelude_id2, status_before_mark): (String, String) =
+        sqlx::query_as("SELECT prelude_id, status FROM sms_verifications WHERE phone_number = $1")
+            .bind(phone2)
+            .fetch_one(db.pool())
+            .await
+            .expect("Should find verification");
+
+    assert_eq!(
+        status_before_mark, "FAILED",
+        "Status should be FAILED before attempting mark_verified"
+    );
+
+    // Try to call mark_verified on FAILED record
+    let signup_code2 = "another-signup-code";
+    let result = repository.mark_verified(&prelude_id2, signup_code2).await;
+
+    // Should return NotFound error (0 rows affected)
+    match result {
+        Err(SmsVerificationRepositoryError::NotFound(_)) => {
+            // Test passes - correct error type
+        }
+        other => panic!(
+            "Expected NotFound error when marking FAILED as verified, got: {:?}",
+            other
+        ),
+    }
+
+    // Verify database unchanged (still FAILED) - query by phone_number to avoid ambiguity
+    let status2: String =
+        sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
+            .bind(phone2)
+            .fetch_one(db.pool())
+            .await
+            .expect("Should find verification");
+
+    assert_eq!(
+        status2, "FAILED",
+        "Status should remain FAILED after failed mark_verified attempt"
+    );
+
+    // Verify signup_code is still NULL for FAILED record
+    let signup_code_failed: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT signup_code FROM sms_verifications WHERE phone_number = $1")
+            .bind(phone2)
+            .fetch_one(db.pool())
+            .await
+            .expect("Should find verification");
+
+    assert!(
+        signup_code_failed.is_none(),
+        "Signup code should remain NULL for FAILED record"
+    );
 }

@@ -96,10 +96,15 @@ impl SmsVerificationService {
             PreludeCreateVerificationResponse::Blocked { id, .. } => id,
         };
 
-        // Create SMS record (will skip if active session already exists)
         self.repository
             .create_verification(&request.phone_number, id)
             .await?;
+
+        if let PreludeCreateVerificationResponse::Blocked { id, reason } = &prelude_response {
+            self.repository
+                .mark_failed(id, &format!("{:?}", reason))
+                .await?;
+        }
 
         Ok(match prelude_response {
             PreludeCreateVerificationResponse::Success { .. } => {
