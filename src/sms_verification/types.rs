@@ -1,9 +1,10 @@
+use crate::sms_verification::phone_number::PhoneNumber;
 use crate::sms_verification::prelude_api::PreludeBlockedReason;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateVerificationRequest {
-    pub phone_number: String,
+    pub phone_number: PhoneNumber,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -16,7 +17,7 @@ pub enum CreateVerificationResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct SendCodeRequest {
-    pub phone_number: String,
+    pub phone_number: PhoneNumber,
     pub code: String,
 }
 

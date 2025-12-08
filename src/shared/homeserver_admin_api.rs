@@ -41,21 +41,7 @@ impl HomeserverAdminAPI {
             .header("X-Admin-Password", &self.admin_password)
             .send()
             .await?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let error_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unable to read error response".to_string());
-            return Err(HomeserverAdminApiError::ApiError {
-                status: status.as_u16(),
-                message: error_body,
-            });
-        }
-
-        let token = response.text().await?;
-        Ok(token)
+        Ok(response.error_for_status()?.text().await?)
     }
 
     pub fn get_homeserver_pubky(&self) -> String {

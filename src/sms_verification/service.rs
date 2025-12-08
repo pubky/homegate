@@ -1,5 +1,6 @@
 use crate::HomeserverAdminAPI;
 use crate::sms_verification::error::SmsVerificationError;
+use crate::sms_verification::phone_number::PhoneNumber;
 use crate::sms_verification::prelude_api::{
     PreludeAPI, PreludeCheckCodeResponse, PreludeCreateVerificationResponse,
 };
@@ -7,9 +8,7 @@ use crate::sms_verification::repository::SmsVerificationRepository;
 use crate::sms_verification::types::{
     CreateVerificationRequest, CreateVerificationResponse, SendCodeRequest, SendCodeResponse,
 };
-use regex::Regex;
 use std::net::IpAddr;
-use std::sync::OnceLock;
 
 #[derive(Clone, Debug)]
 pub struct SmsVerificationService {
@@ -34,28 +33,10 @@ impl SmsVerificationService {
         }
     }
 
-    /// Validates that a phone number is in E.164 format
-    fn validate_phone_number(phone_number: &str) -> Result<(), SmsVerificationError> {
-        // E.164 format: starts with +, followed by 1-15 digits
-        static E164_REGEX: OnceLock<Regex> = OnceLock::new();
-        let e164_regex = E164_REGEX.get_or_init(|| {
-            Regex::new(r"^\+[1-9]\d{1,14}$")
-                .expect("E.164 regex pattern is valid and should compile")
-        });
-
-        if e164_regex.is_match(phone_number) {
-            Ok(())
-        } else {
-            Err(SmsVerificationError::InvalidPhoneNumber(
-                phone_number.to_string(),
-            ))
-        }
-    }
-
     /// Check if a phone number can create a new verification
     pub async fn check_verification_limit(
         &self,
-        phone_number: &str,
+        phone_number: &PhoneNumber,
     ) -> Result<(), SmsVerificationError> {
         let count = self
             .repository
@@ -74,13 +55,11 @@ impl SmsVerificationService {
         request: CreateVerificationRequest,
         ip_address: IpAddr,
     ) -> Result<CreateVerificationResponse, SmsVerificationError> {
-        Self::validate_phone_number(&request.phone_number)?;
-
         self.check_verification_limit(&request.phone_number).await?;
 
         let prelude_response = self
             .prelude_api
-            .create_verification(&request.phone_number, Some(ip_address))
+            .create_verification(request.phone_number.as_str(), Some(ip_address))
             .await?;
 
         let id = match &prelude_response {
@@ -122,16 +101,17 @@ impl SmsVerificationService {
         &self,
         request: SendCodeRequest,
     ) -> Result<SendCodeResponse, SmsVerificationError> {
-        Self::validate_phone_number(&request.phone_number)?;
-
         // Confirm first that there's an active verification session in our database
         self.repository
             .check_pending_exists(&request.phone_number)
-            .await?;
+            .await
+            .map_err(|_| {
+                SmsVerificationError::NoActiveVerification(request.phone_number.to_string())
+            })?;
 
         let prelude_response = self
             .prelude_api
-            .check_code(&request.phone_number, &request.code)
+            .check_code(request.phone_number.as_str(), &request.code)
             .await?;
 
         match prelude_response {
@@ -154,29 +134,5 @@ impl SmsVerificationService {
                 Ok(SendCodeResponse::Failure)
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_phone_number() {
-        assert!(SmsVerificationService::validate_phone_number("+30123456789").is_ok());
-        assert!(SmsVerificationService::validate_phone_number("+1234567890123").is_ok());
-        assert!(SmsVerificationService::validate_phone_number("+12").is_ok());
-        // Missing +
-        assert!(SmsVerificationService::validate_phone_number("30123456789").is_err());
-        // Starts with +0
-        assert!(SmsVerificationService::validate_phone_number("+0123456789").is_err());
-        // Contains spaces
-        assert!(SmsVerificationService::validate_phone_number("+30 123 456 789").is_err());
-        // Contains hyphens
-        assert!(SmsVerificationService::validate_phone_number("+30-123-456-789").is_err());
-        // Too short (only country code)
-        assert!(SmsVerificationService::validate_phone_number("+1").is_err());
-        // Too long (more than 15 digits)
-        assert!(SmsVerificationService::validate_phone_number("+1234567890123456").is_err());
     }
 }

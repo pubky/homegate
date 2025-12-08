@@ -11,7 +11,8 @@ use crate::sms_verification::repository::{
     SmsVerificationRepository, SmsVerificationRepositoryError,
 };
 use crate::sms_verification::{
-    CreateVerificationRequest, CreateVerificationResponse, SendCodeRequest, SendCodeResponse,
+    CreateVerificationRequest, CreateVerificationResponse, PhoneNumber, SendCodeRequest,
+    SendCodeResponse,
 };
 use sqlx::PgPool;
 use std::net::IpAddr;
@@ -22,16 +23,16 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
     let db = SqlDb::test(pool.clone()).await;
 
-    let phone = "+30123456789";
+    let phone = PhoneNumber::new("+30123456789").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Setup wiremock expectations
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(phone, "123456", "success")
+    setup_prelude_check_code(&phone, "123456", "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -45,7 +46,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     let verify_response = service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
             },
             ip,
         )
@@ -67,12 +68,12 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     ) = sqlx::query_as(
         "SELECT phone_number, prelude_id, finalised_at, signup_code, status FROM sms_verifications WHERE phone_number = $1",
     )
-    .bind(phone)
+    .bind(phone.as_str())
     .fetch_one(db.pool())
     .await
     .expect("Should find verification after init");
 
-    assert_eq!(after_init.0, phone, "Phone number should match");
+    assert_eq!(after_init.0, phone.as_str(), "Phone number should match");
     let verification_id = after_init.1.clone();
     assert!(
         after_init.2.is_none(),
@@ -90,7 +91,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     // Step 2: Verify code
     let check_response = service
         .send_code(SendCodeRequest {
-            phone_number: phone.to_string(),
+            phone_number: phone.clone(),
             code: "123456".to_string(),
         })
         .await
@@ -112,7 +113,11 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     .await
     .expect("Should find verification in database");
 
-    assert_eq!(after_verify.0, phone, "Phone number should still match");
+    assert_eq!(
+        after_verify.0,
+        phone.as_str(),
+        "Phone number should still match"
+    );
     assert!(
         after_verify.1.is_some(),
         "finalised_at should be set after successful verification"
@@ -159,12 +164,12 @@ async fn test_service_session_lifecycle(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
 
     // Test 1: Active session reuse
-    let phone1 = "+30999999999";
+    let phone1 = PhoneNumber::new("+30999999999").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Setup mock - we can use "success" for both calls
     // The important thing is that the DB correctly handles session reuse
-    setup_prelude_create_verification(phone1, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone1, Some(ip), "success", None)
         .expect(2) // Both calls will use this mock
         .mount(&servers.prelude_server)
         .await;
@@ -173,7 +178,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
     let response1 = service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone1.to_string(),
+                phone_number: phone1.clone(),
             },
             ip,
         )
@@ -184,7 +189,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 
     let count1: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone1)
+            .bind(phone1.as_str())
             .fetch_one(db.pool())
             .await
             .unwrap();
@@ -195,7 +200,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
     let _response2 = service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone1.to_string(),
+                phone_number: phone1.clone(),
             },
             ip,
         )
@@ -205,23 +210,23 @@ async fn test_service_session_lifecycle(pool: PgPool) {
     // Key assertion: DB should still have only 1 record (no duplicate created)
     let count2: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone1)
+            .bind(phone1.as_str())
             .fetch_one(db.pool())
             .await
             .unwrap();
     assert_eq!(count2.0, 1, "Should still have only 1 record (reused)");
 
     // Test 2: New session after verification
-    let phone2 = "+30000000000";
+    let phone2 = PhoneNumber::new("+30000000000").unwrap();
 
     // Setup mocks for full verification flow + retry after verification
     // We'll call send_code twice (once before verification, once after)
-    setup_prelude_create_verification(phone2, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone2, Some(ip), "success", None)
         .expect(2)
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(phone2, "123456", "success")
+    setup_prelude_check_code(&phone2, "123456", "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -234,7 +239,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone2.to_string(),
+                phone_number: phone2.clone(),
             },
             ip,
         )
@@ -243,7 +248,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 
     service
         .send_code(SendCodeRequest {
-            phone_number: phone2.to_string(),
+            phone_number: phone2.clone(),
             code: "123456".to_string(),
         })
         .await
@@ -254,7 +259,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone2.to_string(),
+                phone_number: phone2.clone(),
             },
             ip,
         )
@@ -263,7 +268,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 
     let count3: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone2)
+            .bind(phone2.as_str())
             .fetch_one(db.pool())
             .await
             .unwrap();
@@ -277,16 +282,16 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 async fn test_service_max_verified_sessions_limit(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
-    let phone = "+30111111112";
+    let phone = PhoneNumber::new("+30111111112").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Setup mocks for 10 successful verifications
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
         .expect(10)
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(phone, "123456", "success")
+    setup_prelude_check_code(&phone, "123456", "success")
         .expect(10)
         .mount(&servers.prelude_server)
         .await;
@@ -301,7 +306,7 @@ async fn test_service_max_verified_sessions_limit(pool: PgPool) {
         service
             .create_verification(
                 CreateVerificationRequest {
-                    phone_number: phone.to_string(),
+                    phone_number: phone.clone(),
                 },
                 ip,
             )
@@ -310,7 +315,7 @@ async fn test_service_max_verified_sessions_limit(pool: PgPool) {
 
         service
             .send_code(SendCodeRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
                 code: "123456".to_string(),
             })
             .await
@@ -321,7 +326,7 @@ async fn test_service_max_verified_sessions_limit(pool: PgPool) {
     let result = service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
             },
             ip,
         )
@@ -341,47 +346,15 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
-    // Invalid phone - send_code (no mock needed - validation before API)
-    let result = service
-        .create_verification(
-            CreateVerificationRequest {
-                phone_number: "invalid-phone".to_string(),
-            },
-            ip,
-        )
-        .await;
-    assert!(
-        matches!(
-            result,
-            Err(crate::SmsVerificationError::InvalidPhoneNumber(_))
-        ),
-        "send_code should reject invalid phone format"
-    );
-
-    // Invalid phone - verify_code (no mock needed - validation before API)
-    let result = service
-        .send_code(SendCodeRequest {
-            phone_number: "+0123456789".to_string(), // starts with 0
-            code: "123456".to_string(),
-        })
-        .await;
-    assert!(
-        matches!(
-            result,
-            Err(crate::SmsVerificationError::InvalidPhoneNumber(_))
-        ),
-        "verify_code should reject invalid phone format"
-    );
-
     // Invalid verification code - should return Failure status
-    let phone_wrong_code = "+30987654321";
+    let phone_wrong_code = PhoneNumber::new("+30987654321").unwrap();
 
-    setup_prelude_create_verification(phone_wrong_code, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone_wrong_code, Some(ip), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(phone_wrong_code, "wrong_code", "failure")
+    setup_prelude_check_code(&phone_wrong_code, "wrong_code", "failure")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -389,7 +362,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone_wrong_code.to_string(),
+                phone_number: phone_wrong_code.clone(),
             },
             ip,
         )
@@ -398,7 +371,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
 
     let check_response = service
         .send_code(SendCodeRequest {
-            phone_number: phone_wrong_code.to_string(),
+            phone_number: phone_wrong_code.clone(),
             code: "wrong_code".to_string(),
         })
         .await
@@ -413,7 +386,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1 AND status = 'VERIFIED'",
     )
-    .bind(phone_wrong_code)
+    .bind(phone_wrong_code.as_str())
     .fetch_one(db.pool())
     .await
     .unwrap();
@@ -421,15 +394,15 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     assert_eq!(count.0, 0, "Should not mark as verified with wrong code");
 
     // Boundary: 9 verified sessions should allow 10th
-    let phone = "+30888888888";
+    let phone = PhoneNumber::new("+30888888888").unwrap();
 
     // Setup mocks for 10 verifications (9 + 1 more)
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
         .expect(10)
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(phone, "123456", "success")
+    setup_prelude_check_code(&phone, "123456", "success")
         .expect(10)
         .mount(&servers.prelude_server)
         .await;
@@ -444,7 +417,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
         service
             .create_verification(
                 CreateVerificationRequest {
-                    phone_number: phone.to_string(),
+                    phone_number: phone.clone(),
                 },
                 ip,
             )
@@ -452,7 +425,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
             .expect(&format!("send_code {} should succeed", i));
         service
             .send_code(SendCodeRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
                 code: "123456".to_string(),
             })
             .await
@@ -464,7 +437,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     let result = service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
             },
             ip,
         )
@@ -474,7 +447,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     // Complete the 10th verification (mocks already set up above with expect(10))
     service
         .send_code(SendCodeRequest {
-            phone_number: phone.to_string(),
+            phone_number: phone.clone(),
             code: "123456".to_string(),
         })
         .await
@@ -484,7 +457,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     let result = service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
             },
             ip,
         )
@@ -504,12 +477,12 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
     let db = SqlDb::test(pool.clone()).await;
 
-    let phone = "+30666666666";
+    let phone = PhoneNumber::new("+30666666666").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Step 1: Create a verification session
     // We'll call send_code twice (once here, once after marking failed), so expect(2)
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
         .expect(2)
         .mount(&servers.prelude_server)
         .await;
@@ -517,7 +490,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
             },
             ip,
         )
@@ -527,7 +500,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     // Step 2: Verify initial status
     let status_before: String =
         sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone)
+            .bind(phone.as_str())
             .fetch_one(db.pool())
             .await
             .expect("Should find verification record");
@@ -535,7 +508,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     assert_eq!(status_before, "PENDING", "Should start as PENDING");
 
     // Step 3: Mock Prelude check_code to return expired_or_not_found
-    setup_prelude_check_code(phone, "123456", "expired_or_not_found")
+    setup_prelude_check_code(&phone, "123456", "expired_or_not_found")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -543,7 +516,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     // Step 4: Try to verify with code - this should trigger mark_failed
     let verify_result = service
         .send_code(SendCodeRequest {
-            phone_number: phone.to_string(),
+            phone_number: phone.clone(),
             code: "123456".to_string(),
         })
         .await
@@ -563,7 +536,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     ) = sqlx::query_as(
         "SELECT status, failure_reason, finalised_at FROM sms_verifications WHERE phone_number = $1",
     )
-    .bind(phone)
+    .bind(phone.as_str())
     .fetch_one(db.pool())
     .await
     .expect("Should find verification record");
@@ -576,14 +549,11 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     );
     assert!(finalised_at.is_some(), "finalised_at should be set");
 
-    // Step 6: Verify that check_pending_verification_exists returns NoActiveVerification
+    // Step 6: Verify that check_pending_exists returns NotFound
     let repository = SmsVerificationRepository::new(db.clone());
-    let result = repository.check_pending_exists(phone).await;
+    let result = repository.check_pending_exists(&phone).await;
     assert!(
-        matches!(
-            result,
-            Err(SmsVerificationRepositoryError::NoActiveVerification(_))
-        ),
+        matches!(result, Err(SmsVerificationRepositoryError::NotFound(_))),
         "Failed sessions should not be considered active"
     );
 
@@ -592,7 +562,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
             },
             ip,
         )
@@ -602,7 +572,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     // Verify we now have 2 records (1 FAILED, 1 PENDING)
     let count: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone)
+            .bind(phone.as_str())
             .fetch_one(db.pool())
             .await
             .unwrap();
@@ -611,7 +581,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     let pending_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1 AND status = 'PENDING'",
     )
-    .bind(phone)
+    .bind(phone.as_str())
     .fetch_one(db.pool())
     .await
     .unwrap();
@@ -624,12 +594,12 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
     let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
     let db = SqlDb::test(pool.clone()).await;
 
-    let phone_send = "+30666666666";
-    let phone_verify = "+30888888889";
+    let phone_send = PhoneNumber::new("+30666666666").unwrap();
+    let phone_verify = PhoneNumber::new("+30888888889").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Step 1: Send verification code to phone_send
-    setup_prelude_create_verification(phone_send, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone_send, Some(ip), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -637,7 +607,7 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone_send.to_string(),
+                phone_number: phone_send.clone(),
             },
             ip,
         )
@@ -647,27 +617,22 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
     // Step 2: Try to verify with a different phone number (no mock needed - DB lookup fails first)
     let result = service
         .send_code(SendCodeRequest {
-            phone_number: phone_verify.to_string(),
+            phone_number: phone_verify.clone(),
             code: "123456".to_string(),
         })
         .await;
 
     // Should fail with NoActiveVerification error since there's no pending verification for phone_verify
     match result {
-        Err(crate::SmsVerificationError::DatabaseError(
-            SmsVerificationRepositoryError::NoActiveVerification(_),
-        )) => {
+        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - correct error type
         }
-        other => panic!(
-            "Expected DatabaseError(NoActiveVerification), got: {:?}",
-            other
-        ),
+        other => panic!("Expected NoActiveVerification, got: {:?}", other),
     }
 
     // Step 3: Verify that the original phone number still has a pending verification
     let repository = SmsVerificationRepository::new(db.clone());
-    let check_result = repository.check_pending_exists(phone_send).await;
+    let check_result = repository.check_pending_exists(&phone_send).await;
     assert!(
         check_result.is_ok(),
         "Original phone number should still have pending verification"
@@ -680,11 +645,11 @@ async fn test_service_database_error_handling(pool: PgPool) {
     let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
     let db = SqlDb::test(pool.clone()).await;
 
-    let phone = "+30777777777";
+    let phone = PhoneNumber::new("+30777777777").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // First, create a session with send_code
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -692,7 +657,7 @@ async fn test_service_database_error_handling(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
             },
             ip,
         )
@@ -701,13 +666,13 @@ async fn test_service_database_error_handling(pool: PgPool) {
 
     // Now manually delete the database record to simulate database inconsistency
     sqlx::query("DELETE FROM sms_verifications WHERE phone_number = $1")
-        .bind(phone)
+        .bind(phone.as_str())
         .execute(db.pool())
         .await
         .expect("Failed to delete record");
 
     // Setup mock - it will succeed but database lookup will fail
-    setup_prelude_check_code(phone, "123456", "success")
+    setup_prelude_check_code(&phone, "123456", "success")
         .expect(0) // Should not be called - DB lookup fails first
         .mount(&servers.prelude_server)
         .await;
@@ -715,22 +680,17 @@ async fn test_service_database_error_handling(pool: PgPool) {
     // Now try to verify - database lookup fails before API call
     let result = service
         .send_code(SendCodeRequest {
-            phone_number: phone.to_string(),
+            phone_number: phone.clone(),
             code: "123456".to_string(),
         })
         .await;
 
     // Should propagate NoActiveVerification error from database through service layer
     match result {
-        Err(crate::SmsVerificationError::DatabaseError(
-            SmsVerificationRepositoryError::NoActiveVerification(_),
-        )) => {
+        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - database error was properly propagated
         }
-        other => panic!(
-            "Expected DatabaseError(NoActiveVerification), got: {:?}",
-            other
-        ),
+        other => panic!("Expected NoActiveVerification, got: {:?}", other),
     }
 }
 
@@ -743,15 +703,15 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Scenario 1: Attempt send_code on VERIFIED state
-    let phone_verified = "+30111111111";
+    let phone_verified = PhoneNumber::new("+30111111111").unwrap();
 
     // Setup mocks for successful verification flow
-    setup_prelude_create_verification(phone_verified, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone_verified, Some(ip), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(phone_verified, "123456", "success")
+    setup_prelude_check_code(&phone_verified, "123456", "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -765,7 +725,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone_verified.to_string(),
+                phone_number: phone_verified.clone(),
             },
             ip,
         )
@@ -774,7 +734,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 
     service
         .send_code(SendCodeRequest {
-            phone_number: phone_verified.to_string(),
+            phone_number: phone_verified.clone(),
             code: "123456".to_string(),
         })
         .await
@@ -783,7 +743,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     // Verify state is VERIFIED
     let status: String =
         sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone_verified)
+            .bind(phone_verified.as_str())
             .fetch_one(db.pool())
             .await
             .expect("Should find verification");
@@ -792,20 +752,18 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     // Attempt to send code again on VERIFIED state - should fail
     let result = service
         .send_code(SendCodeRequest {
-            phone_number: phone_verified.to_string(),
+            phone_number: phone_verified.clone(),
             code: "123456".to_string(),
         })
         .await;
 
     // Should return NoActiveVerification error
     match result {
-        Err(crate::SmsVerificationError::DatabaseError(
-            SmsVerificationRepositoryError::NoActiveVerification(_),
-        )) => {
+        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - correct error type
         }
         other => panic!(
-            "Expected DatabaseError(NoActiveVerification) on VERIFIED state, got: {:?}",
+            "Expected NoActiveVerification on VERIFIED state, got: {:?}",
             other
         ),
     }
@@ -813,7 +771,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     // Verify database state unchanged
     let status_after: String =
         sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone_verified)
+            .bind(phone_verified.as_str())
             .fetch_one(db.pool())
             .await
             .expect("Should find verification");
@@ -823,10 +781,10 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     );
 
     // Scenario 2: Attempt send_code on FAILED state
-    let phone_failed = "+30222222222";
+    let phone_failed = PhoneNumber::new("+30222222222").unwrap();
 
     // Create verification
-    setup_prelude_create_verification(phone_failed, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone_failed, Some(ip), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -834,7 +792,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone_failed.to_string(),
+                phone_number: phone_failed.clone(),
             },
             ip,
         )
@@ -842,14 +800,14 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
         .expect("create_verification should succeed");
 
     // Mock expired_or_not_found to reach FAILED state
-    setup_prelude_check_code(phone_failed, "123456", "expired_or_not_found")
+    setup_prelude_check_code(&phone_failed, "123456", "expired_or_not_found")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
     let verify_result = service
         .send_code(SendCodeRequest {
-            phone_number: phone_failed.to_string(),
+            phone_number: phone_failed.clone(),
             code: "123456".to_string(),
         })
         .await
@@ -863,7 +821,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     // Verify state is FAILED
     let status_failed: String =
         sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone_failed)
+            .bind(phone_failed.as_str())
             .fetch_one(db.pool())
             .await
             .expect("Should find verification");
@@ -872,20 +830,18 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     // Attempt to send code again on FAILED state - should fail
     let result = service
         .send_code(SendCodeRequest {
-            phone_number: phone_failed.to_string(),
+            phone_number: phone_failed.clone(),
             code: "999999".to_string(),
         })
         .await;
 
     // Should return NoActiveVerification error
     match result {
-        Err(crate::SmsVerificationError::DatabaseError(
-            SmsVerificationRepositoryError::NoActiveVerification(_),
-        )) => {
+        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - correct error type
         }
         other => panic!(
-            "Expected DatabaseError(NoActiveVerification) on FAILED state, got: {:?}",
+            "Expected NoActiveVerification on FAILED state, got: {:?}",
             other
         ),
     }
@@ -893,7 +849,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     // Verify database state unchanged
     let status_after_failed: String =
         sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone_failed)
+            .bind(phone_failed.as_str())
             .fetch_one(db.pool())
             .await
             .expect("Should find verification");
@@ -909,11 +865,11 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
     let db = SqlDb::test(pool.clone()).await;
 
-    let phone = "+30333333333";
+    let phone = PhoneNumber::new("+30333333333").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Create verification
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -921,7 +877,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
             },
             ip,
         )
@@ -929,14 +885,14 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         .expect("create_verification should succeed");
 
     // Attempt 1: Wrong code
-    setup_prelude_check_code(phone, "111111", "failure")
+    setup_prelude_check_code(&phone, "111111", "failure")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
     let response1 = service
         .send_code(SendCodeRequest {
-            phone_number: phone.to_string(),
+            phone_number: phone.clone(),
             code: "111111".to_string(),
         })
         .await
@@ -951,7 +907,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     let (status1, finalised_at1): (String, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
         "SELECT status, finalised_at FROM sms_verifications WHERE phone_number = $1",
     )
-    .bind(phone)
+    .bind(phone.as_str())
     .fetch_one(db.pool())
     .await
     .expect("Should find verification");
@@ -963,14 +919,14 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     );
 
     // Attempt 2: Wrong code
-    setup_prelude_check_code(phone, "222222", "failure")
+    setup_prelude_check_code(&phone, "222222", "failure")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
     let response2 = service
         .send_code(SendCodeRequest {
-            phone_number: phone.to_string(),
+            phone_number: phone.clone(),
             code: "222222".to_string(),
         })
         .await
@@ -985,7 +941,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     let (status2, finalised_at2): (String, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
         "SELECT status, finalised_at FROM sms_verifications WHERE phone_number = $1",
     )
-    .bind(phone)
+    .bind(phone.as_str())
     .fetch_one(db.pool())
     .await
     .expect("Should find verification");
@@ -997,7 +953,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     );
 
     // Finally: Correct code
-    setup_prelude_check_code(phone, "123456", "success")
+    setup_prelude_check_code(&phone, "123456", "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1009,7 +965,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
 
     let response_success = service
         .send_code(SendCodeRequest {
-            phone_number: phone.to_string(),
+            phone_number: phone.clone(),
             code: "123456".to_string(),
         })
         .await
@@ -1028,7 +984,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     ) = sqlx::query_as(
         "SELECT status, finalised_at, signup_code FROM sms_verifications WHERE phone_number = $1",
     )
-    .bind(phone)
+    .bind(phone.as_str())
     .fetch_one(db.pool())
     .await
     .expect("Should find verification");
@@ -1050,15 +1006,15 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
     let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
     let db = SqlDb::test(pool.clone()).await;
 
-    let phone = "+30444444444";
+    let phone = PhoneNumber::new("+30444444444").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Mock Prelude to return "blocked" status with repeated_attempts reason
     setup_prelude_create_verification(
-        phone,
-        Some("127.0.0.1"),
+        &phone,
+        Some(ip),
         "blocked",
-        Some("repeated_attempts"),
+        Some(PreludeBlockedReason::RepeatedAttempts),
     )
     .expect(1)
     .mount(&servers.prelude_server)
@@ -1068,7 +1024,7 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
     let response = service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
             },
             ip,
         )
@@ -1091,7 +1047,7 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
     // Verify database state: record should be created and marked as FAILED
     let count: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone)
+            .bind(phone.as_str())
             .fetch_one(db.pool())
             .await
             .unwrap();
@@ -1108,7 +1064,7 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
     ) = sqlx::query_as(
         "SELECT status, failure_reason, finalised_at FROM sms_verifications WHERE phone_number = $1",
     )
-    .bind(phone)
+    .bind(phone.as_str())
     .fetch_one(db.pool())
     .await
     .expect("Should find verification");
@@ -1132,14 +1088,11 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
         "finalised_at should be set for blocked phone"
     );
 
-    // Verify that check_pending_exists returns NoActiveVerification
+    // Verify that check_pending_exists returns NotFound
     let repository = SmsVerificationRepository::new(db.clone());
-    let result = repository.check_pending_exists(phone).await;
+    let result = repository.check_pending_exists(&phone).await;
     assert!(
-        matches!(
-            result,
-            Err(SmsVerificationRepositoryError::NoActiveVerification(_))
-        ),
+        matches!(result, Err(SmsVerificationRepositoryError::NotFound(_))),
         "Blocked (FAILED) sessions should not be considered active"
     );
 }
@@ -1150,11 +1103,11 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
     let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
     let db = SqlDb::test(pool.clone()).await;
 
-    let phone = "+30555555555";
+    let phone = PhoneNumber::new("+30555555555").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Mock Prelude to return "retry" status (rate limit response)
-    setup_prelude_create_verification(phone, Some("127.0.0.1"), "retry", None)
+    setup_prelude_create_verification(&phone, Some(ip), "retry", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1163,7 +1116,7 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
     let response = service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone.to_string(),
+                phone_number: phone.clone(),
             },
             ip,
         )
@@ -1182,7 +1135,7 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
     // Based on service.rs:88-94, retry responses still create a record
     let count: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone)
+            .bind(phone.as_str())
             .fetch_one(db.pool())
             .await
             .unwrap();
@@ -1194,7 +1147,7 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
 
     let status: String =
         sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone)
+            .bind(phone.as_str())
             .fetch_one(db.pool())
             .await
             .expect("Should find verification");
@@ -1215,14 +1168,14 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Scenario 1: mark_verified on already VERIFIED record
-    let phone1 = "+30666666666";
+    let phone1 = PhoneNumber::new("+30666666666").unwrap();
 
-    setup_prelude_create_verification(phone1, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone1, Some(ip), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(phone1, "123456", "success")
+    setup_prelude_check_code(&phone1, "123456", "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1236,7 +1189,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone1.to_string(),
+                phone_number: phone1.clone(),
             },
             ip,
         )
@@ -1245,7 +1198,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
 
     service
         .send_code(SendCodeRequest {
-            phone_number: phone1.to_string(),
+            phone_number: phone1.clone(),
             code: "123456".to_string(),
         })
         .await
@@ -1255,7 +1208,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     let (prelude_id1, original_signup_code): (String, Vec<u8>) = sqlx::query_as(
         "SELECT prelude_id, signup_code FROM sms_verifications WHERE phone_number = $1",
     )
-    .bind(phone1)
+    .bind(phone1.as_str())
     .fetch_one(db.pool())
     .await
     .expect("Should find verification");
@@ -1319,11 +1272,11 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
 
     // Scenario 3: mark_verified on already FAILED record
     // Use a different phone number than phone1
-    let phone2 = "+30777777777";
+    let phone2 = PhoneNumber::new("+30777777777").unwrap();
 
     // Note: wiremock will return the same prelude_id for both phone1 and phone2,
     // but since they have different phone_numbers, they are separate records in the database
-    setup_prelude_create_verification(phone2, Some("127.0.0.1"), "success", None)
+    setup_prelude_create_verification(&phone2, Some(ip), "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1331,7 +1284,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     service
         .create_verification(
             CreateVerificationRequest {
-                phone_number: phone2.to_string(),
+                phone_number: phone2.clone(),
             },
             ip,
         )
@@ -1339,14 +1292,14 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
         .expect("create_verification should succeed");
 
     // Mock expired_or_not_found to reach FAILED state
-    setup_prelude_check_code(phone2, "123456", "expired_or_not_found")
+    setup_prelude_check_code(&phone2, "123456", "expired_or_not_found")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
     service
         .send_code(SendCodeRequest {
-            phone_number: phone2.to_string(),
+            phone_number: phone2.clone(),
             code: "123456".to_string(),
         })
         .await
@@ -1355,7 +1308,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     // Verify we have a FAILED record before trying to mark it as verified
     let (prelude_id2, status_before_mark): (String, String) =
         sqlx::query_as("SELECT prelude_id, status FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone2)
+            .bind(phone2.as_str())
             .fetch_one(db.pool())
             .await
             .expect("Should find verification");
@@ -1383,7 +1336,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     // Verify database unchanged (still FAILED) - query by phone_number to avoid ambiguity
     let status2: String =
         sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone2)
+            .bind(phone2.as_str())
             .fetch_one(db.pool())
             .await
             .expect("Should find verification");
@@ -1396,7 +1349,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     // Verify signup_code is still NULL for FAILED record
     let signup_code_failed: Option<Vec<u8>> =
         sqlx::query_scalar("SELECT signup_code FROM sms_verifications WHERE phone_number = $1")
-            .bind(phone2)
+            .bind(phone2.as_str())
             .fetch_one(db.pool())
             .await
             .expect("Should find verification");

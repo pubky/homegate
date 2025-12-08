@@ -13,7 +13,7 @@ impl MigrationTrait for M20251201CreateSmsVerifications {
             .table("sms_verifications")
             .if_not_exists()
             .col(
-                ColumnDef::new("unique_id")
+                ColumnDef::new("id")
                     .integer()
                     .not_null()
                     .auto_increment()
@@ -23,12 +23,12 @@ impl MigrationTrait for M20251201CreateSmsVerifications {
             .col(ColumnDef::new("prelude_id").text().not_null())
             .col(
                 ColumnDef::new("created_at")
-                    .timestamp_with_time_zone()
+                    .timestamp()
                     .not_null()
                     .default(sea_query::Expr::current_timestamp()),
             )
-            .col(ColumnDef::new("finalised_at").timestamp_with_time_zone())
-            .col(ColumnDef::new("signup_code").binary())
+            .col(ColumnDef::new("finalised_at").timestamp())
+            .col(ColumnDef::new("signup_code").text())
             .col(
                 ColumnDef::new("status")
                     .text()

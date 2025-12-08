@@ -17,8 +17,11 @@ use crate::{
     EnvConfig, infrastructure::http::RequestOrigin, sms_verification::app_state::AppState,
 };
 
-pub async fn router(config: &EnvConfig) -> Result<Router, SmsVerificationError> {
-    let state = AppState::from_config(config).await?;
+pub async fn router(
+    config: &EnvConfig,
+    db: crate::infrastructure::database::SqlDb,
+) -> Result<Router, SmsVerificationError> {
+    let state = AppState::new(config, db)?;
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/verify_code", post(verify_code_handler))
@@ -32,7 +35,7 @@ pub async fn router_with_db(
 ) -> Result<Router, SmsVerificationError> {
     use crate::sms_verification::app_state::AppState;
 
-    let state = AppState::from_config_with_db(config, db)?;
+    let state = AppState::new(config, db)?;
 
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
@@ -71,6 +74,11 @@ impl IntoResponse for SmsVerificationError {
             SmsVerificationError::TooManyVerifiedSessions => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "too_many_verified_sessions",
+                self.to_string(),
+            ),
+            SmsVerificationError::NoActiveVerification(ref _phone) => (
+                StatusCode::BAD_REQUEST,
+                "no_active_verification",
                 self.to_string(),
             ),
             SmsVerificationError::RequestFailed(ref err) => {

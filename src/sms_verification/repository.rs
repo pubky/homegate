@@ -1,5 +1,6 @@
 use crate::infrastructure::database::DbError;
 use crate::infrastructure::database::SqlDb;
+use crate::sms_verification::phone_number::PhoneNumber;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use sea_query_binder::SqlxBinder;
@@ -10,9 +11,6 @@ use thiserror::Error;
 pub enum SmsVerificationRepositoryError {
     #[error("SMS verification not found: {0}")]
     NotFound(String),
-
-    #[error("No active verification session for phone number: {0}")]
-    NoActiveVerification(String),
 
     #[error("{0}")]
     DatabaseError(#[from] DbError),
@@ -68,14 +66,14 @@ impl SmsVerificationRepository {
     /// Create a new SMS verification record only if no pending session exists for this phone_number
     pub async fn create_verification(
         &self,
-        phone_number: &str,
+        phone_number: &PhoneNumber,
         prelude_id: &str,
     ) -> Result<(), SmsVerificationRepositoryError> {
         // Build subquery to check for existing pending sessions
         let subquery = Query::select()
             .expr(Expr::value(1))
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(phone_number))
+            .and_where(Expr::col("phone_number").eq(phone_number.as_str()))
             .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
@@ -85,7 +83,7 @@ impl SmsVerificationRepository {
             .columns(["phone_number", "prelude_id"])
             .select_from(
                 Query::select()
-                    .expr(Expr::value(phone_number))
+                    .expr(Expr::value(phone_number.as_str()))
                     .expr(Expr::value(prelude_id))
                     .cond_where(Expr::exists(subquery).not())
                     .to_owned(),
@@ -103,12 +101,12 @@ impl SmsVerificationRepository {
 
     pub async fn count_verified_sessions(
         &self,
-        phone_number: &str,
+        phone_number: &PhoneNumber,
     ) -> Result<i64, SmsVerificationRepositoryError> {
         let statement = Query::select()
             .expr(Expr::col("unique_id").count())
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(phone_number))
+            .and_where(Expr::col("phone_number").eq(phone_number.as_str()))
             .and_where(Expr::col("status").eq(VerificationStatus::Verified.as_str()))
             .to_owned();
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -122,12 +120,12 @@ impl SmsVerificationRepository {
     /// Check if an active (pending) verification session exists for a phone number.
     pub async fn check_pending_exists(
         &self,
-        phone_number: &str,
+        phone_number: &PhoneNumber,
     ) -> Result<(), SmsVerificationRepositoryError> {
         let statement = Query::select()
             .expr(Expr::value(1))
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(phone_number))
+            .and_where(Expr::col("phone_number").eq(phone_number.as_str()))
             .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
@@ -138,7 +136,7 @@ impl SmsVerificationRepository {
 
         match row_result {
             Some(_) => Ok(()),
-            None => Err(SmsVerificationRepositoryError::NoActiveVerification(
+            None => Err(SmsVerificationRepositoryError::NotFound(
                 phone_number.to_string(),
             )),
         }

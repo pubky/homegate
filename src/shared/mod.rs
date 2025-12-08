@@ -1,3 +1,3 @@
-pub mod homeserver;
+mod homeserver_admin_api;
 
-pub use homeserver::{HomeserverAdminAPI, HomeserverAdminApiError};
+pub use homeserver_admin_api::{HomeserverAdminAPI, HomeserverAdminApiError};

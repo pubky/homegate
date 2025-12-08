@@ -136,19 +136,8 @@ impl PreludeAPI {
             .send()
             .await?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unable to read error response".to_string());
-            return Err(SmsVerificationError::ApiError {
-                status: status.as_u16(),
-                message: error_body,
-            });
-        }
-
         let verification_response = response
+            .error_for_status()?
             .json::<PreludeCreateVerificationResponse>()
             .await
             .map_err(|e| {
@@ -185,19 +174,8 @@ impl PreludeAPI {
             .send()
             .await?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unable to read error response".to_string());
-            return Err(SmsVerificationError::ApiError {
-                status: status.as_u16(),
-                message: error_body,
-            });
-        }
-
         let check_response = response
+            .error_for_status()?
             .json::<PreludeCheckCodeResponse>()
             .await
             .map_err(|e| {

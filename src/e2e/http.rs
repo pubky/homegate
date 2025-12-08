@@ -8,6 +8,7 @@ use super::{
     WiremockServers, setup_homeserver_signup_token, setup_prelude_check_code,
     setup_prelude_create_verification,
 };
+use crate::sms_verification::PhoneNumber;
 use axum_test::TestServer;
 use sqlx::PgPool;
 
@@ -42,9 +43,10 @@ async fn test_http_full_verification_flow(pool: PgPool) {
     let (server, pool) = create_http_test_server(pool, &servers).await;
 
     let phone = "+30123456789";
+    let phone_num = PhoneNumber::new(phone).unwrap();
 
     // 2. Setup Prelude create_verification mock
-    setup_prelude_create_verification(phone, None, "success", None)
+    setup_prelude_create_verification(&phone_num, None, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -60,7 +62,7 @@ async fn test_http_full_verification_flow(pool: PgPool) {
     assert_eq!(send_body["status"], "success");
 
     // 4. Setup Prelude check_code mock (success)
-    setup_prelude_check_code(phone, "123456", "success")
+    setup_prelude_check_code(&phone_num, "123456", "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -102,17 +104,24 @@ async fn test_http_error_response_format(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let (server, _pool) = create_http_test_server(pool, &servers).await;
 
-    // Test invalid phone number returns proper error format (no mock needed - validation before API)
+    // Test invalid phone number returns proper error format
     let response = server
         .post("/v1/sms_verification/send_code")
         .json(&serde_json::json!({ "phone_number": "invalid-phone" }))
         .await;
 
-    response.assert_status_bad_request();
-    let body: serde_json::Value = response.json();
-    assert!(body["error"].is_string(), "Should have 'error' field");
-    assert!(body["message"].is_string(), "Should have 'message' field");
-    assert_eq!(body["error"], "invalid_phone_number");
+    response.assert_status_unprocessable_entity();
+
+    // Verify the error message contains information about E.164 format
+    let body_text = response.text();
+    assert!(
+        body_text.contains("Invalid phone number format"),
+        "Error should mention invalid phone number format"
+    );
+    assert!(
+        body_text.contains("E.164"),
+        "Error should reference E.164 format"
+    );
 }
 
 #[sqlx::test]
@@ -120,11 +129,13 @@ async fn test_http_ip_extraction_with_x_forwarded_for(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let (server, _pool) = create_http_test_server(pool, &servers).await;
     let phone = "+30111111111";
+    let phone_num = PhoneNumber::new(phone).unwrap();
+    let ip = "203.0.113.1".parse().unwrap();
 
     // Setup mock that expects the IP address in the request body
     setup_prelude_create_verification(
-        phone,
-        Some("203.0.113.1"), // Expect this IP to be sent
+        &phone_num,
+        Some(ip), // Expect this IP to be sent
         "success",
         None,
     )
@@ -151,11 +162,13 @@ async fn test_http_ip_extraction_with_x_real_ip(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let (server, _pool) = create_http_test_server(pool, &servers).await;
     let phone = "+30222222222";
+    let phone_num = PhoneNumber::new(phone).unwrap();
+    let ip = "198.51.100.1".parse().unwrap();
 
     // Setup mock that expects the IP address in the request body
     setup_prelude_create_verification(
-        phone,
-        Some("198.51.100.1"), // Expect this IP to be sent
+        &phone_num,
+        Some(ip), // Expect this IP to be sent
         "success",
         None,
     )
@@ -239,9 +252,10 @@ async fn test_http_verify_code_status_codes(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let (server, _pool) = create_http_test_server(pool, &servers).await;
     let phone = "+30555555555";
+    let phone_num = PhoneNumber::new(phone).unwrap();
 
     // Setup mock for send_code
-    setup_prelude_create_verification(phone, None, "success", None)
+    setup_prelude_create_verification(&phone_num, None, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -253,7 +267,7 @@ async fn test_http_verify_code_status_codes(pool: PgPool) {
         .await;
 
     // Setup mock for wrong code - returns "failure"
-    setup_prelude_check_code(phone, "wrong_code", "failure")
+    setup_prelude_check_code(&phone_num, "wrong_code", "failure")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -275,7 +289,7 @@ async fn test_http_verify_code_status_codes(pool: PgPool) {
     );
 
     // Setup mock for correct code - returns "success"
-    setup_prelude_check_code(phone, "123456", "success")
+    setup_prelude_check_code(&phone_num, "123456", "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;

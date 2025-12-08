@@ -3,7 +3,10 @@ use std::{
     time::Duration,
 };
 
-use crate::{EnvConfig, sms_verification::http::router};
+use crate::{
+    EnvConfig, infrastructure::database::SqlDb, sms_verification::http::router,
+    sms_verification::repository::SmsVerificationRepositoryError,
+};
 
 use axum::{Router, response::IntoResponse, routing::get};
 use axum_server::Handle;
@@ -24,7 +27,11 @@ impl HttpServer {
     }
 
     pub async fn start(config: EnvConfig) -> anyhow::Result<Self> {
-        let sms_verification_router = router(&config).await?;
+        let db = SqlDb::connect(&config.database_url)
+            .await
+            .map_err(SmsVerificationRepositoryError::Database)?;
+
+        let sms_verification_router = router(&config, db).await?;
         let router = Self::create_router(sms_verification_router);
 
         let (http_handle, http_socket) =

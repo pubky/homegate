@@ -1,5 +1,8 @@
 use crate::EnvConfig;
+use crate::sms_verification::PhoneNumber;
+use crate::sms_verification::prelude_api::PreludeBlockedReason;
 use serde_json::json;
+use std::net::IpAddr;
 use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -32,23 +35,23 @@ impl WiremockServers {
 
 /// Setup mock for Prelude API create_verification endpoint (POST /v2/verification)
 pub fn setup_prelude_create_verification(
-    phone_number: &str,
-    ip_address: Option<&str>,
+    phone_number: &PhoneNumber,
+    ip_address: Option<IpAddr>,
     response_status: &str,
-    reason: Option<&str>,
+    reason: Option<PreludeBlockedReason>,
 ) -> Mock {
     use wiremock::matchers::body_partial_json;
 
     let mut body = json!({
         "target": {
             "type": "phone_number",
-            "value": phone_number
+            "value": phone_number.as_str()
         }
     });
 
     if let Some(ip) = ip_address {
         body["signals"] = json!({
-            "ip_address": ip
+            "ip_address": ip.to_string()
         });
     }
 
@@ -75,7 +78,11 @@ pub fn setup_prelude_create_verification(
 }
 
 /// Setup mock for Prelude API check_code endpoint (POST /v2/verification/check)
-pub fn setup_prelude_check_code(phone_number: &str, code: &str, response_status: &str) -> Mock {
+pub fn setup_prelude_check_code(
+    phone_number: &PhoneNumber,
+    code: &str,
+    response_status: &str,
+) -> Mock {
     Mock::given(method("POST"))
         .and(path("/v2/verification/check"))
         .and(header("Authorization", "Bearer test-key"))
@@ -83,7 +90,7 @@ pub fn setup_prelude_check_code(phone_number: &str, code: &str, response_status:
         .and(body_json(json!({
             "target": {
                 "type": "phone_number",
-                "value": phone_number
+                "value": phone_number.as_str()
             },
             "code": code
         })))
