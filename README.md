@@ -14,10 +14,10 @@ Tests require a PostgreSQL connection string for database integration tests:
 
 ```bash
 # Run all tests
-TEST_PUBKY_CONNECTION_STRING=postgres://postgres:postgres@localhost:5432/pubky_homegate?pubky-test=true cargo test
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/pubky_homegate?pubky-test=true cargo test
 
 # Run only E2E HTTP tests
-TEST_PUBKY_CONNECTION_STRING=postgres://postgres:postgres@localhost:5432/pubky_homegate?pubky-test=true cargo test --lib e2e::
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/pubky_homegate?pubky-test=true cargo test --lib e2e::
 ```
 
 ### Test Structure

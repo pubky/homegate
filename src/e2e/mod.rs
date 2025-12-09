@@ -20,11 +20,20 @@ async fn create_service_with_mocked_apis(
     pool: PgPool,
     servers: &WiremockServers,
 ) -> SmsVerificationService {
-    let config = servers.create_config();
+    use crate::EnvConfig;
+
+    let config = EnvConfig::for_test(
+        servers.prelude_server.uri().parse().unwrap(),
+        servers.homeserver_server.uri().parse().unwrap(),
+    );
     let db = SqlDb::test(pool.clone()).await;
 
-    let prelude_api = PreludeAPI::from_config(&config);
-    let homeserver_admin_api = HomeserverAdminAPI::from_config(&config);
+    let prelude_api = PreludeAPI::new(&config.prelude_api_url, &config.prelude_api_key);
+    let homeserver_admin_api = HomeserverAdminAPI::new(
+        &config.homeserver_admin_api_url,
+        &config.homeserver_admin_password,
+        &config.homeserver_pubky,
+    );
 
     let repository = SmsVerificationRepository::new(db);
     SmsVerificationService::new(repository, prelude_api, homeserver_admin_api, 10)

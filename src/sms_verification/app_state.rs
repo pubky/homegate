@@ -14,8 +14,12 @@ impl AppState {
     pub fn new(config: &EnvConfig, db: SqlDb) -> Result<Self, SmsVerificationError> {
         use crate::sms_verification::repository::SmsVerificationRepository;
 
-        let prelude_api = PreludeAPI::from_config(config);
-        let homeserver_admin_api = HomeserverAdminAPI::from_config(config);
+        let prelude_api = PreludeAPI::new(&config.prelude_api_url, &config.prelude_api_key);
+        let homeserver_admin_api = HomeserverAdminAPI::new(
+            &config.homeserver_admin_api_url,
+            &config.homeserver_admin_password,
+            &config.homeserver_pubky,
+        );
 
         let sms_repo = SmsVerificationRepository::new(db.clone());
         let sms_verification = SmsVerificationService::new(

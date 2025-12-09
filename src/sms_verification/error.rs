@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::sms_verification::repository::SmsVerificationRepositoryError;
+use crate::infrastructure::database::DbError;
 
 #[derive(Error, Debug)]
 pub enum SmsVerificationError {
@@ -18,15 +18,6 @@ pub enum SmsVerificationError {
     #[error("HTTP request failed: {0}")]
     RequestFailed(#[from] reqwest::Error),
 
-    #[error("Database error: {0}")]
-    DatabaseError(#[from] SmsVerificationRepositoryError),
-
-    #[error("API error (status {status}): {message}")]
-    ApiError { status: u16, message: String },
-
-    #[error("Invalid response from API: {0}")]
-    InvalidResponse(String),
-
-    #[error("Homeserver admin API error: {0}")]
-    HomeserverAdminError(#[from] crate::shared::HomeserverAdminApiError),
+    #[error("{0}")]
+    Database(#[from] DbError),
 }

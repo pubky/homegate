@@ -1,5 +1,3 @@
-use crate::EnvConfig;
-use crate::sms_verification::SmsVerificationError;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use url::Url;
@@ -99,11 +97,11 @@ pub enum PreludeCheckCodeResponse {
 }
 
 impl PreludeAPI {
-    pub fn from_config(config: &EnvConfig) -> Self {
+    pub fn new(base_url: &Url, api_key: &String) -> Self {
         Self {
             http_client: reqwest::Client::new(),
-            api_key: config.prelude_api_key.clone(),
-            base_url: config.prelude_api_url.clone(),
+            api_key: api_key.clone(),
+            base_url: base_url.clone(),
         }
     }
 
@@ -112,7 +110,7 @@ impl PreludeAPI {
         &self,
         phone_number: &str,
         ip_address: Option<IpAddr>,
-    ) -> Result<PreludeCreateVerificationResponse, SmsVerificationError> {
+    ) -> Result<PreludeCreateVerificationResponse, reqwest::Error> {
         let request_body = PreludeCreateVerificationRequest {
             target: Target {
                 target_type: "phone_number".to_string(),
@@ -139,10 +137,7 @@ impl PreludeAPI {
         let verification_response = response
             .error_for_status()?
             .json::<PreludeCreateVerificationResponse>()
-            .await
-            .map_err(|e| {
-                SmsVerificationError::InvalidResponse(format!("Failed to parse response: {}", e))
-            })?;
+            .await?;
 
         Ok(verification_response)
     }
@@ -152,7 +147,7 @@ impl PreludeAPI {
         &self,
         phone_number: &str,
         code: &str,
-    ) -> Result<PreludeCheckCodeResponse, SmsVerificationError> {
+    ) -> Result<PreludeCheckCodeResponse, reqwest::Error> {
         let request_body = PreludeCheckCodeRequest {
             target: Target {
                 target_type: "phone_number".to_string(),
@@ -177,10 +172,7 @@ impl PreludeAPI {
         let check_response = response
             .error_for_status()?
             .json::<PreludeCheckCodeResponse>()
-            .await
-            .map_err(|e| {
-                SmsVerificationError::InvalidResponse(format!("Failed to parse response: {}", e))
-            })?;
+            .await?;
 
         Ok(check_response)
     }

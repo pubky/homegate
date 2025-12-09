@@ -4,8 +4,12 @@ use std::{
 };
 
 use crate::{
-    EnvConfig, infrastructure::database::SqlDb, sms_verification::http::router,
-    sms_verification::repository::SmsVerificationRepositoryError,
+    EnvConfig,
+    infrastructure::{
+        database::{DbError, SqlDb},
+        http::HttpServerError,
+    },
+    sms_verification::http::router,
 };
 
 use axum::{Router, response::IntoResponse, routing::get};
@@ -26,10 +30,10 @@ impl HttpServer {
             .layer(TraceLayer::new_for_http())
     }
 
-    pub async fn start(config: EnvConfig) -> anyhow::Result<Self> {
+    pub async fn start(config: EnvConfig) -> Result<Self, HttpServerError> {
         let db = SqlDb::connect(&config.database_url)
             .await
-            .map_err(SmsVerificationRepositoryError::Database)?;
+            .map_err(DbError::from)?;
 
         let sms_verification_router = router(&config, db).await?;
         let router = Self::create_router(sms_verification_router);
@@ -46,7 +50,7 @@ impl HttpServer {
     async fn start_http_server(
         listen_socket: std::net::SocketAddr,
         router: Router,
-    ) -> anyhow::Result<(Handle, SocketAddr)> {
+    ) -> Result<(Handle, SocketAddr), HttpServerError> {
         let http_listener = TcpListener::bind(listen_socket)?;
         let http_socket = http_listener.local_addr()?;
         let http_handle = Handle::new();

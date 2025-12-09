@@ -14,10 +14,14 @@ use sqlx::PgPool;
 
 // Helper function to create HTTP test server with mocked external APIs
 async fn create_http_test_server(pool: PgPool, servers: &WiremockServers) -> (TestServer, PgPool) {
+    use crate::EnvConfig;
     use crate::infrastructure::database::SqlDb;
     use std::net::SocketAddr;
 
-    let config = servers.create_config();
+    let config = EnvConfig::for_test(
+        servers.prelude_server.uri().parse().unwrap(),
+        servers.homeserver_server.uri().parse().unwrap(),
+    );
 
     // Create SqlDb from the pool with migrations
     let db = SqlDb::test(pool.clone()).await;

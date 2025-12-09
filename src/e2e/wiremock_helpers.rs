@@ -1,4 +1,3 @@
-use crate::EnvConfig;
 use crate::sms_verification::PhoneNumber;
 use crate::sms_verification::prelude_api::PreludeBlockedReason;
 use serde_json::json;
@@ -16,19 +15,6 @@ impl WiremockServers {
         Self {
             prelude_server: MockServer::start().await,
             homeserver_server: MockServer::start().await,
-        }
-    }
-
-    pub fn create_config(&self) -> EnvConfig {
-        EnvConfig {
-            database_url: Default::default(),
-            http_listen_socket: "127.0.0.1:0".parse().unwrap(),
-            prelude_api_key: "test-key".to_string(),
-            prelude_api_url: self.prelude_server.uri().parse().unwrap(),
-            homeserver_admin_api_url: self.homeserver_server.uri().parse().unwrap(),
-            homeserver_admin_password: "test-pass".to_string(),
-            homeserver_pubky: "test-homeserver-pubky".to_string(),
-            max_verified_sessions: 10,
         }
     }
 }

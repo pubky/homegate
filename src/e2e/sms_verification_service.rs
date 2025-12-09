@@ -6,10 +6,8 @@
 //! add tests to `http.rs` instead.
 
 use crate::e2e::{create_service_with_mocked_apis, wiremock_helpers::*};
-use crate::infrastructure::database::SqlDb;
-use crate::sms_verification::repository::{
-    SmsVerificationRepository, SmsVerificationRepositoryError,
-};
+use crate::infrastructure::database::{DbError, SqlDb};
+use crate::sms_verification::repository::{SmsVerificationRepository, VerificationStatus};
 use crate::sms_verification::{
     CreateVerificationRequest, CreateVerificationResponse, PhoneNumber, SendCodeRequest,
     SendCodeResponse,
@@ -59,32 +57,29 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     ));
 
     // Step 1.5: Check database after initiation
-    let after_init: (
-        String,
-        String,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Option<Vec<u8>>,
-        String,
-    ) = sqlx::query_as(
-        "SELECT phone_number, prelude_id, finalised_at, signup_code, status FROM sms_verifications WHERE phone_number = $1",
-    )
-    .bind(phone.as_str())
-    .fetch_one(db.pool())
-    .await
-    .expect("Should find verification after init");
+    let repository = SmsVerificationRepository::new(db.clone());
+    let after_init = repository
+        .get_by_phone_number(&phone)
+        .await
+        .expect("Should find verification after init");
 
-    assert_eq!(after_init.0, phone.as_str(), "Phone number should match");
-    let verification_id = after_init.1.clone();
+    assert_eq!(
+        after_init.phone_number,
+        phone.as_str(),
+        "Phone number should match"
+    );
+    let verification_id = after_init.prelude_id.clone();
     assert!(
-        after_init.2.is_none(),
+        after_init.finalised_at.is_none(),
         "finalised_at should be NULL after init"
     );
     assert!(
-        after_init.3.is_none(),
+        after_init.signup_code.is_none(),
         "signup_code should be NULL after init"
     );
     assert_eq!(
-        after_init.4, "PENDING",
+        after_init.status,
+        VerificationStatus::Pending,
         "status should be PENDING after init"
     );
 
@@ -100,33 +95,25 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     assert!(matches!(check_response, SendCodeResponse::Success { .. }));
 
     // Step 3: Query database to verify state updated correctly
-    let after_verify: (
-        String,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Option<Vec<u8>>,
-        String,
-    ) = sqlx::query_as(
-        "SELECT phone_number, finalised_at, signup_code, status FROM sms_verifications WHERE prelude_id = $1",
-    )
-    .bind(&verification_id)
-    .fetch_one(db.pool())
-    .await
-    .expect("Should find verification in database");
+    let after_verify = repository
+        .get_by_prelude_id(&verification_id)
+        .await
+        .expect("Should find verification in database");
 
     assert_eq!(
-        after_verify.0,
+        after_verify.phone_number,
         phone.as_str(),
         "Phone number should still match"
     );
     assert!(
-        after_verify.1.is_some(),
+        after_verify.finalised_at.is_some(),
         "finalised_at should be set after successful verification"
     );
 
     // Check that finalised_at is recent (within last minute)
-    let finalised_at = after_verify.1.unwrap();
-    let now = chrono::Utc::now();
-    let diff_secs = (now.timestamp() - finalised_at.timestamp()).abs();
+    let finalised_at = after_verify.finalised_at.unwrap();
+    let now = chrono::Utc::now().naive_utc();
+    let diff_secs = (now.and_utc().timestamp() - finalised_at.and_utc().timestamp()).abs();
     assert!(
         diff_secs < 60,
         "finalised_at should be recent (was {} seconds ago)",
@@ -135,25 +122,18 @@ async fn test_service_full_verification_flow(pool: PgPool) {
 
     // Check signup code
     assert!(
-        after_verify.2.is_some(),
+        after_verify.signup_code.is_some(),
         "signup_code should be generated after verification"
     );
-    let signup_code_bytes = after_verify.2.unwrap();
+    let signup_code_str = after_verify.signup_code.as_ref().unwrap();
     assert_eq!(
-        after_verify.3, "VERIFIED",
+        after_verify.status,
+        VerificationStatus::Verified,
         "status should be VERIFIED after successful verification"
     );
     assert!(
-        !signup_code_bytes.is_empty(),
-        "signup_code should not be empty"
-    );
-
-    // Verify it's a valid UTF-8 string (since we generate UUID)
-    let signup_code_str =
-        String::from_utf8(signup_code_bytes).expect("signup_code should be valid UTF-8");
-    assert!(
         !signup_code_str.is_empty(),
-        "signup_code string should not be empty"
+        "signup_code should not be empty"
     );
 }
 
@@ -529,31 +509,28 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     );
 
     // Step 5: Verify database state
-    let (status, failure_reason, finalised_at): (
-        String,
-        Option<String>,
-        Option<chrono::DateTime<chrono::Utc>>,
-    ) = sqlx::query_as(
-        "SELECT status, failure_reason, finalised_at FROM sms_verifications WHERE phone_number = $1",
-    )
-    .bind(phone.as_str())
-    .fetch_one(db.pool())
-    .await
-    .expect("Should find verification record");
+    let repository = SmsVerificationRepository::new(db.clone());
+    let record = repository
+        .get_by_phone_number(&phone)
+        .await
+        .expect("Should find verification record");
 
-    assert_eq!(status, "FAILED", "status should be FAILED");
     assert_eq!(
-        failure_reason,
+        record.status,
+        VerificationStatus::Failed,
+        "status should be FAILED"
+    );
+    assert_eq!(
+        record.failure_reason,
         Some("expired_or_not_found".to_string()),
         "failure_reason should be set"
     );
-    assert!(finalised_at.is_some(), "finalised_at should be set");
+    assert!(record.finalised_at.is_some(), "finalised_at should be set");
 
     // Step 6: Verify that check_pending_exists returns NotFound
-    let repository = SmsVerificationRepository::new(db.clone());
-    let result = repository.check_pending_exists(&phone).await;
+    let result = repository.err_if_no_active_verification(&phone).await;
     assert!(
-        matches!(result, Err(SmsVerificationRepositoryError::NotFound(_))),
+        matches!(result, Err(DbError::NotFound(_))),
         "Failed sessions should not be considered active"
     );
 
@@ -632,7 +609,7 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
 
     // Step 3: Verify that the original phone number still has a pending verification
     let repository = SmsVerificationRepository::new(db.clone());
-    let check_result = repository.check_pending_exists(&phone_send).await;
+    let check_result = repository.err_if_no_active_verification(&phone_send).await;
     assert!(
         check_result.is_ok(),
         "Original phone number should still have pending verification"
@@ -904,17 +881,19 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     );
 
     // Verify status remains PENDING
-    let (status1, finalised_at1): (String, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
-        "SELECT status, finalised_at FROM sms_verifications WHERE phone_number = $1",
-    )
-    .bind(phone.as_str())
-    .fetch_one(db.pool())
-    .await
-    .expect("Should find verification");
+    let repository = SmsVerificationRepository::new(db.clone());
+    let record1 = repository
+        .get_by_phone_number(&phone)
+        .await
+        .expect("Should find verification");
 
-    assert_eq!(status1, "PENDING", "Status should remain PENDING");
+    assert_eq!(
+        record1.status,
+        VerificationStatus::Pending,
+        "Status should remain PENDING"
+    );
     assert!(
-        finalised_at1.is_none(),
+        record1.finalised_at.is_none(),
         "finalised_at should remain NULL after wrong code"
     );
 
@@ -938,17 +917,18 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     );
 
     // Verify status still PENDING
-    let (status2, finalised_at2): (String, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
-        "SELECT status, finalised_at FROM sms_verifications WHERE phone_number = $1",
-    )
-    .bind(phone.as_str())
-    .fetch_one(db.pool())
-    .await
-    .expect("Should find verification");
+    let record2 = repository
+        .get_by_phone_number(&phone)
+        .await
+        .expect("Should find verification");
 
-    assert_eq!(status2, "PENDING", "Status should still be PENDING");
+    assert_eq!(
+        record2.status,
+        VerificationStatus::Pending,
+        "Status should still be PENDING"
+    );
     assert!(
-        finalised_at2.is_none(),
+        record2.finalised_at.is_none(),
         "finalised_at should remain NULL after second wrong code"
     );
 
@@ -979,8 +959,8 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     // Verify final state is VERIFIED
     let (status_final, finalised_at_final, signup_code): (
         String,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Option<Vec<u8>>,
+        Option<chrono::NaiveDateTime>,
+        Option<String>,
     ) = sqlx::query_as(
         "SELECT status, finalised_at, signup_code FROM sms_verifications WHERE phone_number = $1",
     )
@@ -1060,7 +1040,7 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
     let (status, failure_reason, finalised_at): (
         String,
         Option<String>,
-        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::NaiveDateTime>,
     ) = sqlx::query_as(
         "SELECT status, failure_reason, finalised_at FROM sms_verifications WHERE phone_number = $1",
     )
@@ -1090,9 +1070,9 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
 
     // Verify that check_pending_exists returns NotFound
     let repository = SmsVerificationRepository::new(db.clone());
-    let result = repository.check_pending_exists(&phone).await;
+    let result = repository.err_if_no_active_verification(&phone).await;
     assert!(
-        matches!(result, Err(SmsVerificationRepositoryError::NotFound(_))),
+        matches!(result, Err(DbError::NotFound(_))),
         "Blocked (FAILED) sessions should not be considered active"
     );
 }
@@ -1205,13 +1185,12 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
         .expect("send_code should succeed");
 
     // Get the prelude_id and original signup_code
-    let (prelude_id1, original_signup_code): (String, Vec<u8>) = sqlx::query_as(
-        "SELECT prelude_id, signup_code FROM sms_verifications WHERE phone_number = $1",
-    )
-    .bind(phone1.as_str())
-    .fetch_one(db.pool())
-    .await
-    .expect("Should find verification");
+    let record1 = repository
+        .get_by_phone_number(&phone1)
+        .await
+        .expect("Should find verification");
+    let prelude_id1 = record1.prelude_id;
+    let original_signup_code = record1.signup_code.expect("signup_code should be set");
 
     // Try to call mark_verified again with different signup code
     let different_signup_code = "different-signup-code";
@@ -1221,7 +1200,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
 
     // Should return NotFound error (0 rows affected)
     match result {
-        Err(SmsVerificationRepositoryError::NotFound(_)) => {
+        Err(DbError::NotFound(_)) => {
             // Test passes - correct error type
         }
         other => panic!(
@@ -1231,7 +1210,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     }
 
     // Verify database unchanged (still has original signup code)
-    let signup_code_after: Vec<u8> =
+    let signup_code_after: String =
         sqlx::query_scalar("SELECT signup_code FROM sms_verifications WHERE prelude_id = $1")
             .bind(&prelude_id1)
             .fetch_one(db.pool())
@@ -1248,7 +1227,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
 
     // Should return NotFound error (0 rows affected)
     match result {
-        Err(SmsVerificationRepositoryError::NotFound(_)) => {
+        Err(DbError::NotFound(_)) => {
             // Test passes - correct error type
         }
         other => panic!(
@@ -1324,7 +1303,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
 
     // Should return NotFound error (0 rows affected)
     match result {
-        Err(SmsVerificationRepositoryError::NotFound(_)) => {
+        Err(DbError::NotFound(_)) => {
             // Test passes - correct error type
         }
         other => panic!(
@@ -1347,7 +1326,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     );
 
     // Verify signup_code is still NULL for FAILED record
-    let signup_code_failed: Option<Vec<u8>> =
+    let signup_code_failed: Option<String> =
         sqlx::query_scalar("SELECT signup_code FROM sms_verifications WHERE phone_number = $1")
             .bind(phone2.as_str())
             .fetch_one(db.pool())

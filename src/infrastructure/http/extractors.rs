@@ -1,7 +1,10 @@
 use axum::{
-    extract::{ConnectInfo, FromRequestParts},
+    extract::{ConnectInfo, FromRequest, FromRequestParts, Request},
     http::{HeaderMap, request::Parts},
+    response::{IntoResponse, Response},
 };
+use serde::de::DeserializeOwned;
+use std::marker::PhantomData;
 use std::net::{IpAddr, SocketAddr};
 
 // Inspired by https://github.com/benwis/tower-governor/blob/main/src/key_extractor.rs#L121
@@ -45,6 +48,50 @@ where
             .or_else(|| maybe_x_real_ip(&headers))
             .unwrap_or_else(|| addr.ip());
         Ok(RequestOrigin(ip))
+    }
+}
+
+/// Generic extractor that deserializes JSON and validates it using TryFrom
+///
+/// The reason for this is so that our Http Request parameters can be validated as part of deserialisation.
+/// Without this, a failed validation returns an error string, instead of the desired Http Response JSON error.
+///
+/// The type `T` must implement `TryFrom<Raw>` where `Raw` is deserializable from JSON.
+pub struct ValidatedJson<T, Raw, E>(T, PhantomData<(Raw, E)>)
+where
+    Raw: DeserializeOwned,
+    T: TryFrom<Raw, Error = E>,
+    E: IntoResponse;
+
+impl<T, Raw, E> ValidatedJson<T, Raw, E>
+where
+    Raw: DeserializeOwned,
+    T: TryFrom<Raw, Error = E>,
+    E: IntoResponse,
+{
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T, Raw, E, S> FromRequest<S> for ValidatedJson<T, Raw, E>
+where
+    Raw: DeserializeOwned,
+    T: TryFrom<Raw, Error = E>,
+    E: IntoResponse,
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        // First, deserialize the JSON into the raw type
+        // Preserve Axum's default rejection handling (eg 415 for malformed JSON or 422 for validation errors)
+        let axum::Json(raw) = axum::Json::<Raw>::from_request(req, state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+        // Then, validate and convert to the final type
+        let validated = T::try_from(raw).map_err(|e| e.into_response())?;
+        Ok(ValidatedJson(validated, PhantomData))
     }
 }
 

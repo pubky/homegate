@@ -42,7 +42,7 @@ impl SmsVerificationService {
             .repository
             .count_verified_sessions(phone_number)
             .await
-            .map_err(SmsVerificationError::DatabaseError)?;
+            .map_err(SmsVerificationError::Database)?;
         if count >= self.max_verified_sessions as i64 {
             return Err(SmsVerificationError::TooManyVerifiedSessions);
         }
@@ -101,9 +101,8 @@ impl SmsVerificationService {
         &self,
         request: SendCodeRequest,
     ) -> Result<SendCodeResponse, SmsVerificationError> {
-        // Confirm first that there's an active verification session in our database
         self.repository
-            .check_pending_exists(&request.phone_number)
+            .err_if_no_active_verification(&request.phone_number)
             .await
             .map_err(|_| {
                 SmsVerificationError::NoActiveVerification(request.phone_number.to_string())

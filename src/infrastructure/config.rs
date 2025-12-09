@@ -34,6 +34,20 @@ impl EnvConfig {
     pub fn load() -> Result<EnvConfig, envy::Error> {
         envy::prefixed("HG_").from_env::<EnvConfig>()
     }
+
+    #[cfg(test)]
+    pub fn for_test(prelude_api_url: Url, homeserver_admin_api_url: Url) -> Self {
+        Self {
+            database_url: Default::default(),
+            http_listen_socket: "127.0.0.1:0".parse().unwrap(),
+            prelude_api_key: "test-key".to_string(),
+            prelude_api_url,
+            homeserver_admin_api_url,
+            homeserver_admin_password: "test-pass".to_string(),
+            homeserver_pubky: "test-homeserver-pubky".to_string(),
+            max_verified_sessions: 10,
+        }
+    }
 }
 
 #[cfg(test)]
