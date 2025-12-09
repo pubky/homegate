@@ -97,10 +97,10 @@ pub enum PreludeCheckCodeResponse {
 }
 
 impl PreludeAPI {
-    pub fn new(base_url: &Url, api_key: &String) -> Self {
+    pub fn new(base_url: &Url, api_key: &str) -> Self {
         Self {
             http_client: reqwest::Client::new(),
-            api_key: api_key.clone(),
+            api_key: api_key.to_owned(),
             base_url: base_url.clone(),
         }
     }

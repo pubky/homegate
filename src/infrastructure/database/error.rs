@@ -7,4 +7,7 @@ pub enum DbError {
 
     #[error("Database item not found: {0}")]
     NotFound(String),
+
+    #[error("Phone number hashing error: {0}")]
+    HashingError(#[from] crate::sms_verification::PhoneHasherError),
 }

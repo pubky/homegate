@@ -1,5 +1,6 @@
 use crate::infrastructure::database::DbError;
 use crate::infrastructure::database::SqlDb;
+use crate::sms_verification::phone_hasher::PhoneHasher;
 use crate::sms_verification::phone_number::PhoneNumber;
 use chrono::NaiveDateTime;
 use sea_query::{Expr, PostgresQueryBuilder, Query};
@@ -42,11 +43,12 @@ pub struct SmsVerificationEntity {
 #[derive(Clone, Debug)]
 pub struct SmsVerificationRepository {
     db: SqlDb,
+    phone_hasher: PhoneHasher,
 }
 
 impl SmsVerificationRepository {
-    pub fn new(db: SqlDb) -> Self {
-        Self { db }
+    pub fn new(db: SqlDb, phone_hasher: PhoneHasher) -> Self {
+        Self { db, phone_hasher }
     }
 
     /// Create a new SMS verification record only if no pending session exists for this phone_number
@@ -55,11 +57,13 @@ impl SmsVerificationRepository {
         phone_number: &PhoneNumber,
         prelude_id: &str,
     ) -> Result<(), DbError> {
+        let hashed_phone = self.phone_hasher.hash_phone_number(phone_number.as_str())?;
+
         // Build subquery to check for existing pending sessions
         let subquery = Query::select()
             .expr(Expr::value(1))
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(phone_number.as_str()))
+            .and_where(Expr::col("phone_number").eq(hashed_phone.as_str()))
             .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
@@ -69,7 +73,7 @@ impl SmsVerificationRepository {
             .columns(["phone_number", "prelude_id"])
             .select_from(
                 Query::select()
-                    .expr(Expr::value(phone_number.as_str()))
+                    .expr(Expr::value(hashed_phone.as_str()))
                     .expr(Expr::value(prelude_id))
                     .cond_where(Expr::exists(subquery).not())
                     .to_owned(),
@@ -90,10 +94,12 @@ impl SmsVerificationRepository {
         &self,
         phone_number: &PhoneNumber,
     ) -> Result<i64, DbError> {
+        let hashed_phone = self.phone_hasher.hash_phone_number(phone_number.as_str())?;
+
         let statement = Query::select()
             .expr(Expr::col("id").count())
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(phone_number.as_str()))
+            .and_where(Expr::col("phone_number").eq(hashed_phone.as_str()))
             .and_where(Expr::col("status").eq(VerificationStatus::Verified.as_str()))
             .to_owned();
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -110,10 +116,12 @@ impl SmsVerificationRepository {
         &self,
         phone_number: &PhoneNumber,
     ) -> Result<(), DbError> {
+        let hashed_phone = self.phone_hasher.hash_phone_number(phone_number.as_str())?;
+
         let statement = Query::select()
             .expr(Expr::value(1))
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(phone_number.as_str()))
+            .and_where(Expr::col("phone_number").eq(hashed_phone.as_str()))
             .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
@@ -185,6 +193,8 @@ impl SmsVerificationRepository {
         &self,
         phone_number: &PhoneNumber,
     ) -> Result<SmsVerificationEntity, DbError> {
+        let hashed_phone = self.phone_hasher.hash_phone_number(phone_number.as_str())?;
+
         let statement = Query::select()
             .columns([
                 "id",
@@ -197,7 +207,7 @@ impl SmsVerificationRepository {
                 "failure_reason",
             ])
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(phone_number.as_str()))
+            .and_where(Expr::col("phone_number").eq(hashed_phone.as_str()))
             .to_owned();
 
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);

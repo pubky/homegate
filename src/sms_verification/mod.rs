@@ -1,6 +1,7 @@
 mod app_state;
 mod error;
 pub mod http;
+pub(crate) mod phone_hasher;
 mod phone_number;
 pub mod prelude_api;
 pub mod repository;
@@ -8,6 +9,7 @@ pub mod service;
 mod types;
 
 pub use error::SmsVerificationError;
+pub use phone_hasher::{PhoneHasher, PhoneHasherError};
 pub use phone_number::PhoneNumber;
 pub use repository::SmsVerificationRepository;
 pub use service::SmsVerificationService;

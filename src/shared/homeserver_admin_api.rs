@@ -9,12 +9,12 @@ pub struct HomeserverAdminAPI {
 }
 
 impl HomeserverAdminAPI {
-    pub fn new(base_url: &Url, admin_password: &String, homeserver_pubky: &String) -> Self {
+    pub fn new(base_url: &Url, admin_password: &str, homeserver_pubky: &str) -> Self {
         Self {
             http_client: reqwest::Client::new(),
-            admin_password: admin_password.clone(),
+            admin_password: admin_password.to_owned(),
             base_url: base_url.clone(),
-            homeserver_pubky: homeserver_pubky.clone(),
+            homeserver_pubky: homeserver_pubky.to_owned(),
         }
     }
 

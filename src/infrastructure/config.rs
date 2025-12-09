@@ -18,6 +18,7 @@ pub struct EnvConfig {
     pub homeserver_pubky: String,
     #[serde(default = "default_max_verified_sessions")]
     pub max_verified_sessions: u32,
+    pub phone_number_pepper: String,
 }
 
 fn default_prelude_api_url() -> Url {
@@ -46,6 +47,7 @@ impl EnvConfig {
             homeserver_admin_password: "test-pass".to_string(),
             homeserver_pubky: "test-homeserver-pubky".to_string(),
             max_verified_sessions: 10,
+            phone_number_pepper: "test-pepper-for-phone-number-hashing".to_string(),
         }
     }
 }
@@ -80,6 +82,10 @@ mod tests {
             (
                 String::from("HOMESERVER_PUBKY"),
                 String::from("test-homeserver-pubky"),
+            ),
+            (
+                String::from("PHONE_NUMBER_PEPPER"),
+                String::from("test-pepper"),
             ),
         ])
         .expect("Failed to load config");
