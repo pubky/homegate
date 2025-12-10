@@ -371,9 +371,13 @@ mod tests {
         use axum::http::StatusCode;
 
         #[derive(Debug, Deserialize, Serialize)]
+        struct Age(u8);
+
+
+        #[derive(Debug, Deserialize, Serialize)]
         struct CreateUserRequest {
             name: String,
-            age: u32,
+            age: Age,
             email: Option<String>,
         }
 
@@ -381,7 +385,7 @@ mod tests {
         struct CreateUserResponse {
             id: u64,
             name: String,
-            age: u32,
+            age: u8,
             email: Option<String>,
         }
 
@@ -393,7 +397,7 @@ mod tests {
             let response = CreateUserResponse {
                 id: 123,
                 name: request.name,
-                age: request.age,
+                age: request.age.0,
                 email: request.email,
             };
             (axum::http::StatusCode::CREATED, Json(response))
@@ -413,7 +417,7 @@ mod tests {
                 .post("/users")
                 .json(&json!({
                     "name": "Alice",
-                    "age": 28,
+                    "age": Age(28),
                     "email": "alice@example.com"
                 }))
                 .await;
