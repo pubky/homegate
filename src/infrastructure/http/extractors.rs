@@ -1,7 +1,5 @@
 use axum::{
-    extract::{ConnectInfo, FromRequest, FromRequestParts, Request},
-    http::{HeaderMap, request::Parts},
-    response::{IntoResponse, Response},
+    extract::{ConnectInfo, FromRequest, FromRequestParts, Request}, http::{HeaderMap, request::Parts}, response::{IntoResponse, Response}
 };
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
