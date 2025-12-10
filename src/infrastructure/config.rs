@@ -9,6 +9,7 @@ use url::Url;
 pub struct EnvConfig {
     #[serde(default)]
     pub database_url: ConnectionString,
+    #[serde(default = "default_http_listen_socker")]
     pub http_listen_socket: SocketAddr,
     pub prelude_api_key: String,
     #[serde(default = "default_prelude_api_url")]
@@ -18,7 +19,6 @@ pub struct EnvConfig {
     pub homeserver_pubky: String,
     #[serde(default = "default_max_verified_sessions")]
     pub max_verified_sessions: u32,
-    pub phone_number_pepper: String,
 }
 
 fn default_prelude_api_url() -> Url {
@@ -27,6 +27,12 @@ fn default_prelude_api_url() -> Url {
 
 fn default_max_verified_sessions() -> u32 {
     10
+}
+
+fn default_http_listen_socker() -> SocketAddr {
+    "0.0.0.0:8080"
+        .parse()
+        .expect("Default HTTP listen socket is valid")
 }
 
 impl EnvConfig {
@@ -47,7 +53,6 @@ impl EnvConfig {
             homeserver_admin_password: "test-pass".to_string(),
             homeserver_pubky: "test-homeserver-pubky".to_string(),
             max_verified_sessions: 10,
-            phone_number_pepper: "test-pepper-for-phone-number-hashing".to_string(),
         }
     }
 }
@@ -82,10 +87,6 @@ mod tests {
             (
                 String::from("HOMESERVER_PUBKY"),
                 String::from("test-homeserver-pubky"),
-            ),
-            (
-                String::from("PHONE_NUMBER_PEPPER"),
-                String::from("test-pepper"),
             ),
         ])
         .expect("Failed to load config");

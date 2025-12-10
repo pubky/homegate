@@ -15,6 +15,7 @@ chrono = "0.4"
 dotenvy = "0.15.7"
 envy = "0.4.2"
 futures-util = "0.3.31"
+getrandom = "0.2"
 hex = "0.4"
 regex = "1.11"
 reqwest = { version = "0.12", features = ["json"] }
@@ -33,4 +34,5 @@ uuid = { version = "1.18.1", features = ["v4"] }
 
 [dev-dependencies]
 axum-test = "18"
+tempfile = "3"
 wiremock = "0.6"

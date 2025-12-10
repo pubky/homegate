@@ -26,7 +26,7 @@ impl HttpServer {
     pub fn create_router(sms_verification_router: Router) -> Router {
         Router::new()
             .route("/", get(root))
-            .nest("/v1/sms_verification", sms_verification_router)
+            .nest("/sms_verification", sms_verification_router)
             .layer(TraceLayer::new_for_http())
     }
 

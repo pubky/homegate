@@ -20,7 +20,7 @@ impl AppState {
             &config.homeserver_admin_password,
             &config.homeserver_pubky,
         );
-        let phone_hasher = HasherArgon2id::new(config.phone_number_pepper.clone());
+        let phone_hasher = HasherArgon2id::new();
         let sms_repo = SmsVerificationRepository::new(db.clone(), phone_hasher);
         let sms_verification = SmsVerificationService::new(
             sms_repo,

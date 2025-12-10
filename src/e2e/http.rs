@@ -56,7 +56,7 @@ async fn http_returns_200_and_correct_json_for_successful_verification(pool: PgP
 
     // Act: POST to /send_code endpoint
     let send_response = server
-        .post("/v1/sms_verification/send_code")
+        .post("/sms_verification/send_code")
         .json(&serde_json::json!({ "phone_number": phone }))
         .await;
 
@@ -81,7 +81,7 @@ async fn http_returns_200_and_correct_json_for_successful_verification(pool: PgP
 
     // Act: POST to /verify_code endpoint
     let verify_response = server
-        .post("/v1/sms_verification/verify_code")
+        .post("/sms_verification/verify_code")
         .json(&serde_json::json!({
             "phone_number": phone,
             "code": "123456"
@@ -108,7 +108,7 @@ async fn test_http_error_response_format(pool: PgPool) {
 
     // Test invalid phone number returns proper error format
     let response = server
-        .post("/v1/sms_verification/send_code")
+        .post("/sms_verification/send_code")
         .json(&serde_json::json!({ "phone_number": "invalid-phone" }))
         .await;
 
@@ -147,7 +147,7 @@ async fn test_http_ip_extraction_with_x_forwarded_for(pool: PgPool) {
 
     // Send request with X-Forwarded-For header
     let response = server
-        .post("/v1/sms_verification/send_code")
+        .post("/sms_verification/send_code")
         .json(&serde_json::json!({ "phone_number": phone }))
         .add_header("X-Forwarded-For", "203.0.113.1")
         .await;
@@ -180,7 +180,7 @@ async fn test_http_ip_extraction_with_x_real_ip(pool: PgPool) {
 
     // Send request with X-Real-IP header
     let response = server
-        .post("/v1/sms_verification/send_code")
+        .post("/sms_verification/send_code")
         .json(&serde_json::json!({ "phone_number": phone }))
         .add_header("X-Real-IP", "198.51.100.1")
         .await;
@@ -199,7 +199,7 @@ async fn test_http_content_type_validation(pool: PgPool) {
 
     // Send request without Content-Type header (using text body)
     let response = server
-        .post("/v1/sms_verification/send_code")
+        .post("/sms_verification/send_code")
         .text(r#"{"phone_number": "+30333333333"}"#)
         .await;
 
@@ -220,7 +220,7 @@ async fn test_http_invalid_json_returns_400(pool: PgPool) {
 
     // Send malformed JSON
     let response = server
-        .post("/v1/sms_verification/send_code")
+        .post("/sms_verification/send_code")
         .add_header("Content-Type", "application/json")
         .text(r#"{"phone_number": "+30444444444"#) // Missing closing brace
         .await;
@@ -241,7 +241,7 @@ async fn test_http_missing_required_field_returns_422(pool: PgPool) {
 
     // Send JSON without required phone_number field
     let response = server
-        .post("/v1/sms_verification/send_code")
+        .post("/sms_verification/send_code")
         .json(&serde_json::json!({}))
         .await;
 
@@ -264,7 +264,7 @@ async fn test_http_verify_code_status_codes(pool: PgPool) {
 
     // First send a code
     server
-        .post("/v1/sms_verification/send_code")
+        .post("/sms_verification/send_code")
         .json(&serde_json::json!({ "phone_number": phone }))
         .await;
 
@@ -276,7 +276,7 @@ async fn test_http_verify_code_status_codes(pool: PgPool) {
 
     // Test wrong code returns success status but failure in response
     let response = server
-        .post("/v1/sms_verification/verify_code")
+        .post("/sms_verification/verify_code")
         .json(&serde_json::json!({
             "phone_number": phone,
             "code": "wrong_code"
@@ -304,7 +304,7 @@ async fn test_http_verify_code_status_codes(pool: PgPool) {
 
     // Test correct code returns success
     let response = server
-        .post("/v1/sms_verification/verify_code")
+        .post("/sms_verification/verify_code")
         .json(&serde_json::json!({
             "phone_number": phone,
             "code": "123456"

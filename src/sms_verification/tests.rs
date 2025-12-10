@@ -22,7 +22,7 @@ use sqlx::PgPool;
 use std::net::IpAddr;
 
 fn test_phone_hasher() -> HasherArgon2id {
-    HasherArgon2id::new("test-pepper-for-phone-number-hashing".to_string())
+    HasherArgon2id::new()
 }
 
 /// Helper to create service with wiremock for direct service layer testing
@@ -45,7 +45,7 @@ async fn create_service_with_mocked_apis(
         &config.homeserver_pubky,
     );
 
-    let phone_hasher = HasherArgon2id::new(config.phone_number_pepper.clone());
+    let phone_hasher = HasherArgon2id::new();
     let repository = SmsVerificationRepository::new(db, phone_hasher);
     SmsVerificationService::new(repository, prelude_api, homeserver_admin_api, 10)
 }
