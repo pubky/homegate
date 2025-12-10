@@ -105,7 +105,7 @@ impl SmsVerificationService {
             .err_if_no_active_verification(&request.phone_number)
             .await
             .map_err(|_| {
-                SmsVerificationError::NoActiveVerification(request.phone_number.to_string())
+                SmsVerificationError::NoActiveVerification(request.phone_number.clone())
             })?;
 
         let prelude_response = self

@@ -5,19 +5,49 @@
 //! transitions, and edge cases. For HTTP-specific concerns (status codes, headers, JSON parsing),
 //! add tests to `http.rs` instead.
 
-use crate::e2e::{create_service_with_mocked_apis, wiremock_helpers::*};
+use crate::e2e::{
+    WiremockServers, setup_homeserver_signup_token, setup_prelude_check_code,
+    setup_prelude_create_verification,
+};
 use crate::infrastructure::database::{DbError, SqlDb};
 use crate::sms_verification::hasher_argon2id::HasherArgon2id;
+use crate::sms_verification::prelude_api::PreludeAPI;
 use crate::sms_verification::repository::{SmsVerificationRepository, VerificationStatus};
 use crate::sms_verification::{
     CreateVerificationRequest, CreateVerificationResponse, PhoneNumber, SendCodeRequest,
     SendCodeResponse,
 };
+use crate::{HomeserverAdminAPI, SmsVerificationService};
 use sqlx::PgPool;
 use std::net::IpAddr;
 
 fn test_phone_hasher() -> HasherArgon2id {
     HasherArgon2id::new("test-pepper-for-phone-number-hashing".to_string())
+}
+
+/// Helper to create service with wiremock for direct service layer testing
+async fn create_service_with_mocked_apis(
+    pool: PgPool,
+    servers: &WiremockServers,
+) -> SmsVerificationService {
+    use crate::EnvConfig;
+
+    let config = EnvConfig::for_test(
+        servers.prelude_server.uri().parse().unwrap(),
+        servers.homeserver_server.uri().parse().unwrap(),
+    );
+    let db = SqlDb::test(pool.clone()).await;
+
+    let prelude_api = PreludeAPI::new(&config.prelude_api_url, &config.prelude_api_key);
+    let homeserver_admin_api = HomeserverAdminAPI::new(
+        &config.homeserver_admin_api_url,
+        &config.homeserver_admin_password,
+        &config.homeserver_pubky,
+    );
+
+    let phone_hasher = HasherArgon2id::new(config.phone_number_pepper.clone());
+    let repository = SmsVerificationRepository::new(db, phone_hasher);
+    SmsVerificationService::new(repository, prelude_api, homeserver_admin_api, 10)
 }
 
 #[sqlx::test]

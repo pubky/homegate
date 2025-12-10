@@ -19,7 +19,7 @@ impl MigrationTrait for M20251201CreateSmsVerifications {
                     .auto_increment()
                     .primary_key(),
             )
-            .col(ColumnDef::new("phone_number").text().not_null())
+            .col(ColumnDef::new("phone_number_hash").text().not_null())
             .col(ColumnDef::new("prelude_id").text().not_null())
             .col(
                 ColumnDef::new("created_at")
@@ -45,7 +45,7 @@ impl MigrationTrait for M20251201CreateSmsVerifications {
         let index = Index::create()
             .name("idx_sms_verifications_phone")
             .table("sms_verifications")
-            .col("phone_number")
+            .col("phone_number_hash")
             .to_owned();
 
         let query = index.build(PostgresQueryBuilder);
@@ -65,7 +65,7 @@ impl MigrationTrait for M20251201CreateSmsVerifications {
         let index = Index::create()
             .name("idx_sms_verifications_phone_status")
             .table("sms_verifications")
-            .col("phone_number")
+            .col("phone_number_hash")
             .col("status")
             .to_owned();
 

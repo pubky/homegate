@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::infrastructure::database::DbError;
+use crate::{infrastructure::database::DbError, sms_verification::PhoneNumber};
 
 #[derive(Error, Debug)]
 pub enum SmsVerificationError {
@@ -13,7 +13,7 @@ pub enum SmsVerificationError {
     TooManyVerifiedSessions,
 
     #[error("No active verification session for phone number: {0}")]
-    NoActiveVerification(String),
+    NoActiveVerification(PhoneNumber),
 
     #[error("HTTP request failed: {0}")]
     RequestFailed(#[from] reqwest::Error),

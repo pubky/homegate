@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 mod app_state;
 mod error;
 pub(crate) mod hasher_argon2id;

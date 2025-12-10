@@ -64,7 +64,7 @@ impl SmsVerificationRepository {
             .hasher_argon2id
             .hash_phone_number(phone_number.as_str())?;
 
-        // Build subquery to check for existing pending sessions
+        // Build subquery to check for existing pending sessions for this phone number
         let subquery = Query::select()
             .expr(Expr::value(1))
             .from("sms_verifications")
@@ -72,7 +72,7 @@ impl SmsVerificationRepository {
             .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
-        // Build INSERT statement with NOT EXISTS condition
+        // Build INSERT statement with condition that subquery returns nothing (ie, verificaiton session not currently pending for this phone number)
         let statement = Query::insert()
             .into_table("sms_verifications")
             .columns(["phone_number_hash", "prelude_id"])

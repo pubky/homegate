@@ -91,7 +91,7 @@ impl IntoResponse for SmsVerificationError {
             SmsVerificationError::RequestFailed(ref err) => {
                 tracing::error!(error = %err, "Failed to communicate with SMS provider");
                 (
-                    StatusCode::BAD_GATEWAY,
+                    StatusCode::INTERNAL_SERVER_ERROR,
                     "external_service_error",
                     "Failed to communicate with external API".to_string(),
                 )

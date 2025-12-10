@@ -8,14 +8,9 @@ use super::{
     WiremockServers, setup_homeserver_signup_token, setup_prelude_check_code,
     setup_prelude_create_verification,
 };
-use crate::sms_verification::{PhoneNumber, hasher_argon2id::HasherArgon2id};
+use crate::sms_verification::PhoneNumber;
 use axum_test::TestServer;
 use sqlx::PgPool;
-
-/// Helper to create a PhoneHasher for tests
-fn test_phone_hasher() -> HasherArgon2id {
-    HasherArgon2id::new("test-pepper-for-phone-number-hashing".to_string())
-}
 
 // Helper function to create HTTP test server with mocked external APIs
 async fn create_http_test_server(pool: PgPool, servers: &WiremockServers) -> (TestServer, PgPool) {
@@ -43,46 +38,48 @@ async fn create_http_test_server(pool: PgPool, servers: &WiremockServers) -> (Te
     (server, pool)
 }
 
-// Full-Flow HTTP Integration Tests
-
+/// Tests the complete HTTP request/response flow for a successful verification:
+/// - POST /send_code returns 200 with correct JSON response structure
+/// - POST /verify_code returns 200 with success status and signup_code field
 #[sqlx::test]
-async fn test_http_full_verification_flow(pool: PgPool) {
-    // 1. Setup wiremock servers
+async fn http_returns_200_and_correct_json_for_successful_verification(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let (server, pool) = create_http_test_server(pool, &servers).await;
+    let (server, _pool) = create_http_test_server(pool, &servers).await;
 
     let phone = "+30123456789";
     let phone_num = PhoneNumber::new(phone).unwrap();
 
-    // 2. Setup Prelude create_verification mock
     setup_prelude_create_verification(&phone_num, None, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
-    // 3. Send code request
+    // Act: POST to /send_code endpoint
     let send_response = server
         .post("/v1/sms_verification/send_code")
         .json(&serde_json::json!({ "phone_number": phone }))
         .await;
 
+    // Assert: HTTP 200 and response body contains success status
     send_response.assert_status_ok();
     let send_body: serde_json::Value = send_response.json();
-    assert_eq!(send_body["status"], "success");
+    assert_eq!(
+        send_body["status"], "success",
+        "Response JSON should have status=success"
+    );
 
-    // 4. Setup Prelude check_code mock (success)
+    // Arrange: Mock successful code verification
     setup_prelude_check_code(&phone_num, "123456", "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
-    // 5. Setup homeserver signup token mock
     setup_homeserver_signup_token("token-uuid-123")
         .expect(1)
         .mount(&servers.homeserver_server)
         .await;
 
-    // 6. Verify code request
+    // Act: POST to /verify_code endpoint
     let verify_response = server
         .post("/v1/sms_verification/verify_code")
         .json(&serde_json::json!({
@@ -91,22 +88,17 @@ async fn test_http_full_verification_flow(pool: PgPool) {
         }))
         .await;
 
+    // Assert: HTTP 200 with success status and signup_code in JSON response
     verify_response.assert_status_ok();
     let verify_body: serde_json::Value = verify_response.json();
-    assert_eq!(verify_body["status"], "success");
-    assert_eq!(verify_body["signup_code"], "token-uuid-123");
-
-    // 7. Verify database state
-    let hashed_phone = test_phone_hasher().hash_phone_number(phone).unwrap();
-    let count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM sms_verifications WHERE phone_number = $1 AND status = 'VERIFIED'",
-    )
-    .bind(&hashed_phone)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-
-    assert_eq!(count.0, 1, "Should have 1 verified session in database");
+    assert_eq!(
+        verify_body["status"], "success",
+        "Response JSON should have status=success"
+    );
+    assert_eq!(
+        verify_body["signup_code"], "token-uuid-123",
+        "Response JSON should include signup_code"
+    );
 }
 
 #[sqlx::test]

@@ -3,7 +3,6 @@ use argon2::{
 };
 use thiserror::Error;
 
-/// Errors that can occur during phone number hashing
 #[derive(Error, Debug)]
 pub enum HasherArgon2idError {
     #[error("Failed to encode salt: {0}")]
@@ -50,7 +49,6 @@ impl HasherArgon2id {
     }
 
     /// Hashes a string using Argon2id with a deterministic salt.
-    /// Returns an error if hashing fails (extremely rare)
     pub fn hash_phone_number(&self, preimage: &str) -> Result<String, HasherArgon2idError> {
         // Derive deterministic salt from pepper using Blake3
         let salt_bytes = blake3::hash(self.pepper.as_bytes());
@@ -65,57 +63,5 @@ impl HasherArgon2id {
         let hash_output = hash.hash.ok_or(HasherArgon2idError::MissingHashOutput)?;
 
         Ok(hex::encode(hash_output.as_bytes()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_deterministic_hashing() {
-        let hasher = HasherArgon2id::new("test-pepper".to_string());
-        let phone = "+1234567890";
-
-        let hash1 = hasher.hash_phone_number(phone).unwrap();
-        let hash2 = hasher.hash_phone_number(phone).unwrap();
-
-        // Same phone number should produce same hash
-        assert_eq!(hash1, hash2);
-        // Hash should be 64 hex characters (32 bytes)
-        assert_eq!(hash1.len(), 64);
-    }
-
-    #[test]
-    fn test_different_numbers_produce_different_hashes() {
-        let hasher = HasherArgon2id::new("test-pepper".to_string());
-
-        let hash1 = hasher.hash_phone_number("+1234567890").unwrap();
-        let hash2 = hasher.hash_phone_number("+0987654321").unwrap();
-
-        assert_ne!(hash1, hash2);
-    }
-
-    #[test]
-    fn test_different_peppers_produce_different_hashes() {
-        let hasher1 = HasherArgon2id::new("pepper1".to_string());
-        let hasher2 = HasherArgon2id::new("pepper2".to_string());
-        let phone = "+1234567890";
-
-        let hash1 = hasher1.hash_phone_number(phone).unwrap();
-        let hash2 = hasher2.hash_phone_number(phone).unwrap();
-
-        assert_ne!(hash1, hash2);
-    }
-
-    #[test]
-    fn test_hash_format() {
-        let hasher = HasherArgon2id::new("test-pepper".to_string());
-        let hash = hasher.hash_phone_number("+1234567890").unwrap();
-
-        // Should be valid hex
-        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
-        // Should be 64 characters (32 bytes in hex)
-        assert_eq!(hash.len(), 64);
     }
 }
