@@ -8,13 +8,13 @@ use super::{
     WiremockServers, setup_homeserver_signup_token, setup_prelude_check_code,
     setup_prelude_create_verification,
 };
-use crate::sms_verification::{PhoneNumber, phone_hasher::PhoneHasher};
+use crate::sms_verification::{PhoneNumber, hasher_argon2id::HasherArgon2id};
 use axum_test::TestServer;
 use sqlx::PgPool;
 
 /// Helper to create a PhoneHasher for tests
-fn test_phone_hasher() -> PhoneHasher {
-    PhoneHasher::new("test-pepper-for-phone-number-hashing".to_string())
+fn test_phone_hasher() -> HasherArgon2id {
+    HasherArgon2id::new("test-pepper-for-phone-number-hashing".to_string())
 }
 
 // Helper function to create HTTP test server with mocked external APIs

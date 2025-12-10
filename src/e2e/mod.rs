@@ -12,7 +12,7 @@ pub use wiremock_helpers::*;
 
 use crate::{
     HomeserverAdminAPI, SmsVerificationService, SqlDb,
-    sms_verification::{PhoneHasher, SmsVerificationRepository, prelude_api::PreludeAPI},
+    sms_verification::{HasherArgon2id, SmsVerificationRepository, prelude_api::PreludeAPI},
 };
 
 /// Helper to create service with wiremock for direct service layer testing
@@ -35,7 +35,7 @@ async fn create_service_with_mocked_apis(
         &config.homeserver_pubky,
     );
 
-    let phone_hasher = PhoneHasher::new(config.phone_number_pepper.clone());
+    let phone_hasher = HasherArgon2id::new(config.phone_number_pepper.clone());
     let repository = SmsVerificationRepository::new(db, phone_hasher);
     SmsVerificationService::new(repository, prelude_api, homeserver_admin_api, 10)
 }

@@ -1,6 +1,6 @@
 use crate::infrastructure::database::DbError;
 use crate::infrastructure::database::SqlDb;
-use crate::sms_verification::phone_hasher::PhoneHasher;
+use crate::sms_verification::hasher_argon2id::HasherArgon2id;
 use crate::sms_verification::phone_number::PhoneNumber;
 use chrono::NaiveDateTime;
 use sea_query::{Expr, PostgresQueryBuilder, Query};
@@ -31,7 +31,7 @@ impl VerificationStatus {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SmsVerificationEntity {
     pub id: i32,
-    pub phone_number: String,
+    pub phone_number_hash: String,
     pub prelude_id: String,
     pub created_at: NaiveDateTime,
     pub finalised_at: Option<NaiveDateTime>,
@@ -43,12 +43,15 @@ pub struct SmsVerificationEntity {
 #[derive(Clone, Debug)]
 pub struct SmsVerificationRepository {
     db: SqlDb,
-    phone_hasher: PhoneHasher,
+    hasher_argon2id: HasherArgon2id,
 }
 
 impl SmsVerificationRepository {
-    pub fn new(db: SqlDb, phone_hasher: PhoneHasher) -> Self {
-        Self { db, phone_hasher }
+    pub fn new(db: SqlDb, hasher_argon2id: HasherArgon2id) -> Self {
+        Self {
+            db,
+            hasher_argon2id,
+        }
     }
 
     /// Create a new SMS verification record only if no pending session exists for this phone_number
@@ -57,20 +60,22 @@ impl SmsVerificationRepository {
         phone_number: &PhoneNumber,
         prelude_id: &str,
     ) -> Result<(), DbError> {
-        let hashed_phone = self.phone_hasher.hash_phone_number(phone_number.as_str())?;
+        let hashed_phone = self
+            .hasher_argon2id
+            .hash_phone_number(phone_number.as_str())?;
 
         // Build subquery to check for existing pending sessions
         let subquery = Query::select()
             .expr(Expr::value(1))
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(hashed_phone.as_str()))
+            .and_where(Expr::col("phone_number_hash").eq(hashed_phone.as_str()))
             .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
         // Build INSERT statement with NOT EXISTS condition
         let statement = Query::insert()
             .into_table("sms_verifications")
-            .columns(["phone_number", "prelude_id"])
+            .columns(["phone_number_hash", "prelude_id"])
             .select_from(
                 Query::select()
                     .expr(Expr::value(hashed_phone.as_str()))
@@ -94,12 +99,14 @@ impl SmsVerificationRepository {
         &self,
         phone_number: &PhoneNumber,
     ) -> Result<i64, DbError> {
-        let hashed_phone = self.phone_hasher.hash_phone_number(phone_number.as_str())?;
+        let hashed_phone = self
+            .hasher_argon2id
+            .hash_phone_number(phone_number.as_str())?;
 
         let statement = Query::select()
             .expr(Expr::col("id").count())
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(hashed_phone.as_str()))
+            .and_where(Expr::col("phone_number_hash").eq(hashed_phone.as_str()))
             .and_where(Expr::col("status").eq(VerificationStatus::Verified.as_str()))
             .to_owned();
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -116,12 +123,14 @@ impl SmsVerificationRepository {
         &self,
         phone_number: &PhoneNumber,
     ) -> Result<(), DbError> {
-        let hashed_phone = self.phone_hasher.hash_phone_number(phone_number.as_str())?;
+        let hashed_phone = self
+            .hasher_argon2id
+            .hash_phone_number(phone_number.as_str())?;
 
         let statement = Query::select()
             .expr(Expr::value(1))
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(hashed_phone.as_str()))
+            .and_where(Expr::col("phone_number_hash").eq(hashed_phone.as_str()))
             .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
@@ -193,12 +202,14 @@ impl SmsVerificationRepository {
         &self,
         phone_number: &PhoneNumber,
     ) -> Result<SmsVerificationEntity, DbError> {
-        let hashed_phone = self.phone_hasher.hash_phone_number(phone_number.as_str())?;
+        let hashed_phone = self
+            .hasher_argon2id
+            .hash_phone_number(phone_number.as_str())?;
 
         let statement = Query::select()
             .columns([
                 "id",
-                "phone_number",
+                "phone_number_hash",
                 "prelude_id",
                 "created_at",
                 "finalised_at",
@@ -207,7 +218,7 @@ impl SmsVerificationRepository {
                 "failure_reason",
             ])
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number").eq(hashed_phone.as_str()))
+            .and_where(Expr::col("phone_number_hash").eq(hashed_phone.as_str()))
             .to_owned();
 
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -226,7 +237,7 @@ impl SmsVerificationRepository {
         let statement = Query::select()
             .columns([
                 "id",
-                "phone_number",
+                "phone_number_hash",
                 "prelude_id",
                 "created_at",
                 "finalised_at",

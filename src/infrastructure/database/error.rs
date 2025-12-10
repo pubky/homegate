@@ -9,5 +9,5 @@ pub enum DbError {
     NotFound(String),
 
     #[error("Phone number hashing error: {0}")]
-    HashingError(#[from] crate::sms_verification::PhoneHasherError),
+    HashingError(#[from] crate::sms_verification::HasherArgon2idError),
 }

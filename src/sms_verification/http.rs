@@ -24,7 +24,7 @@ pub async fn router(
     config: &EnvConfig,
     db: crate::infrastructure::database::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db).map_err(|_| HttpServerError::RouterInit)?;
+    let state = AppState::new(config, db);
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/verify_code", post(verify_code_handler))
@@ -36,7 +36,7 @@ pub async fn router_with_db(
     config: &EnvConfig,
     db: crate::infrastructure::database::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db).map_err(|_| HttpServerError::RouterInit)?;
+    let state = AppState::new(config, db);
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/verify_code", post(verify_code_handler))

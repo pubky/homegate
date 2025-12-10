@@ -1,9 +1,8 @@
 use crate::{
-    SmsVerificationError,
     infrastructure::{config::EnvConfig, database::SqlDb},
     shared::HomeserverAdminAPI,
     sms_verification::{
-        PhoneHasher, SmsVerificationRepository, prelude_api::PreludeAPI,
+        HasherArgon2id, SmsVerificationRepository, prelude_api::PreludeAPI,
         service::SmsVerificationService,
     },
 };
@@ -14,14 +13,14 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: &EnvConfig, db: SqlDb) -> Result<Self, SmsVerificationError> {
+    pub fn new(config: &EnvConfig, db: SqlDb) -> Self {
         let prelude_api = PreludeAPI::new(&config.prelude_api_url, &config.prelude_api_key);
         let homeserver_admin_api = HomeserverAdminAPI::new(
             &config.homeserver_admin_api_url,
             &config.homeserver_admin_password,
             &config.homeserver_pubky,
         );
-        let phone_hasher = PhoneHasher::new(config.phone_number_pepper.clone());
+        let phone_hasher = HasherArgon2id::new(config.phone_number_pepper.clone());
         let sms_repo = SmsVerificationRepository::new(db.clone(), phone_hasher);
         let sms_verification = SmsVerificationService::new(
             sms_repo,
@@ -29,7 +28,6 @@ impl AppState {
             homeserver_admin_api,
             config.max_verified_sessions,
         );
-
-        Ok(Self { sms_verification })
+        Self { sms_verification }
     }
 }
