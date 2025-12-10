@@ -1,19 +1,6 @@
 use argon2::{
     Algorithm, Argon2, ParamsBuilder, PasswordHasher, Version, password_hash::SaltString,
 };
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum HasherArgon2idError {
-    #[error("Failed to encode salt: {0}")]
-    SaltEncodingError(String),
-
-    #[error("Failed to hash phone number: {0}")]
-    HashingError(String),
-
-    #[error("Hash output is missing from Argon2 result")]
-    MissingHashOutput,
-}
 
 /// Hashes phone numbers using Argon2id with a global pepper for rainbow table resistance.
 ///
@@ -49,19 +36,21 @@ impl HasherArgon2id {
     }
 
     /// Hashes a string using Argon2id with a deterministic salt.
-    pub fn hash_phone_number(&self, preimage: &str) -> Result<String, HasherArgon2idError> {
+    pub fn hash_phone_number(&self, preimage: &str) -> String {
         // Derive deterministic salt from pepper using Blake3
         let salt_bytes = blake3::hash(self.pepper.as_bytes());
         let salt = SaltString::encode_b64(&salt_bytes.as_bytes()[..16])
-            .map_err(|e| HasherArgon2idError::SaltEncodingError(e.to_string()))?;
+            .expect("Salt encoding should never fail with valid Blake3 output");
 
         let hash = self
             .argon2
             .hash_password(preimage.as_bytes(), &salt)
-            .map_err(|e| HasherArgon2idError::HashingError(e.to_string()))?;
+            .expect("Argon2 hashing should never fail with valid parameters and salt");
 
-        let hash_output = hash.hash.ok_or(HasherArgon2idError::MissingHashOutput)?;
+        let hash_output = hash
+            .hash
+            .expect("Argon2 hash output should always be present");
 
-        Ok(hex::encode(hash_output.as_bytes()))
+        hex::encode(hash_output.as_bytes())
     }
 }

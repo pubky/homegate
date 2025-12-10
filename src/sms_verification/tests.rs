@@ -98,9 +98,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
         .await
         .expect("Should find verification after init");
 
-    let hashed_phone = test_phone_hasher()
-        .hash_phone_number(phone.as_str())
-        .unwrap();
+    let hashed_phone = test_phone_hasher().hash_phone_number(phone.as_str());
     assert_eq!(
         after_init.phone_number_hash, hashed_phone,
         "Phone number should be hashed"
@@ -203,9 +201,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 
     assert!(matches!(response1, CreateVerificationResponse::Success));
 
-    let hashed_phone1 = test_phone_hasher()
-        .hash_phone_number(phone1.as_str())
-        .unwrap();
+    let hashed_phone1 = test_phone_hasher().hash_phone_number(phone1.as_str());
     let count1: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number_hash = $1")
             .bind(&hashed_phone1)
@@ -285,9 +281,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
         .await
         .expect("send_code after verification should succeed");
 
-    let hashed_phone2 = test_phone_hasher()
-        .hash_phone_number(phone2.as_str())
-        .unwrap();
+    let hashed_phone2 = test_phone_hasher().hash_phone_number(phone2.as_str());
     let count3: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number_hash = $1")
             .bind(&hashed_phone2)
@@ -405,9 +399,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     );
 
     // Verify database NOT updated when wrong code provided
-    let hashed_phone_wrong = test_phone_hasher()
-        .hash_phone_number(phone_wrong_code.as_str())
-        .unwrap();
+    let hashed_phone_wrong = test_phone_hasher().hash_phone_number(phone_wrong_code.as_str());
     let count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM sms_verifications WHERE phone_number_hash = $1 AND status = 'VERIFIED'",
     )
@@ -523,9 +515,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
         .expect("send_code should succeed");
 
     // Step 2: Verify initial status
-    let hashed_phone_expired = test_phone_hasher()
-        .hash_phone_number(phone.as_str())
-        .unwrap();
+    let hashed_phone_expired = test_phone_hasher().hash_phone_number(phone.as_str());
     let status_before: String =
         sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number_hash = $1")
             .bind(&hashed_phone_expired)
@@ -690,9 +680,7 @@ async fn test_service_database_error_handling(pool: PgPool) {
         .expect("send_code should succeed");
 
     // Now manually delete the database record to simulate database inconsistency
-    let hashed_phone_db_error = test_phone_hasher()
-        .hash_phone_number(phone.as_str())
-        .unwrap();
+    let hashed_phone_db_error = test_phone_hasher().hash_phone_number(phone.as_str());
     sqlx::query("DELETE FROM sms_verifications WHERE phone_number_hash = $1")
         .bind(&hashed_phone_db_error)
         .execute(db.pool())
@@ -769,9 +757,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
         .expect("send_code should succeed");
 
     // Verify state is VERIFIED
-    let hashed_phone_verified = test_phone_hasher()
-        .hash_phone_number(phone_verified.as_str())
-        .unwrap();
+    let hashed_phone_verified = test_phone_hasher().hash_phone_number(phone_verified.as_str());
     let status: String =
         sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number_hash = $1")
             .bind(&hashed_phone_verified)
@@ -850,9 +836,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     );
 
     // Verify state is FAILED
-    let hashed_phone_failed = test_phone_hasher()
-        .hash_phone_number(phone_failed.as_str())
-        .unwrap();
+    let hashed_phone_failed = test_phone_hasher().hash_phone_number(phone_failed.as_str());
     let status_failed: String =
         sqlx::query_scalar("SELECT status FROM sms_verifications WHERE phone_number_hash = $1")
             .bind(&hashed_phone_failed)
@@ -1014,9 +998,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     );
 
     // Verify final state is VERIFIED
-    let hashed_phone_multi = test_phone_hasher()
-        .hash_phone_number(phone.as_str())
-        .unwrap();
+    let hashed_phone_multi = test_phone_hasher().hash_phone_number(phone.as_str());
     let (status_final, finalised_at_final, signup_code): (
         String,
         Option<chrono::NaiveDateTime>,
@@ -1085,9 +1067,7 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
     }
 
     // Verify database state: record should be created and marked as FAILED
-    let hashed_phone_blocked = test_phone_hasher()
-        .hash_phone_number(phone.as_str())
-        .unwrap();
+    let hashed_phone_blocked = test_phone_hasher().hash_phone_number(phone.as_str());
     let count: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number_hash = $1")
             .bind(&hashed_phone_blocked)
@@ -1176,9 +1156,7 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
 
     // Verify that a PENDING session was created (even for retry response)
     // Based on service.rs:88-94, retry responses still create a record
-    let hashed_phone_retry = test_phone_hasher()
-        .hash_phone_number(phone.as_str())
-        .unwrap();
+    let hashed_phone_retry = test_phone_hasher().hash_phone_number(phone.as_str());
     let count: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number_hash = $1")
             .bind(&hashed_phone_retry)
@@ -1351,9 +1329,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
         .expect("send_code should succeed");
 
     // Verify we have a FAILED record before trying to mark it as verified
-    let hashed_phone2_mut = test_phone_hasher()
-        .hash_phone_number(phone2.as_str())
-        .unwrap();
+    let hashed_phone2_mut = test_phone_hasher().hash_phone_number(phone2.as_str());
     let (prelude_id2, status_before_mark): (String, String) = sqlx::query_as(
         "SELECT prelude_id, status FROM sms_verifications WHERE phone_number_hash = $1",
     )

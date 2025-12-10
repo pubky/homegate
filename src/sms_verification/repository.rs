@@ -62,7 +62,7 @@ impl SmsVerificationRepository {
     ) -> Result<(), DbError> {
         let hashed_phone = self
             .hasher_argon2id
-            .hash_phone_number(phone_number.as_str())?;
+            .hash_phone_number(phone_number.as_str());
 
         // Build subquery to check for existing pending sessions for this phone number
         let subquery = Query::select()
@@ -101,7 +101,7 @@ impl SmsVerificationRepository {
     ) -> Result<i64, DbError> {
         let hashed_phone = self
             .hasher_argon2id
-            .hash_phone_number(phone_number.as_str())?;
+            .hash_phone_number(phone_number.as_str());
 
         let statement = Query::select()
             .expr(Expr::col("id").count())
@@ -125,7 +125,7 @@ impl SmsVerificationRepository {
     ) -> Result<(), DbError> {
         let hashed_phone = self
             .hasher_argon2id
-            .hash_phone_number(phone_number.as_str())?;
+            .hash_phone_number(phone_number.as_str());
 
         let statement = Query::select()
             .expr(Expr::value(1))
@@ -204,7 +204,7 @@ impl SmsVerificationRepository {
     ) -> Result<SmsVerificationEntity, DbError> {
         let hashed_phone = self
             .hasher_argon2id
-            .hash_phone_number(phone_number.as_str())?;
+            .hash_phone_number(phone_number.as_str());
 
         let statement = Query::select()
             .columns([
