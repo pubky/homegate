@@ -2,6 +2,45 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use url::Url;
 
+#[derive(Debug)]
+pub enum PreludeError {
+    RateLimited { retry_after: Option<u64> },
+    RequestFailed(reqwest::Error),
+}
+
+impl PreludeError {
+    /// Check if response is a 429, extract retry-after header if present and return PreludeApi error.
+    /// Otherwise, pass back the same reqwest::Response
+    pub fn from_response(response: reqwest::Response) -> Result<reqwest::Response, Self> {
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok());
+            return Err(PreludeError::RateLimited { retry_after });
+        }
+        Ok(response)
+    }
+}
+
+impl std::fmt::Display for PreludeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PreludeError::RateLimited { .. } => write!(f, "Rate limit exceeded"),
+            PreludeError::RequestFailed(e) => write!(f, "Request failed: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for PreludeError {}
+
+impl From<reqwest::Error> for PreludeError {
+    fn from(e: reqwest::Error) -> Self {
+        PreludeError::RequestFailed(e)
+    }
+}
+
 /// Caller of Prelude's v2 API. Ref: https://docs.prelude.so/verify/v2/api-reference/
 #[derive(Clone, Debug)]
 pub struct PreludeAPI {
@@ -110,7 +149,7 @@ impl PreludeAPI {
         &self,
         phone_number: &str,
         ip_address: Option<IpAddr>,
-    ) -> Result<PreludeCreateVerificationResponse, reqwest::Error> {
+    ) -> Result<PreludeCreateVerificationResponse, PreludeError> {
         let request_body = PreludeCreateVerificationRequest {
             target: Target {
                 target_type: "phone_number".to_string(),
@@ -134,6 +173,7 @@ impl PreludeAPI {
             .send()
             .await?;
 
+        let response = PreludeError::from_response(response)?;
         let verification_response = response
             .error_for_status()?
             .json::<PreludeCreateVerificationResponse>()
@@ -147,7 +187,7 @@ impl PreludeAPI {
         &self,
         phone_number: &str,
         code: &str,
-    ) -> Result<PreludeCheckCodeResponse, reqwest::Error> {
+    ) -> Result<PreludeCheckCodeResponse, PreludeError> {
         let request_body = PreludeCheckCodeRequest {
             target: Target {
                 target_type: "phone_number".to_string(),
@@ -169,6 +209,7 @@ impl PreludeAPI {
             .send()
             .await?;
 
+        let response = PreludeError::from_response(response)?;
         let check_response = response
             .error_for_status()?
             .json::<PreludeCheckCodeResponse>()

@@ -14,12 +14,15 @@ use crate::sms_verification::hasher_argon2id::HasherArgon2id;
 use crate::sms_verification::prelude_api::PreludeAPI;
 use crate::sms_verification::repository::{SmsVerificationRepository, VerificationStatus};
 use crate::sms_verification::{
-    CreateVerificationRequest, CreateVerificationResponse, PhoneNumber, SendCodeRequest,
+    Code, CreateVerificationRequest, CreateVerificationResponse, PhoneNumber, SendCodeRequest,
     SendCodeResponse,
 };
 use crate::{HomeserverAdminAPI, SmsVerificationService};
 use sqlx::PgPool;
 use std::net::IpAddr;
+
+const TEST_VERIFICATION_CODE: &str = "123456";
+const TEST_WRONG_CODE: &str = "1111";
 
 fn test_phone_hasher() -> HasherArgon2id {
     HasherArgon2id::new()
@@ -65,7 +68,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(&phone, "123456", "success")
+    setup_prelude_check_code(&phone, TEST_VERIFICATION_CODE, "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -122,7 +125,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     let check_response = service
         .send_code(SendCodeRequest {
             phone_number: phone.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("verify_finalise should succeed");
@@ -241,7 +244,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(&phone2, "123456", "success")
+    setup_prelude_check_code(&phone2, TEST_VERIFICATION_CODE, "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -264,7 +267,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
     service
         .send_code(SendCodeRequest {
             phone_number: phone2.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("verify_code should succeed");
@@ -308,7 +311,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(&phone, "123456", "success")
+    setup_prelude_check_code(&phone, TEST_VERIFICATION_CODE, "success")
         .expect(4)
         .mount(&servers.prelude_server)
         .await;
@@ -333,7 +336,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
         service
             .send_code(SendCodeRequest {
                 phone_number: phone.clone(),
-                code: "123456".to_string(),
+                code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
             })
             .await
             .expect(&format!("verify_code {} should succeed", i));
@@ -389,7 +392,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
     service
         .send_code(SendCodeRequest {
             phone_number: phone.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("3rd verify_code should succeed");
@@ -433,7 +436,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
     service
         .send_code(SendCodeRequest {
             phone_number: phone.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("4th verify_code should succeed");
@@ -491,7 +494,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(&phone_wrong_code, "wrong_code", "failure")
+    setup_prelude_check_code(&phone_wrong_code, TEST_WRONG_CODE, "failure")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -509,7 +512,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     let check_response = service
         .send_code(SendCodeRequest {
             phone_number: phone_wrong_code.clone(),
-            code: "wrong_code".to_string(),
+            code: Code::new(TEST_WRONG_CODE).unwrap(),
         })
         .await
         .expect("API should respond");
@@ -570,7 +573,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     assert_eq!(status_before, "PENDING", "Should start as PENDING");
 
     // Step 3: Mock Prelude check_code to return expired_or_not_found
-    setup_prelude_check_code(&phone, "123456", "expired_or_not_found")
+    setup_prelude_check_code(&phone, TEST_VERIFICATION_CODE, "expired_or_not_found")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -579,7 +582,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     let verify_result = service
         .send_code(SendCodeRequest {
             phone_number: phone.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("send_code should succeed");
@@ -677,7 +680,7 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
     let result = service
         .send_code(SendCodeRequest {
             phone_number: phone_verify.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await;
 
@@ -732,7 +735,7 @@ async fn test_service_database_error_handling(pool: PgPool) {
         .expect("Failed to delete record");
 
     // Setup mock - it will succeed but database lookup will fail
-    setup_prelude_check_code(&phone, "123456", "success")
+    setup_prelude_check_code(&phone, TEST_VERIFICATION_CODE, "success")
         .expect(0) // Should not be called - DB lookup fails first
         .mount(&servers.prelude_server)
         .await;
@@ -741,7 +744,7 @@ async fn test_service_database_error_handling(pool: PgPool) {
     let result = service
         .send_code(SendCodeRequest {
             phone_number: phone.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await;
 
@@ -771,7 +774,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(&phone_verified, "123456", "success")
+    setup_prelude_check_code(&phone_verified, TEST_VERIFICATION_CODE, "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -795,7 +798,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     service
         .send_code(SendCodeRequest {
             phone_number: phone_verified.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("send_code should succeed");
@@ -814,7 +817,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     let result = service
         .send_code(SendCodeRequest {
             phone_number: phone_verified.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await;
 
@@ -861,15 +864,19 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
         .expect("create_verification should succeed");
 
     // Mock expired_or_not_found to reach FAILED state
-    setup_prelude_check_code(&phone_failed, "123456", "expired_or_not_found")
-        .expect(1)
-        .mount(&servers.prelude_server)
-        .await;
+    setup_prelude_check_code(
+        &phone_failed,
+        TEST_VERIFICATION_CODE,
+        "expired_or_not_found",
+    )
+    .expect(1)
+    .mount(&servers.prelude_server)
+    .await;
 
     let verify_result = service
         .send_code(SendCodeRequest {
             phone_number: phone_failed.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("send_code should succeed");
@@ -893,7 +900,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     let result = service
         .send_code(SendCodeRequest {
             phone_number: phone_failed.clone(),
-            code: "999999".to_string(),
+            code: Code::new(TEST_WRONG_CODE).unwrap(),
         })
         .await;
 
@@ -947,7 +954,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         .expect("create_verification should succeed");
 
     // Attempt 1: Wrong code
-    setup_prelude_check_code(&phone, "111111", "failure")
+    setup_prelude_check_code(&phone, TEST_WRONG_CODE, "failure")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -955,7 +962,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     let response1 = service
         .send_code(SendCodeRequest {
             phone_number: phone.clone(),
-            code: "111111".to_string(),
+            code: Code::new(TEST_WRONG_CODE).unwrap(),
         })
         .await
         .expect("send_code should succeed");
@@ -983,7 +990,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     );
 
     // Attempt 2: Wrong code
-    setup_prelude_check_code(&phone, "222222", "failure")
+    setup_prelude_check_code(&phone, TEST_WRONG_CODE, "failure")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -991,7 +998,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     let response2 = service
         .send_code(SendCodeRequest {
             phone_number: phone.clone(),
-            code: "222222".to_string(),
+            code: Code::new(TEST_WRONG_CODE).unwrap(),
         })
         .await
         .expect("send_code should succeed");
@@ -1018,7 +1025,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     );
 
     // Finally: Correct code
-    setup_prelude_check_code(&phone, "123456", "success")
+    setup_prelude_check_code(&phone, TEST_VERIFICATION_CODE, "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1031,7 +1038,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     let response_success = service
         .send_code(SendCodeRequest {
             phone_number: phone.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("send_code with correct code should succeed");
@@ -1243,7 +1250,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
         .mount(&servers.prelude_server)
         .await;
 
-    setup_prelude_check_code(&phone1, "123456", "success")
+    setup_prelude_check_code(&phone1, TEST_VERIFICATION_CODE, "success")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1267,7 +1274,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     service
         .send_code(SendCodeRequest {
             phone_number: phone1.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("send_code should succeed");
@@ -1359,7 +1366,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
         .expect("create_verification should succeed");
 
     // Mock expired_or_not_found to reach FAILED state
-    setup_prelude_check_code(&phone2, "123456", "expired_or_not_found")
+    setup_prelude_check_code(&phone2, TEST_VERIFICATION_CODE, "expired_or_not_found")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1367,7 +1374,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     service
         .send_code(SendCodeRequest {
             phone_number: phone2.clone(),
-            code: "123456".to_string(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("send_code should succeed");

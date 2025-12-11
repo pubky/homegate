@@ -1,6 +1,6 @@
 use crate::HomeserverAdminAPI;
+use crate::sms_verification::PhoneNumber;
 use crate::sms_verification::error::SmsVerificationError;
-use crate::sms_verification::phone_number::PhoneNumber;
 use crate::sms_verification::prelude_api::{
     PreludeAPI, PreludeCheckCodeResponse, PreludeCreateVerificationResponse,
 };
@@ -132,7 +132,7 @@ impl SmsVerificationService {
 
         let prelude_response = self
             .prelude_api
-            .check_code(request.phone_number.as_str(), &request.code)
+            .check_code(request.phone_number.as_str(), request.code.as_str())
             .await?;
 
         match prelude_response {

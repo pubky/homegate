@@ -72,26 +72,42 @@ async fn verify_code_handler(
 
 impl IntoResponse for SmsVerificationError {
     fn into_response(self) -> Response {
-        let (status, error_type, message) = match self {
+        let (status, error_type, message, retry_after) = match self {
             SmsVerificationError::InvalidPhoneNumber(ref _phone) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "invalid_phone_number",
                 self.to_string(),
+                None,
+            ),
+            SmsVerificationError::InvalidCode(ref _code) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_code",
+                self.to_string(),
+                None,
             ),
             SmsVerificationError::WeeklyLimitExceeded => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "weekly_limit_exceeded",
                 self.to_string(),
+                None,
             ),
             SmsVerificationError::AnnualLimitExceeded => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "annual_limit_exceeded",
                 self.to_string(),
+                None,
             ),
             SmsVerificationError::NoActiveVerification(ref _phone) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "no_active_verification",
                 self.to_string(),
+                None,
+            ),
+            SmsVerificationError::RateLimited { retry_after } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "external_service_rate_limited",
+                self.to_string(),
+                retry_after,
             ),
             SmsVerificationError::RequestFailed(ref err) => {
                 tracing::error!(error = %err, "Failed to communicate with SMS provider");
@@ -99,6 +115,7 @@ impl IntoResponse for SmsVerificationError {
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "external_service_error",
                     "Failed to communicate with external API".to_string(),
+                    None,
                 )
             }
             SmsVerificationError::Database(ref err) => {
@@ -107,15 +124,20 @@ impl IntoResponse for SmsVerificationError {
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "database_error",
                     "Database operation failed".to_string(),
+                    None,
                 )
             }
         };
 
-        let body = Json(json!({
+        let mut body = json!({
             "error": error_type,
             "message": message,
-        }));
+        });
 
-        (status, body).into_response()
+        if let Some(seconds) = retry_after {
+            body["retry_after"] = json!(seconds);
+        }
+
+        (status, Json(body)).into_response()
     }
 }

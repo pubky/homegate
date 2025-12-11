@@ -1,7 +1,7 @@
 use crate::infrastructure::database::DbError;
 use crate::infrastructure::database::SqlDb;
+use crate::sms_verification::PhoneNumber;
 use crate::sms_verification::hasher_argon2id::HasherArgon2id;
-use crate::sms_verification::phone_number::PhoneNumber;
 use chrono::NaiveDateTime;
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use sea_query_binder::SqlxBinder;
