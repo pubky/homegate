@@ -1,6 +1,7 @@
 pub mod infrastructure;
 pub mod shared;
 pub mod sms_verification;
+mod ln_payments;
 
 #[cfg(test)]
 mod e2e;

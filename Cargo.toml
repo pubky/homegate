@@ -17,8 +17,10 @@ envy = "0.4.2"
 futures-util = "0.3.31"
 getrandom = "0.2"
 hex = "0.4"
+phoenixd-rs = "0.5.0"
 regex = "1.11"
 reqwest = { version = "0.12", features = ["json"] }
+reqwest-websocket = "0.5.1"
 sea-query = { version = "0.32.6", features = [ "with-chrono", "postgres-array" ]}
 sea-query-binder = { version = "0.7.0", features = [ "with-chrono", "runtime-tokio", "sqlx-postgres", "postgres-array" ] }
 serde = { version = "1.0.228", features = ["derive"] }
