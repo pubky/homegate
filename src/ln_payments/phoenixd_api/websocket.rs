@@ -86,17 +86,17 @@ impl Stream for ReceivePaymentsWebsocket {
 
 #[cfg(test)]
 mod tests {
-    use crate::ln_payments::phoenixd_api::api::PhoenixdAPI;
+    use crate::ln_payments::phoenixd_api::{api::PhoenixdAPI, websocket::ReceivePaymentsWebsocket};
     use futures_util::TryStreamExt;
     use url::Url;
 
     #[tokio::test]
     async fn test_received_payments_websocket() {
-        let api = PhoenixdAPI::new(
+        let mut websocket = ReceivePaymentsWebsocket::connect(
             &Url::parse("http://localhost:9740").unwrap(),
             "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef",
-        );
-        let mut websocket = api.received_payments_websocket().await.unwrap();
+            &reqwest::Client::new(),
+        ).await.unwrap();
         println!("Websocket connected");
         while let Some(message) = websocket.try_next().await.unwrap() {
             println!("received: {:?}", message);
