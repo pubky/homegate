@@ -26,7 +26,8 @@ impl AppState {
             sms_repo,
             prelude_api,
             homeserver_admin_api,
-            config.max_verified_sessions,
+            config.max_sms_verifications_per_week,
+            config.max_sms_verifications_per_year,
         );
         Self { sms_verification }
     }

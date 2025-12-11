@@ -95,9 +95,11 @@ impl SmsVerificationRepository {
         Ok(())
     }
 
-    pub async fn count_verified_sessions(
+    /// Count VERIFIED sessions within a time window
+    pub async fn count_verified_sessions_since(
         &self,
         phone_number: &PhoneNumber,
+        since: NaiveDateTime,
     ) -> Result<i64, DbError> {
         let hashed_phone = self
             .hasher_argon2id
@@ -108,7 +110,9 @@ impl SmsVerificationRepository {
             .from("sms_verifications")
             .and_where(Expr::col("phone_number_hash").eq(hashed_phone.as_str()))
             .and_where(Expr::col("status").eq(VerificationStatus::Verified.as_str()))
+            .and_where(Expr::col("finalised_at").gte(since))
             .to_owned();
+
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(&query, values)
             .fetch_one(self.db.pool())
@@ -116,6 +120,17 @@ impl SmsVerificationRepository {
             .map_err(DbError::from)?;
         let count: i64 = row.try_get(0).map_err(DbError::from)?;
         Ok(count)
+    }
+
+    pub async fn count_verified_sessions_in_last_days(
+        &self,
+        phone_number: &PhoneNumber,
+        days: i64,
+    ) -> Result<i64, DbError> {
+        let now = chrono::Utc::now().naive_utc();
+        let since = now - chrono::Duration::days(days);
+        self.count_verified_sessions_since(phone_number, since)
+            .await
     }
 
     /// Error if no active (pending) verification session exists for a phone number.

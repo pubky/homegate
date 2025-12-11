@@ -9,8 +9,11 @@ pub enum SmsVerificationError {
     )]
     InvalidPhoneNumber(String),
 
-    #[error("Phone number has too many verified sessions")]
-    TooManyVerifiedSessions,
+    #[error("Phone number has exceeded weekly verification limit (2 verifications per 7 days)")]
+    WeeklyLimitExceeded,
+
+    #[error("Phone number has exceeded annual verification limit (4 verifications per 365 days)")]
+    AnnualLimitExceeded,
 
     #[error("No active verification session for phone number: {0}")]
     NoActiveVerification(PhoneNumber),

@@ -78,9 +78,14 @@ impl IntoResponse for SmsVerificationError {
                 "invalid_phone_number",
                 self.to_string(),
             ),
-            SmsVerificationError::TooManyVerifiedSessions => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "too_many_verified_sessions",
+            SmsVerificationError::WeeklyLimitExceeded => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "weekly_limit_exceeded",
+                self.to_string(),
+            ),
+            SmsVerificationError::AnnualLimitExceeded => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "annual_limit_exceeded",
                 self.to_string(),
             ),
             SmsVerificationError::NoActiveVerification(ref _phone) => (

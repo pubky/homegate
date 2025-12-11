@@ -5,6 +5,7 @@ use url::Url;
 
 /// The environment configuration.
 /// This is the configuration that is loaded from the environment variables.
+/// TODO: Use config.toml instead. Env is a bit limited eg for grouping config items into structs
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EnvConfig {
     #[serde(default)]
@@ -17,16 +18,22 @@ pub struct EnvConfig {
     pub homeserver_admin_api_url: Url,
     pub homeserver_admin_password: String,
     pub homeserver_pubky: String,
-    #[serde(default = "default_max_verified_sessions")]
-    pub max_verified_sessions: u32,
+    #[serde(default = "default_max_sms_verifications_per_week")]
+    pub max_sms_verifications_per_week: u32,
+    #[serde(default = "default_max_sms_verifications_per_year")]
+    pub max_sms_verifications_per_year: u32,
+}
+
+fn default_max_sms_verifications_per_week() -> u32 {
+    2
+}
+
+fn default_max_sms_verifications_per_year() -> u32 {
+    4
 }
 
 fn default_prelude_api_url() -> Url {
     Url::parse("https://api.prelude.dev").expect("Default Prelude API URL is valid")
-}
-
-fn default_max_verified_sessions() -> u32 {
-    10
 }
 
 fn default_http_listen_socker() -> SocketAddr {
@@ -52,7 +59,8 @@ impl EnvConfig {
             homeserver_admin_api_url,
             homeserver_admin_password: "test-pass".to_string(),
             homeserver_pubky: "test-homeserver-pubky".to_string(),
-            max_verified_sessions: 10,
+            max_sms_verifications_per_week: 2,
+            max_sms_verifications_per_year: 4,
         }
     }
 }

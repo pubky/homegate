@@ -15,7 +15,8 @@ pub struct SmsVerificationService {
     repository: SmsVerificationRepository,
     prelude_api: PreludeAPI,
     homeserver_admin_api: HomeserverAdminAPI,
-    max_verified_sessions: u32,
+    max_verifications_per_week: u32,
+    max_verifications_per_year: u32,
 }
 
 impl SmsVerificationService {
@@ -23,28 +24,49 @@ impl SmsVerificationService {
         repository: SmsVerificationRepository,
         prelude_api: PreludeAPI,
         homeserver_admin_api: HomeserverAdminAPI,
-        max_verified_sessions: u32,
+        max_verifications_per_week: u32,
+        max_verifications_per_year: u32,
     ) -> Self {
         Self {
             repository,
             prelude_api,
             homeserver_admin_api,
-            max_verified_sessions,
+            max_verifications_per_week,
+            max_verifications_per_year,
         }
     }
 
-    /// Check if a phone number can create a new verification
+    /// Check if a phone number has reached its limits for new verificaitons
     pub async fn check_verification_limit(
         &self,
         phone_number: &PhoneNumber,
     ) -> Result<(), SmsVerificationError> {
-        let count = self
+        let weekly_count = self
             .repository
-            .count_verified_sessions(phone_number)
-            .await
-            .map_err(SmsVerificationError::Database)?;
-        if count >= self.max_verified_sessions as i64 {
-            return Err(SmsVerificationError::TooManyVerifiedSessions);
+            .count_verified_sessions_in_last_days(phone_number, 7)
+            .await?;
+        if weekly_count >= self.max_verifications_per_week as i64 {
+            tracing::warn!(
+                phone_number = %phone_number,
+                weekly_count = weekly_count,
+                weekly_limit = self.max_verifications_per_week,
+                "Weekly verification limit exceeded"
+            );
+            return Err(SmsVerificationError::WeeklyLimitExceeded);
+        }
+
+        let annual_count = self
+            .repository
+            .count_verified_sessions_in_last_days(phone_number, 365)
+            .await?;
+        if annual_count >= self.max_verifications_per_year as i64 {
+            tracing::warn!(
+                phone_number = %phone_number,
+                annual_count = annual_count,
+                annual_limit = self.max_verifications_per_year,
+                "Annual verification limit exceeded"
+            );
+            return Err(SmsVerificationError::AnnualLimitExceeded);
         }
         Ok(())
     }

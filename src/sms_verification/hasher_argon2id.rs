@@ -17,6 +17,12 @@ pub struct HasherArgon2id {
     argon2: Argon2<'static>,
 }
 
+impl Default for HasherArgon2id {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HasherArgon2id {
     pub fn new() -> Self {
         Self::new_with_pepper_path(None)
@@ -78,13 +84,13 @@ impl Pepper {
     }
 
     fn get_file_path() -> PathBuf {
-        let home =
-            std::env::var("HOME").expect("Failed to determine home directory - $HOME not set");
+        let home = std::env::var("HOME")
+            .expect("Should be able to determine home directory - $HOME not set");
         PathBuf::from(home).join(".homegate").join("pepper.txt")
     }
 
     fn load_or_create(custom_path: Option<PathBuf>) -> String {
-        let file_path = custom_path.unwrap_or_else(|| Self::get_file_path());
+        let file_path = custom_path.unwrap_or_else(Self::get_file_path);
 
         if file_path.exists() {
             let content = fs::read_to_string(&file_path).expect("Failed to read pepper file");
@@ -97,7 +103,7 @@ impl Pepper {
         let pepper = Self::generate_pepper_value();
 
         if let Some(dir_path) = file_path.parent() {
-            fs::create_dir_all(dir_path).expect("Failed to create pepper directory");
+            fs::create_dir_all(dir_path).expect("Creating pepper directory should not fail");
         }
         fs::write(&file_path, pepper.as_bytes()).expect("Failed to write pepper file");
 
@@ -107,7 +113,7 @@ impl Pepper {
 
     fn generate_pepper_value() -> String {
         let mut bytes = [0u8; 32];
-        getrandom::getrandom(&mut bytes).expect("Failed to generate random pepper");
+        getrandom::getrandom(&mut bytes).expect("Randomness generation should not fail");
         hex::encode(bytes)
     }
 
@@ -115,7 +121,7 @@ impl Pepper {
         (content.len() == 64 && content.chars().all(|c| c.is_ascii_hexdigit()))
             .then_some(())
             .ok_or(())
-            .expect(&format!("Invalid pepper file: {}", &content));
+            .expect("Pepper file should contain a 64 character hex string");
     }
 
     pub fn as_bytes(&self) -> &[u8] {

@@ -47,7 +47,7 @@ async fn create_service_with_mocked_apis(
 
     let phone_hasher = HasherArgon2id::new();
     let repository = SmsVerificationRepository::new(db, phone_hasher);
-    SmsVerificationService::new(repository, prelude_api, homeserver_admin_api, 10)
+    SmsVerificationService::new(repository, prelude_api, homeserver_admin_api, 2, 4)
 }
 
 #[sqlx::test]
@@ -295,30 +295,31 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn test_service_max_verified_sessions_limit(pool: PgPool) {
+async fn test_service_max_verified_sessions_limits(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
+    let db = SqlDb::test(pool.clone()).await;
     let phone = PhoneNumber::new("+30111111112").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
-    // Setup mocks for 10 successful verifications
+    // Setup mocks for successful verifications (4 complete verifications)
     setup_prelude_create_verification(&phone, Some(ip), "success", None)
-        .expect(10)
+        .expect(4)
         .mount(&servers.prelude_server)
         .await;
 
     setup_prelude_check_code(&phone, "123456", "success")
-        .expect(10)
+        .expect(4)
         .mount(&servers.prelude_server)
         .await;
 
     setup_homeserver_signup_token("test-token")
-        .expect(10)
+        .expect(4)
         .mount(&servers.homeserver_server)
         .await;
 
-    // Complete 10 verifications
-    for i in 0..10 {
+    // Test weekly limit: Complete 2 verifications (within last 7 days)
+    for i in 0..2 {
         service
             .create_verification(
                 CreateVerificationRequest {
@@ -338,7 +339,7 @@ async fn test_service_max_verified_sessions_limit(pool: PgPool) {
             .expect(&format!("verify_code {} should succeed", i));
     }
 
-    // 11th attempt should fail (no mock needed - validation happens before API call)
+    // 3rd attempt should fail weekly limit (no mock needed - validation happens before API call)
     let result = service
         .create_verification(
             CreateVerificationRequest {
@@ -348,10 +349,130 @@ async fn test_service_max_verified_sessions_limit(pool: PgPool) {
         )
         .await;
 
-    assert!(result.is_err(), "11th send_code should fail");
+    assert!(result.is_err(), "3rd send_code should fail");
     match result {
-        Err(crate::SmsVerificationError::TooManyVerifiedSessions) => {}
-        _ => panic!("Expected TooManyVerifiedSessions error"),
+        Err(crate::SmsVerificationError::WeeklyLimitExceeded) => {}
+        _ => panic!("Expected WeeklyLimitExceeded error"),
+    }
+
+    // Age one verification to 8 days ago (outside weekly window)
+    let hashed_phone = test_phone_hasher().hash_phone_number(phone.as_str());
+    let eight_days_ago = chrono::Utc::now().naive_utc() - chrono::Duration::days(8);
+    sqlx::query(
+        "UPDATE sms_verifications
+         SET finalised_at = $1
+         WHERE id = (
+             SELECT id FROM sms_verifications
+             WHERE phone_number_hash = $2
+             AND status = 'VERIFIED'
+             ORDER BY finalised_at ASC
+             LIMIT 1
+         )",
+    )
+    .bind(eight_days_ago)
+    .bind(&hashed_phone)
+    .execute(db.pool())
+    .await
+    .expect("Failed to age verification");
+
+    // Now 3rd attempt should succeed (1 within weekly window, 1 aged out)
+    service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone.clone(),
+            },
+            ip,
+        )
+        .await
+        .expect("3rd send_code should succeed after aging");
+
+    service
+        .send_code(SendCodeRequest {
+            phone_number: phone.clone(),
+            code: "123456".to_string(),
+        })
+        .await
+        .expect("3rd verify_code should succeed");
+
+    // Now we have: 1 aged out (8 days), 2 within weekly window
+    // We need to complete 2 more verifications (4th and 5th) to reach annual limit
+    // But first age another one so we can do both without hitting weekly limit
+
+    // Age the second verification to 8 days ago
+    let eight_days_ago = chrono::Utc::now().naive_utc() - chrono::Duration::days(8);
+    sqlx::query(
+        "UPDATE sms_verifications
+         SET finalised_at = $1
+         WHERE id = (
+             SELECT id FROM sms_verifications
+             WHERE phone_number_hash = $2
+             AND status = 'VERIFIED'
+             AND finalised_at > $1
+             ORDER BY finalised_at ASC
+             LIMIT 1
+         )",
+    )
+    .bind(eight_days_ago)
+    .bind(&hashed_phone)
+    .execute(db.pool())
+    .await
+    .expect("Failed to age second verification");
+
+    // Now we have: 2 aged out, 1 within weekly window
+    // Complete 4th verification
+    service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone.clone(),
+            },
+            ip,
+        )
+        .await
+        .expect("4th send_code should succeed");
+
+    service
+        .send_code(SendCodeRequest {
+            phone_number: phone.clone(),
+            code: "123456".to_string(),
+        })
+        .await
+        .expect("4th verify_code should succeed");
+
+    // Now we have: 2 aged out, 2 within weekly window (3rd and 4th)
+    // Age the 3rd one so we can complete the 5th without hitting weekly limit
+    let eight_days_ago = chrono::Utc::now().naive_utc() - chrono::Duration::days(8);
+    sqlx::query(
+        "UPDATE sms_verifications
+         SET finalised_at = $1
+         WHERE id = (
+             SELECT id FROM sms_verifications
+             WHERE phone_number_hash = $2
+             AND status = 'VERIFIED'
+             AND finalised_at > $1
+             ORDER BY finalised_at ASC
+             LIMIT 1
+         )",
+    )
+    .bind(eight_days_ago)
+    .bind(&hashed_phone)
+    .execute(db.pool())
+    .await
+    .expect("Failed to age third verification");
+
+    // 5th attempt should fail annual limit (we have 4 total, all verified)
+    let result = service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone.clone(),
+            },
+            ip,
+        )
+        .await;
+
+    assert!(result.is_err(), "5th send_code should fail");
+    match result {
+        Err(crate::SmsVerificationError::AnnualLimitExceeded) => {}
+        other => panic!("Expected AnnualLimitExceeded error, got: {:?}", other),
     }
 }
 
@@ -409,83 +530,6 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     .unwrap();
 
     assert_eq!(count.0, 0, "Should not mark as verified with wrong code");
-
-    // Boundary: 9 verified sessions should allow 10th
-    let phone = PhoneNumber::new("+30888888888").unwrap();
-
-    // Setup mocks for 10 verifications (9 + 1 more)
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
-        .expect(10)
-        .mount(&servers.prelude_server)
-        .await;
-
-    setup_prelude_check_code(&phone, "123456", "success")
-        .expect(10)
-        .mount(&servers.prelude_server)
-        .await;
-
-    setup_homeserver_signup_token("test-token")
-        .expect(10)
-        .mount(&servers.homeserver_server)
-        .await;
-
-    // Complete 9 verifications
-    for i in 0..9 {
-        service
-            .create_verification(
-                CreateVerificationRequest {
-                    phone_number: phone.clone(),
-                },
-                ip,
-            )
-            .await
-            .expect(&format!("send_code {} should succeed", i));
-        service
-            .send_code(SendCodeRequest {
-                phone_number: phone.clone(),
-                code: "123456".to_string(),
-            })
-            .await
-            .expect(&format!("verify_code {} should succeed", i));
-    }
-
-    // 10th should succeed
-
-    let result = service
-        .create_verification(
-            CreateVerificationRequest {
-                phone_number: phone.clone(),
-            },
-            ip,
-        )
-        .await;
-    assert!(result.is_ok(), "10th verification should succeed");
-
-    // Complete the 10th verification (mocks already set up above with expect(10))
-    service
-        .send_code(SendCodeRequest {
-            phone_number: phone.clone(),
-            code: "123456".to_string(),
-        })
-        .await
-        .expect("verify_code for 10th session should succeed");
-
-    // At limit: 10 verified sessions should reject 11th (no mock needed)
-    let result = service
-        .create_verification(
-            CreateVerificationRequest {
-                phone_number: phone.clone(),
-            },
-            ip,
-        )
-        .await;
-    assert!(
-        matches!(
-            result,
-            Err(crate::SmsVerificationError::TooManyVerifiedSessions)
-        ),
-        "11th send_code should fail with TooManyVerifiedSessions"
-    );
 }
 
 #[sqlx::test]
