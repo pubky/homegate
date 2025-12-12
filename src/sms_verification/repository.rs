@@ -211,6 +211,39 @@ impl SmsVerificationRepository {
         Ok(())
     }
 
+    /// Mark all PENDING verification as FAILED by phone number (fallback when prelude_id doesn't match)
+    pub async fn mark_all_pending_verification_as_failed(
+        &self,
+        phone_number: &PhoneNumber,
+        failure_reason: &str,
+    ) -> Result<(), DbError> {
+        let hashed_phone = self
+            .hasher_argon2id
+            .hash_phone_number(phone_number.as_str());
+
+        let update_statement = Query::update()
+            .table("sms_verifications")
+            .values([
+                ("status", VerificationStatus::Failed.as_str().into()),
+                ("finalised_at", Expr::current_timestamp().into()),
+                ("failure_reason", failure_reason.into()),
+            ])
+            .and_where(Expr::col("phone_number_hash").eq(hashed_phone.as_str()))
+            .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
+            .to_owned();
+
+        let (query, values) = update_statement.build_sqlx(PostgresQueryBuilder);
+        let result = sqlx::query_with(&query, values)
+            .execute(self.db.pool())
+            .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(DbError::NotFound(phone_number.to_string()));
+        }
+
+        Ok(())
+    }
+
     /// Fetch a verification record by phone number (for testing/inspection)
     #[cfg(test)]
     pub async fn get_by_phone_number(

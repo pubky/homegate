@@ -21,7 +21,7 @@ use sqlx::PgPool;
 use std::net::IpAddr;
 
 const TEST_VERIFICATION_CODE: &str = "123456";
-const TEST_WRONG_CODE: &str = "1111";
+const TEST_WRONG_CODE: &str = "111111";
 
 fn test_phone_hasher() -> HasherArgon2id {
     HasherArgon2id::new()
@@ -644,6 +644,188 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn test_service_success_but_homeserver_fails_marks_failed(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
+    let db = SqlDb::test(pool.clone()).await;
+
+    let phone = PhoneNumber::new("+30888888888").unwrap();
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Create verification session
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone.clone(),
+            },
+            ip,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    // Mock successful code check from Prelude
+    setup_prelude_check_code(&phone, TEST_VERIFICATION_CODE, "success")
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    // Mock homeserver to return error when generating signup token
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, ResponseTemplate};
+    Mock::given(method("GET"))
+        .and(path("/generate_signup_token"))
+        .and(header("X-Admin-Password", "test-pass"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    // Validate code - should fail due to homeserver error
+    let result = service
+        .validate_code(ValidateCodeRequest {
+            phone_number: phone.clone(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
+        })
+        .await;
+
+    assert!(result.is_err(), "Should fail due to homeserver error");
+
+    // Verify session marked FAILED (not stuck in PENDING)
+    let repository = SmsVerificationRepository::new(db.clone(), test_phone_hasher());
+    let record = repository.get_by_phone_number(&phone).await.unwrap();
+    assert_eq!(record.status, VerificationStatus::Failed);
+    assert_eq!(
+        record.failure_reason,
+        Some("homeserver_signup_token_generation_failed".to_string())
+    );
+}
+
+// This circumstance happens if validate_code() is called before send_code() - Prelude has no prelude_id for the verification session yet so it returns a dummy value which doesnt match to anything in our db.
+#[sqlx::test]
+async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
+    let db = SqlDb::test(pool.clone()).await;
+
+    let phone = PhoneNumber::new("+30777777777").unwrap();
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Create verification session with prelude_id "verification-id-123"
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    service
+        .create_verification(
+            CreateVerificationRequest {
+                phone_number: phone.clone(),
+            },
+            ip,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    // Verify initial PENDING status
+    let repository = SmsVerificationRepository::new(db.clone(), test_phone_hasher());
+    let record = repository.get_by_phone_number(&phone).await.unwrap();
+    assert_eq!(record.status, VerificationStatus::Pending);
+    assert_eq!(record.prelude_id, "verification-id-123");
+
+    // Mock Prelude to return expired_or_not_found with DIFFERENT prelude_id
+    use serde_json::json;
+    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::{Mock, ResponseTemplate};
+    Mock::given(method("POST"))
+        .and(path("/v2/verification/check"))
+        .and(header("Authorization", "Bearer test-key"))
+        .and(header("Content-Type", "application/json"))
+        .and(body_json(json!({
+            "target": {
+                "type": "phone_number",
+                "value": phone.as_str()
+            },
+            "code": TEST_VERIFICATION_CODE
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "session-99",  // Different ID that doesn't exist in our DB
+            "status": "expired_or_not_found",
+            "metadata": null,
+            "request_id": null
+        })))
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    // Validate code - should still mark session as failed via phone fallback
+    let result = service
+        .validate_code(ValidateCodeRequest {
+            phone_number: phone.clone(),
+            code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
+        })
+        .await;
+
+    // Should return NoActiveVerification error
+    assert!(matches!(
+        result,
+        Err(crate::SmsVerificationError::NoActiveVerification(_))
+    ));
+
+    // Verify session marked FAILED despite prelude_id mismatch
+    let record = repository.get_by_phone_number(&phone).await.unwrap();
+    assert_eq!(record.status, VerificationStatus::Failed);
+    assert_eq!(
+        record.failure_reason,
+        Some("expired_or_not_found".to_string())
+    );
+    assert!(record.finalised_at.is_some());
+
+    // Verify no active verification remains
+    let result = repository.err_if_no_active_verification(&phone).await;
+    assert!(matches!(result, Err(DbError::NotFound(_))));
+}
+
+#[sqlx::test]
+async fn test_repository_mark_failed_by_phone_number(pool: PgPool) {
+    let db = SqlDb::test(pool.clone()).await;
+    let repository = SmsVerificationRepository::new(db.clone(), test_phone_hasher());
+
+    let phone = PhoneNumber::new("+30999999999").unwrap();
+
+    // Create PENDING session
+    repository
+        .create_verification(&phone, "test-prelude-id")
+        .await
+        .unwrap();
+
+    let record = repository.get_by_phone_number(&phone).await.unwrap();
+    assert_eq!(record.status, VerificationStatus::Pending);
+
+    // Mark failed by phone number
+    repository
+        .mark_all_pending_verification_as_failed(&phone, "test_reason")
+        .await
+        .unwrap();
+
+    // Verify updated state
+    let record = repository.get_by_phone_number(&phone).await.unwrap();
+    assert_eq!(record.status, VerificationStatus::Failed);
+    assert_eq!(record.failure_reason, Some("test_reason".to_string()));
+    assert!(record.finalised_at.is_some());
+
+    // Test idempotency - should return NotFound (no PENDING sessions)
+    let result = repository
+        .mark_all_pending_verification_as_failed(&phone, "another_reason")
+        .await;
+    assert!(matches!(result, Err(DbError::NotFound(_))));
+}
+
+#[sqlx::test]
 async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let service = create_service_with_mocked_apis(pool.clone(), &servers).await;
@@ -948,12 +1130,13 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         .await
         .expect("create_verification should succeed");
 
-    // Attempt 1: Wrong code
+    // Setup mock for 2 wrong code attempts
     setup_prelude_check_code(&phone, TEST_WRONG_CODE, "failure")
-        .expect(1)
+        .expect(2)
         .mount(&servers.prelude_server)
         .await;
 
+    // Attempt 1: Wrong code
     let response1 = service
         .validate_code(ValidateCodeRequest {
             phone_number: phone.clone(),
@@ -985,10 +1168,6 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     );
 
     // Attempt 2: Wrong code
-    setup_prelude_check_code(&phone, TEST_WRONG_CODE, "failure")
-        .expect(1)
-        .mount(&servers.prelude_server)
-        .await;
 
     let response2 = service
         .validate_code(ValidateCodeRequest {
@@ -1352,13 +1531,20 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
         .mount(&servers.prelude_server)
         .await;
 
-    service
+    let verify_result = service
         .validate_code(ValidateCodeRequest {
             phone_number: phone2.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
-        .await
-        .expect("send_code should succeed");
+        .await;
+
+    // Should return NoActiveVerification error
+    match verify_result {
+        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
+            // Test passes - correct error type
+        }
+        other => panic!("Expected NoActiveVerification error, got: {:?}", other),
+    }
 
     // Verify we have a FAILED record before trying to mark it as verified
     let hashed_phone2_mut = test_phone_hasher().hash_phone_number(phone2.as_str());

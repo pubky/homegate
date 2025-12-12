@@ -60,13 +60,8 @@ async fn http_returns_200_and_correct_json_for_successful_verification(pool: PgP
         .json(&serde_json::json!({ "phone_number": phone }))
         .await;
 
-    // Assert: HTTP 200 and response body contains success status
+    // Assert: HTTP 200
     send_response.assert_status_ok();
-    let send_body: serde_json::Value = send_response.json();
-    assert_eq!(
-        send_body["status"], "success",
-        "Response JSON should have status=success"
-    );
 
     // Arrange: Mock successful code verification
     setup_prelude_check_code(&phone_num, "123456", "success")
@@ -88,16 +83,20 @@ async fn http_returns_200_and_correct_json_for_successful_verification(pool: PgP
         }))
         .await;
 
-    // Assert: HTTP 200 with success status and signup_code in JSON response
+    // Assert: HTTP 200 with valid=true, signup_code, and homeserver_pubky in JSON response
     verify_response.assert_status_ok();
     let verify_body: serde_json::Value = verify_response.json();
     assert_eq!(
-        verify_body["status"], "success",
-        "Response JSON should have status=success"
+        verify_body["valid"], "true",
+        "Response JSON should have valid=true"
     );
     assert_eq!(
         verify_body["signup_code"], "token-uuid-123",
         "Response JSON should include signup_code"
+    );
+    assert_eq!(
+        verify_body["homeserver_pubky"], "test-homeserver-pubky",
+        "Response JSON should include homeserver_pubky"
     );
 }
 
@@ -153,8 +152,6 @@ async fn test_http_ip_extraction_with_x_forwarded_for(pool: PgPool) {
         .await;
 
     response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["status"], "success");
 
     // Wiremock will verify the IP was sent in the request body
 }
@@ -186,8 +183,6 @@ async fn test_http_ip_extraction_with_x_real_ip(pool: PgPool) {
         .await;
 
     response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["status"], "success");
 
     // Wiremock will verify the IP was sent in the request body
 }
@@ -269,7 +264,7 @@ async fn test_http_verify_code_status_codes(pool: PgPool) {
         .await;
 
     // Setup mock for wrong code - returns "failure"
-    setup_prelude_check_code(&phone_num, "wrong_code", "failure")
+    setup_prelude_check_code(&phone_num, "111111", "failure")
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -279,15 +274,15 @@ async fn test_http_verify_code_status_codes(pool: PgPool) {
         .post("/sms_verification/verify_code")
         .json(&serde_json::json!({
             "phone_number": phone,
-            "code": "wrong_code"
+            "code": "111111"
         }))
         .await;
 
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(
-        body["status"], "failure",
-        "Status field should indicate failure"
+        body["valid"], "false",
+        "Response should have valid=false for invalid code"
     );
 
     // Setup mock for correct code - returns "success"
@@ -313,8 +308,12 @@ async fn test_http_verify_code_status_codes(pool: PgPool) {
 
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
-    assert_eq!(body["status"], "success");
+    assert_eq!(body["valid"], "true", "Response should have valid=true");
     assert_eq!(body["signup_code"], "token-uuid-456");
+    assert_eq!(
+        body["homeserver_pubky"], "test-homeserver-pubky",
+        "Response should include homeserver_pubky"
+    );
 
     // Wiremock verifies all expected calls were made
 }

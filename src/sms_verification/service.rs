@@ -139,7 +139,20 @@ impl SmsVerificationService {
 
         match prelude_response {
             PreludeCheckCodeResponse::Success { id, .. } => {
-                let code = self.homeserver_admin_api.generate_signup_token().await?;
+                let code = match self.homeserver_admin_api.generate_signup_token().await {
+                    Ok(code) => code,
+                    Err(e) => {
+                        if let Err(e) = self
+                            .repository
+                            .mark_failed(&id, "homeserver_signup_token_generation_failed")
+                            .await
+                        {
+                            tracing::error!("{}", e);
+                        };
+                        return Err(e.into());
+                    }
+                };
+
                 self.repository.mark_verified(&id, &code).await?;
                 Ok(ValidateCodeResponse::Valid {
                     signup_code: code,
@@ -150,11 +163,18 @@ impl SmsVerificationService {
                 // Wrong code - don't mark as failed, allow retries
                 Ok(ValidateCodeResponse::Invalid)
             }
-            PreludeCheckCodeResponse::ExpiredOrNotFound { id, .. } => {
-                self.repository
-                    .mark_failed(&id, "expired_or_not_found")
-                    .await?;
-                // Return the same error as we do above when Homegate doesnt have a PENDING entry in its table for this phone number
+            PreludeCheckCodeResponse::ExpiredOrNotFound { .. } => {
+                // Do not return errors - user gets NoActiveVerification error
+                if let Err(e) = self
+                    .repository
+                    .mark_all_pending_verification_as_failed(
+                        &request.phone_number,
+                        "expired_or_not_found",
+                    )
+                    .await
+                {
+                    tracing::error!("{}", e);
+                }
                 Err(SmsVerificationError::NoActiveVerification(
                     request.phone_number.clone(),
                 ))
