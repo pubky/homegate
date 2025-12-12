@@ -208,7 +208,6 @@ impl PreludeAPI {
             .json(&request_body)
             .send()
             .await?;
-
         let response = PreludeError::from_response(response)?;
         let check_response = response
             .error_for_status()?

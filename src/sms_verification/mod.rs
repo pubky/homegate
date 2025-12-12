@@ -15,6 +15,5 @@ pub use hasher_argon2id::HasherArgon2id;
 pub use repository::SmsVerificationRepository;
 pub use service::SmsVerificationService;
 pub use types::{
-    Code, CreateVerificationRequest, CreateVerificationResponse, PhoneNumber, SendCodeRequest,
-    SendCodeResponse,
+    Code, CreateVerificationRequest, PhoneNumber, ValidateCodeRequest, ValidateCodeResponse,
 };

@@ -6,7 +6,7 @@ use crate::sms_verification::prelude_api::{
 };
 use crate::sms_verification::repository::SmsVerificationRepository;
 use crate::sms_verification::types::{
-    CreateVerificationRequest, CreateVerificationResponse, SendCodeRequest, SendCodeResponse,
+    CreateVerificationRequest, ValidateCodeRequest, ValidateCodeResponse,
 };
 use std::net::IpAddr;
 
@@ -76,7 +76,7 @@ impl SmsVerificationService {
         &self,
         request: CreateVerificationRequest,
         ip_address: IpAddr,
-    ) -> Result<CreateVerificationResponse, SmsVerificationError> {
+    ) -> Result<(), SmsVerificationError> {
         self.check_verification_limit(&request.phone_number).await?;
 
         let prelude_response = self
@@ -107,22 +107,24 @@ impl SmsVerificationService {
                 .await?;
         }
 
-        Ok(match prelude_response {
-            PreludeCreateVerificationResponse::Success { .. } => {
-                CreateVerificationResponse::Success
-            }
-            PreludeCreateVerificationResponse::Retry { .. } => CreateVerificationResponse::Retry,
-            PreludeCreateVerificationResponse::Blocked { reason, .. } => {
-                CreateVerificationResponse::Blocked { reason }
-            }
-        })
+        if let PreludeCreateVerificationResponse::Blocked { id, reason } = prelude_response {
+            tracing::info!(
+                "Phone number {} blocked for reason: {:?}. prelude id: {}",
+                request.phone_number,
+                reason,
+                id
+            );
+            return Err(SmsVerificationError::Blocked);
+        }
+        // Return Ok for success or retry
+        Ok(())
     }
 
     /// Validates a verification code for a phone number
-    pub async fn send_code(
+    pub async fn validate_code(
         &self,
-        request: SendCodeRequest,
-    ) -> Result<SendCodeResponse, SmsVerificationError> {
+        request: ValidateCodeRequest,
+    ) -> Result<ValidateCodeResponse, SmsVerificationError> {
         self.repository
             .err_if_no_active_verification(&request.phone_number)
             .await
@@ -139,20 +141,23 @@ impl SmsVerificationService {
             PreludeCheckCodeResponse::Success { id, .. } => {
                 let code = self.homeserver_admin_api.generate_signup_token().await?;
                 self.repository.mark_verified(&id, &code).await?;
-                Ok(SendCodeResponse::Success {
+                Ok(ValidateCodeResponse::Valid {
                     signup_code: code,
                     homeserver_pubky: self.homeserver_admin_api.get_homeserver_pubky(),
                 })
+            }
+            PreludeCheckCodeResponse::Failure { .. } => {
+                // Wrong code - don't mark as failed, allow retries
+                Ok(ValidateCodeResponse::Invalid)
             }
             PreludeCheckCodeResponse::ExpiredOrNotFound { id, .. } => {
                 self.repository
                     .mark_failed(&id, "expired_or_not_found")
                     .await?;
-                Ok(SendCodeResponse::ExpiredOrNotFound)
-            }
-            PreludeCheckCodeResponse::Failure { .. } => {
-                // Wrong code - don't mark as failed, allow retries
-                Ok(SendCodeResponse::Failure)
+                // Return the same error as we do above when Homegate doesnt have a PENDING entry in its table for this phone number
+                Err(SmsVerificationError::NoActiveVerification(
+                    request.phone_number.clone(),
+                ))
             }
         }
     }

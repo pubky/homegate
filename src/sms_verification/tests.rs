@@ -11,11 +11,10 @@ use crate::e2e::{
 };
 use crate::infrastructure::database::{DbError, SqlDb};
 use crate::sms_verification::hasher_argon2id::HasherArgon2id;
-use crate::sms_verification::prelude_api::PreludeAPI;
+use crate::sms_verification::prelude_api::{PreludeAPI, PreludeBlockedReason};
 use crate::sms_verification::repository::{SmsVerificationRepository, VerificationStatus};
 use crate::sms_verification::{
-    Code, CreateVerificationRequest, CreateVerificationResponse, PhoneNumber, SendCodeRequest,
-    SendCodeResponse,
+    Code, CreateVerificationRequest, PhoneNumber, ValidateCodeRequest, ValidateCodeResponse,
 };
 use crate::{HomeserverAdminAPI, SmsVerificationService};
 use sqlx::PgPool;
@@ -79,7 +78,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
         .await;
 
     // Step 1: Initiate verification
-    let verify_response = service
+    service
         .create_verification(
             CreateVerificationRequest {
                 phone_number: phone.clone(),
@@ -88,11 +87,6 @@ async fn test_service_full_verification_flow(pool: PgPool) {
         )
         .await
         .expect("verify_init should succeed");
-
-    assert!(matches!(
-        verify_response,
-        CreateVerificationResponse::Success
-    ));
 
     // Step 1.5: Check database after initiation
     let repository = SmsVerificationRepository::new(db.clone(), test_phone_hasher());
@@ -123,14 +117,14 @@ async fn test_service_full_verification_flow(pool: PgPool) {
 
     // Step 2: Verify code
     let check_response = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
         .await
         .expect("verify_finalise should succeed");
 
-    assert!(matches!(check_response, SendCodeResponse::Success { .. }));
+    assert!(matches!(check_response, ValidateCodeResponse::Valid { .. }));
 
     // Step 3: Query database to verify state updated correctly
     let after_verify = repository
@@ -192,7 +186,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
         .await;
 
     // First send_code creates active session
-    let response1 = service
+    service
         .create_verification(
             CreateVerificationRequest {
                 phone_number: phone1.clone(),
@@ -201,8 +195,6 @@ async fn test_service_session_lifecycle(pool: PgPool) {
         )
         .await
         .expect("First send_code should succeed");
-
-    assert!(matches!(response1, CreateVerificationResponse::Success));
 
     let hashed_phone1 = test_phone_hasher().hash_phone_number(phone1.as_str());
     let count1: (i64,) =
@@ -265,7 +257,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
         .expect("send_code should succeed");
 
     service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone2.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
@@ -334,7 +326,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
             .expect(&format!("send_code {} should succeed", i));
 
         service
-            .send_code(SendCodeRequest {
+            .validate_code(ValidateCodeRequest {
                 phone_number: phone.clone(),
                 code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
             })
@@ -390,7 +382,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
         .expect("3rd send_code should succeed after aging");
 
     service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
@@ -434,7 +426,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
         .expect("4th send_code should succeed");
 
     service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
@@ -510,7 +502,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
         .expect("send_code should succeed");
 
     let check_response = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone_wrong_code.clone(),
             code: Code::new(TEST_WRONG_CODE).unwrap(),
         })
@@ -518,8 +510,8 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
         .expect("API should respond");
 
     assert!(
-        matches!(check_response, SendCodeResponse::Failure),
-        "Wrong code should return Failure status"
+        matches!(check_response, ValidateCodeResponse::Invalid),
+        "Wrong code should return Invalid"
     );
 
     // Verify database NOT updated when wrong code provided
@@ -580,18 +572,19 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
 
     // Step 4: Try to verify with code - this should trigger mark_failed
     let verify_result = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
-        .await
-        .expect("send_code should succeed");
+        .await;
 
-    // Verify the response is ExpiredOrNotFound
-    assert!(
-        matches!(verify_result, SendCodeResponse::ExpiredOrNotFound),
-        "Should return ExpiredOrNotFound"
-    );
+    // Verify the response is NoActiveVerification error
+    match verify_result {
+        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
+            // Test passes - correct error type
+        }
+        other => panic!("Expected NoActiveVerification error, got: {:?}", other),
+    }
 
     // Step 5: Verify database state
     let repository = SmsVerificationRepository::new(db.clone(), test_phone_hasher());
@@ -678,7 +671,7 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
 
     // Step 2: Try to verify with a different phone number (no mock needed - DB lookup fails first)
     let result = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone_verify.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
@@ -742,7 +735,7 @@ async fn test_service_database_error_handling(pool: PgPool) {
 
     // Now try to verify - database lookup fails before API call
     let result = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
@@ -796,7 +789,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
         .expect("create_verification should succeed");
 
     service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone_verified.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
@@ -815,7 +808,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 
     // Attempt to send code again on VERIFIED state - should fail
     let result = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone_verified.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
@@ -874,17 +867,19 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     .await;
 
     let verify_result = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone_failed.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
-        .await
-        .expect("send_code should succeed");
+        .await;
 
-    assert!(
-        matches!(verify_result, SendCodeResponse::ExpiredOrNotFound),
-        "Should return ExpiredOrNotFound"
-    );
+    // Verify the response is NoActiveVerification error
+    match verify_result {
+        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
+            // Test passes - correct error type
+        }
+        other => panic!("Expected NoActiveVerification error, got: {:?}", other),
+    }
 
     // Verify state is FAILED
     let hashed_phone_failed = test_phone_hasher().hash_phone_number(phone_failed.as_str());
@@ -898,7 +893,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 
     // Attempt to send code again on FAILED state - should fail
     let result = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone_failed.clone(),
             code: Code::new(TEST_WRONG_CODE).unwrap(),
         })
@@ -960,7 +955,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         .await;
 
     let response1 = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone.clone(),
             code: Code::new(TEST_WRONG_CODE).unwrap(),
         })
@@ -968,8 +963,8 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         .expect("send_code should succeed");
 
     assert!(
-        matches!(response1, SendCodeResponse::Failure),
-        "Wrong code should return Failure"
+        matches!(response1, ValidateCodeResponse::Invalid),
+        "Wrong code should return Invalid"
     );
 
     // Verify status remains PENDING
@@ -996,7 +991,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         .await;
 
     let response2 = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone.clone(),
             code: Code::new(TEST_WRONG_CODE).unwrap(),
         })
@@ -1004,8 +999,8 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         .expect("send_code should succeed");
 
     assert!(
-        matches!(response2, SendCodeResponse::Failure),
-        "Wrong code should return Failure"
+        matches!(response2, ValidateCodeResponse::Invalid),
+        "Wrong code should return Invalid"
     );
 
     // Verify status still PENDING
@@ -1036,7 +1031,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         .await;
 
     let response_success = service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
@@ -1044,8 +1039,8 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         .expect("send_code with correct code should succeed");
 
     assert!(
-        matches!(response_success, SendCodeResponse::Success { .. }),
-        "Correct code should return Success"
+        matches!(response_success, ValidateCodeResponse::Valid { .. }),
+        "Correct code should return Valid"
     );
 
     // Verify final state is VERIFIED
@@ -1101,20 +1096,14 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
             },
             ip,
         )
-        .await
-        .expect("create_verification should succeed");
+        .await;
 
-    // Assert response is Blocked with correct reason
-    use crate::sms_verification::prelude_api::PreludeBlockedReason;
+    // Verify the response is NoActiveVerification error
     match response {
-        CreateVerificationResponse::Blocked { reason } => {
-            assert_eq!(
-                reason,
-                PreludeBlockedReason::RepeatedAttempts,
-                "Blocked reason should be RepeatedAttempts"
-            );
+        Err(crate::SmsVerificationError::Blocked) => {
+            // Test passes - correct error type
         }
-        other => panic!("Expected Blocked response, got: {:?}", other),
+        other => panic!("Expected Blocked error, got: {:?}", other),
     }
 
     // Verify database state: record should be created and marked as FAILED
@@ -1187,7 +1176,7 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
         .await;
 
     // Call create_verification - should get Retry response from Prelude
-    let response = service
+    service
         .create_verification(
             CreateVerificationRequest {
                 phone_number: phone.clone(),
@@ -1196,14 +1185,6 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
         )
         .await
         .expect("create_verification should succeed");
-
-    // Assert response is Retry
-    match response {
-        CreateVerificationResponse::Retry => {
-            // Test passes
-        }
-        other => panic!("Expected Retry response, got: {:?}", other),
-    }
 
     // Verify that a PENDING session was created (even for retry response)
     // Based on service.rs:88-94, retry responses still create a record
@@ -1272,7 +1253,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
         .expect("create_verification should succeed");
 
     service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone1.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })
@@ -1372,7 +1353,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
         .await;
 
     service
-        .send_code(SendCodeRequest {
+        .validate_code(ValidateCodeRequest {
             phone_number: phone2.clone(),
             code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
         })

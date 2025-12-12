@@ -12,6 +12,9 @@ pub enum SmsVerificationError {
     )]
     InvalidPhoneNumber(String),
 
+    #[error("Phone number blocked for verification")]
+    Blocked,
+
     #[error("Invalid code format: {0}. Code must be exactly 6 digits (0-9)")]
     InvalidCode(String),
 
@@ -21,6 +24,8 @@ pub enum SmsVerificationError {
     #[error("Phone number has exceeded annual verification limit (4 verifications per 365 days)")]
     AnnualLimitExceeded,
 
+    /// This can be either Homegate not having a PENDING entry in its table or Prelude expiring the verification request for this number
+    /// Either way the user must start from the top.
     #[error("No active verification session for phone number: {0}")]
     NoActiveVerification(PhoneNumber),
 

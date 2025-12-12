@@ -5,18 +5,14 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use serde_json::json;
 
 use crate::sms_verification::{
     error::SmsVerificationError,
-    types::{
-        CreateVerificationRequest, CreateVerificationRequestRaw, CreateVerificationResponse,
-        SendCodeRequest, SendCodeRequestRaw, SendCodeResponse,
-    },
+    types::{CreateVerificationRequest, ValidateCodeRequest, ValidateCodeResponse},
 };
 use crate::{
     EnvConfig,
-    infrastructure::http::{HttpServerError, RequestOrigin, ValidatedJson},
+    infrastructure::http::{HttpServerError, RequestOrigin},
     sms_verification::app_state::AppState,
 };
 
@@ -46,98 +42,52 @@ pub async fn router_with_db(
 async fn send_code_handler(
     State(state): State<AppState>,
     RequestOrigin(ip_address): RequestOrigin,
-    request: ValidatedJson<
-        CreateVerificationRequest,
-        CreateVerificationRequestRaw,
-        SmsVerificationError,
-    >,
-) -> Result<Json<CreateVerificationResponse>, SmsVerificationError> {
-    let response = state
+    Json(request): Json<CreateVerificationRequest>,
+) -> Result<StatusCode, SmsVerificationError> {
+    state
         .sms_verification
-        .create_verification(request.into_inner(), ip_address)
+        .create_verification(request, ip_address)
         .await?;
-    Ok(Json(response))
+    Ok(StatusCode::OK)
 }
 
 async fn verify_code_handler(
     State(state): State<AppState>,
-    request: ValidatedJson<SendCodeRequest, SendCodeRequestRaw, SmsVerificationError>,
-) -> Result<Json<SendCodeResponse>, SmsVerificationError> {
-    let response = state
-        .sms_verification
-        .send_code(request.into_inner())
-        .await?;
+    Json(request): Json<ValidateCodeRequest>,
+) -> Result<Json<ValidateCodeResponse>, SmsVerificationError> {
+    let response = state.sms_verification.validate_code(request).await?;
     Ok(Json(response))
 }
 
 impl IntoResponse for SmsVerificationError {
     fn into_response(self) -> Response {
-        let (status, error_type, message, retry_after) = match self {
-            SmsVerificationError::InvalidPhoneNumber(ref _phone) => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invalid_phone_number",
-                self.to_string(),
-                None,
-            ),
-            SmsVerificationError::InvalidCode(ref _code) => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invalid_code",
-                self.to_string(),
-                None,
-            ),
-            SmsVerificationError::WeeklyLimitExceeded => (
-                StatusCode::TOO_MANY_REQUESTS,
-                "weekly_limit_exceeded",
-                self.to_string(),
-                None,
-            ),
-            SmsVerificationError::AnnualLimitExceeded => (
-                StatusCode::TOO_MANY_REQUESTS,
-                "annual_limit_exceeded",
-                self.to_string(),
-                None,
-            ),
-            SmsVerificationError::NoActiveVerification(ref _phone) => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "no_active_verification",
-                self.to_string(),
-                None,
-            ),
-            SmsVerificationError::RateLimited { retry_after } => (
-                StatusCode::TOO_MANY_REQUESTS,
-                "external_service_rate_limited",
-                self.to_string(),
-                retry_after,
-            ),
+        let status = match self {
+            SmsVerificationError::InvalidPhoneNumber(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            SmsVerificationError::InvalidCode(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            SmsVerificationError::Blocked => StatusCode::FORBIDDEN,
+            SmsVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+            SmsVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+            SmsVerificationError::NoActiveVerification(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            SmsVerificationError::RateLimited { retry_after } => {
+                let mut response =
+                    (StatusCode::TOO_MANY_REQUESTS, self.to_string()).into_response();
+                if let Some(seconds) = retry_after {
+                    response
+                        .headers_mut()
+                        .insert("Retry-After", seconds.to_string().parse().unwrap());
+                }
+                return response;
+            }
             SmsVerificationError::RequestFailed(ref err) => {
                 tracing::error!(error = %err, "Failed to communicate with SMS provider");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "external_service_error",
-                    "Failed to communicate with external API".to_string(),
-                    None,
-                )
+                StatusCode::INTERNAL_SERVER_ERROR
             }
             SmsVerificationError::Database(ref err) => {
                 tracing::error!(error = %err, "Database operation failed");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "database_error",
-                    "Database operation failed".to_string(),
-                    None,
-                )
+                StatusCode::INTERNAL_SERVER_ERROR
             }
         };
-
-        let mut body = json!({
-            "error": error_type,
-            "message": message,
-        });
-
-        if let Some(seconds) = retry_after {
-            body["retry_after"] = json!(seconds);
-        }
-
-        (status, Json(body)).into_response()
+        // If it isnt clear, self.to_string() uses the Display impl for each SmsVerificationError as the Response body
+        (status, self.to_string()).into_response()
     }
 }

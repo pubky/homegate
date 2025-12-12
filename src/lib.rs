@@ -9,6 +9,4 @@ pub use infrastructure::{EnvConfig, database::SqlDb, http::HttpServer};
 
 pub use shared::HomeserverAdminAPI;
 
-pub use sms_verification::{
-    CreateVerificationResponse, SendCodeResponse, SmsVerificationError, SmsVerificationService,
-};
+pub use sms_verification::{SmsVerificationError, SmsVerificationService, ValidateCodeResponse};

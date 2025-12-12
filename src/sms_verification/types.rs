@@ -1,74 +1,34 @@
 use std::{fmt::Display, str::FromStr, sync::OnceLock};
 
-use crate::sms_verification::error::SmsVerificationError;
-use crate::sms_verification::prelude_api::PreludeBlockedReason;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-/// Raw request from JSON
+/// Request to create a verification
 #[derive(Debug, Deserialize)]
-pub struct CreateVerificationRequestRaw {
-    pub phone_number: String,
-}
-
-/// Validated request
-#[derive(Debug)]
 pub struct CreateVerificationRequest {
     pub phone_number: PhoneNumber,
 }
 
-impl TryFrom<CreateVerificationRequestRaw> for CreateVerificationRequest {
-    type Error = SmsVerificationError;
-
-    fn try_from(raw: CreateVerificationRequestRaw) -> Result<Self, Self::Error> {
-        let phone_number = PhoneNumber::new(&raw.phone_number)
-            .map_err(|_| SmsVerificationError::InvalidPhoneNumber(raw.phone_number))?;
-        Ok(Self { phone_number })
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "status", rename_all = "lowercase")]
-pub enum CreateVerificationResponse {
-    Success,
-    Retry,
-    Blocked { reason: PreludeBlockedReason },
-}
-
-/// Raw request from JSON
+/// Request to validate a verification code
 #[derive(Debug, Deserialize)]
-pub struct SendCodeRequestRaw {
-    pub phone_number: String,
-    pub code: String,
-}
-
-/// Validated request
-#[derive(Debug)]
-pub struct SendCodeRequest {
+pub struct ValidateCodeRequest {
     pub phone_number: PhoneNumber,
     pub code: Code,
 }
 
-impl TryFrom<SendCodeRequestRaw> for SendCodeRequest {
-    type Error = SmsVerificationError;
-
-    fn try_from(raw: SendCodeRequestRaw) -> Result<Self, Self::Error> {
-        let phone_number = PhoneNumber::new(&raw.phone_number)
-            .map_err(|_| SmsVerificationError::InvalidPhoneNumber(raw.phone_number.clone()))?;
-        let code = Code::new(&raw.code).map_err(|_| SmsVerificationError::InvalidCode(raw.code))?;
-        Ok(Self { phone_number, code })
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum SendCodeResponse {
-    Success {
+// This enum serialises into either:
+// - {valid: true, signup_code: "some_string", homeserver_pubky: "some_String"}
+// - {valid: false}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "valid")]
+pub enum ValidateCodeResponse {
+    #[serde(rename = "true")]
+    Valid {
         signup_code: String,
         homeserver_pubky: String,
     },
-    Failure,
-    ExpiredOrNotFound,
+    #[serde(rename = "false")]
+    Invalid,
 }
 
 /// A validated phone number in E.164 format.
