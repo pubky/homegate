@@ -11,7 +11,6 @@ pub mod service;
 mod types;
 
 pub use hasher_argon2id::HasherArgon2id;
-pub(crate) use repository::SmsVerificationRepository;
 pub(crate) use types::{Code, PhoneNumber};
 
 #[cfg(test)]

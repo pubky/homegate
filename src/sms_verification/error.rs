@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::{
-    infrastructure::database::DbError,
+    infrastructure::sql::DbError,
     sms_verification::{PhoneNumber, prelude_api::PreludeError},
 };
 

@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::infrastructure::database::DbError;
+use crate::infrastructure::sql::DbError;
 
 #[derive(Error, Debug)]
 pub enum HttpServerError {

@@ -1,5 +1,3 @@
-mod http;
-
 #[cfg(test)]
 pub mod wiremock_helpers;
 

@@ -1,3 +1,4 @@
+use crate::infrastructure::sql::{SqlDb, UnifiedExecutor};
 use crate::shared::HomeserverAdminAPI;
 use crate::sms_verification::HasherArgon2id;
 use crate::sms_verification::error::SmsVerificationError;
@@ -12,7 +13,6 @@ use std::net::IpAddr;
 
 #[derive(Clone, Debug)]
 pub struct SmsVerificationService {
-    repository: SmsVerificationRepository,
     prelude_api: PreludeAPI,
     homeserver_admin_api: HomeserverAdminAPI,
     hasher_argon2id: HasherArgon2id,
@@ -22,14 +22,12 @@ pub struct SmsVerificationService {
 
 impl SmsVerificationService {
     pub fn new(
-        repository: SmsVerificationRepository,
         prelude_api: PreludeAPI,
         homeserver_admin_api: HomeserverAdminAPI,
         max_verifications_per_week: u32,
         max_verifications_per_year: u32,
     ) -> Self {
         Self {
-            repository,
             prelude_api,
             homeserver_admin_api,
             hasher_argon2id: HasherArgon2id::new(),
@@ -40,13 +38,16 @@ impl SmsVerificationService {
 
     /// Check if a phone number has reached its limits for new verificaitons
     pub async fn check_verification_limit(
-        &self,
+        &mut self,
+        executor: &mut UnifiedExecutor<'_>,
         phone_number_hash: &str,
     ) -> Result<(), SmsVerificationError> {
-        let weekly_count = self
-            .repository
-            .count_verified_sessions_in_last_days(phone_number_hash, 7)
-            .await?;
+        let weekly_count = SmsVerificationRepository::count_verified_sessions_in_last_days(
+            executor,
+            phone_number_hash,
+            7,
+        )
+        .await?;
         if weekly_count >= self.max_verifications_per_week as i64 {
             tracing::warn!(
                 phone_number = %phone_number_hash,
@@ -57,10 +58,12 @@ impl SmsVerificationService {
             return Err(SmsVerificationError::WeeklyLimitExceeded);
         }
 
-        let annual_count = self
-            .repository
-            .count_verified_sessions_in_last_days(phone_number_hash, 365)
-            .await?;
+        let annual_count = SmsVerificationRepository::count_verified_sessions_in_last_days(
+            executor,
+            phone_number_hash,
+            365,
+        )
+        .await?;
         if annual_count >= self.max_verifications_per_year as i64 {
             tracing::warn!(
                 phone_number = %phone_number_hash,
@@ -75,14 +78,19 @@ impl SmsVerificationService {
 
     /// Initiates a phone number verification process
     pub async fn create_verification(
-        &self,
+        &mut self,
+        db: &SqlDb,
         request: CreateVerificationRequest,
         ip_address: IpAddr,
     ) -> Result<(), SmsVerificationError> {
         let phone_number_hash = self
             .hasher_argon2id
-            .hash_phone_number(&request.phone_number.as_str());
-        self.check_verification_limit(&phone_number_hash).await?;
+            .hash_phone_number(request.phone_number.as_str());
+
+        let mut executor: UnifiedExecutor<'_> = db.pool().into();
+
+        self.check_verification_limit(&mut executor, &phone_number_hash)
+            .await?;
 
         let prelude_response = self
             .prelude_api
@@ -102,8 +110,7 @@ impl SmsVerificationService {
             PreludeCreateVerificationResponse::Blocked { id, .. } => id,
         };
 
-        self.repository
-            .create_verification(&request.phone_number, id)
+        SmsVerificationRepository::create_verification(&mut executor, &phone_number_hash, id)
             .await?;
 
         if let PreludeCreateVerificationResponse::Blocked { id, reason } = &prelude_response {
@@ -113,9 +120,9 @@ impl SmsVerificationService {
                 reason,
                 id
             );
-            self.repository
-                .mark_failed(id, &format!("{:?}", reason))
+            SmsVerificationRepository::mark_failed(&mut executor, id, &format!("{:?}", reason))
                 .await?;
+
             return Err(SmsVerificationError::Blocked);
         }
 
@@ -125,14 +132,16 @@ impl SmsVerificationService {
 
     /// Validates a verification code for a phone number
     pub async fn validate_code(
-        &self,
+        &mut self,
+        db: &SqlDb,
         request: ValidateCodeRequest,
     ) -> Result<ValidateCodeResponse, SmsVerificationError> {
         let phone_number_hash = self
             .hasher_argon2id
-            .hash_phone_number(&request.phone_number.as_str());
-        self.repository
-            .err_if_no_active_verification(&phone_number_hash)
+            .hash_phone_number(request.phone_number.as_str());
+
+        let mut executor: UnifiedExecutor<'_> = db.pool().into();
+        SmsVerificationRepository::err_if_no_active_verification(&mut executor, &phone_number_hash)
             .await
             .map_err(|_| {
                 SmsVerificationError::NoActiveVerification(request.phone_number.clone())
@@ -148,18 +157,21 @@ impl SmsVerificationService {
                 let code = match self.homeserver_admin_api.generate_signup_token().await {
                     Ok(code) => code,
                     Err(e) => {
-                        if let Err(e) = self
-                            .repository
-                            .mark_failed(&id, "homeserver_signup_token_generation_failed")
-                            .await
+                        if let Err(e) = SmsVerificationRepository::mark_failed(
+                            &mut executor,
+                            &id,
+                            "homeserver_signup_token_generation_failed",
+                        )
+                        .await
                         {
                             tracing::error!("{}", e);
-                        };
+                        }
                         return Err(e.into());
                     }
                 };
 
-                self.repository.mark_verified(&id, &code).await?;
+                SmsVerificationRepository::mark_verified(&mut executor, &id, &code).await?;
+
                 Ok(ValidateCodeResponse::Valid {
                     signup_code: code,
                     homeserver_pubky: self.homeserver_admin_api.get_homeserver_pubky(),
@@ -171,13 +183,12 @@ impl SmsVerificationService {
             }
             PreludeCheckCodeResponse::ExpiredOrNotFound { .. } => {
                 // Do not return errors - user gets NoActiveVerification error
-                if let Err(e) = self
-                    .repository
-                    .mark_all_pending_verification_as_failed(
-                        &phone_number_hash,
-                        "expired_or_not_found",
-                    )
-                    .await
+                if let Err(e) = SmsVerificationRepository::mark_all_pending_verification_as_failed(
+                    &mut executor,
+                    &phone_number_hash,
+                    "expired_or_not_found",
+                )
+                .await
                 {
                     tracing::error!("{}", e);
                 }

@@ -6,8 +6,8 @@ use std::{
 use crate::{
     EnvConfig,
     infrastructure::{
-        database::{DbError, SqlDb},
         http::HttpServerError,
+        sql::{DbError, SqlDb},
     },
     sms_verification::http::router,
 };

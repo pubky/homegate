@@ -2,12 +2,9 @@ use sea_query::{ColumnDef, Expr, PostgresQueryBuilder, Query, SimpleExpr, Table}
 use sea_query_binder::SqlxBinder;
 use sqlx::{Row, Transaction};
 
-use crate::infrastructure::database::{
-    connection::SqlDb,
-    migrations::{
-        m20251201_create_sms_verifications::M20251201CreateSmsVerifications,
-        migration::MigrationTrait,
-    },
+use crate::infrastructure::sql::{
+    MigrationTrait, SqlDb,
+    migrations::m20251201_create_sms_verifications::M20251201CreateSmsVerifications,
 };
 
 /// The name of the migration table to keep track of which migrations have been applied.
