@@ -62,8 +62,6 @@ async fn verify_code_handler(
 impl IntoResponse for SmsVerificationError {
     fn into_response(self) -> Response {
         let status = match self {
-            SmsVerificationError::InvalidPhoneNumber(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            SmsVerificationError::InvalidCode(_) => StatusCode::UNPROCESSABLE_ENTITY,
             SmsVerificationError::Blocked => StatusCode::FORBIDDEN,
             SmsVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             SmsVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,

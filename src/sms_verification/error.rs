@@ -7,16 +7,8 @@ use crate::{
 
 #[derive(Error, Debug)]
 pub enum SmsVerificationError {
-    #[error(
-        "Invalid phone number format: {0}. Phone number must be in E.164 format (e.g., +30123456789)"
-    )]
-    InvalidPhoneNumber(String),
-
     #[error("Phone number blocked for verification")]
     Blocked,
-
-    #[error("Invalid code format: {0}. Code must be exactly 6 digits (0-9)")]
-    InvalidCode(String),
 
     #[error("Phone number has exceeded weekly verification limit (2 verifications per 7 days)")]
     WeeklyLimitExceeded,

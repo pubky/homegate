@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use url::Url;
 
+use crate::sms_verification::{Code, PhoneNumber};
+
 #[derive(Debug)]
 pub enum PreludeError {
     RateLimited { retry_after: Option<u64> },
@@ -76,8 +78,6 @@ pub enum PreludeBlockedReason {
     InBlockList,
     /// The phone number is not a valid line number (e.g. landline).
     InvalidPhoneLine,
-    /// The phone number is not a valid phone number (e.g. unallocated range).
-    InvalidPhoneNumber,
     /// The signature of the SDK signals is invalid.
     InvalidSignature,
     /// The phone number has made too many verification attempts.
@@ -147,7 +147,7 @@ impl PreludeAPI {
     /// Creates a verification request for the given phone number
     pub async fn create_verification(
         &self,
-        phone_number: &str,
+        phone_number: &PhoneNumber,
         ip_address: Option<IpAddr>,
     ) -> Result<PreludeCreateVerificationResponse, PreludeError> {
         let request_body = PreludeCreateVerificationRequest {
@@ -185,8 +185,8 @@ impl PreludeAPI {
     /// Checks a verification code for the given phone number
     pub async fn check_code(
         &self,
-        phone_number: &str,
-        code: &str,
+        phone_number: &PhoneNumber,
+        code: &Code,
     ) -> Result<PreludeCheckCodeResponse, PreludeError> {
         let request_body = PreludeCheckCodeRequest {
             target: Target {

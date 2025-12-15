@@ -29,6 +29,7 @@ impl VerificationStatus {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+#[allow(dead_code)]
 pub struct SmsVerificationEntity {
     pub id: i32,
     pub phone_number_hash: String,
@@ -98,17 +99,13 @@ impl SmsVerificationRepository {
     /// Count VERIFIED sessions within a time window
     pub async fn count_verified_sessions_since(
         &self,
-        phone_number: &PhoneNumber,
+        phone_number_hash: &str,
         since: NaiveDateTime,
     ) -> Result<i64, DbError> {
-        let hashed_phone = self
-            .hasher_argon2id
-            .hash_phone_number(phone_number.as_str());
-
         let statement = Query::select()
             .expr(Expr::col("id").count())
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number_hash").eq(hashed_phone.as_str()))
+            .and_where(Expr::col("phone_number_hash").eq(phone_number_hash))
             .and_where(Expr::col("status").eq(VerificationStatus::Verified.as_str()))
             .and_where(Expr::col("finalised_at").gte(since))
             .to_owned();
@@ -124,28 +121,24 @@ impl SmsVerificationRepository {
 
     pub async fn count_verified_sessions_in_last_days(
         &self,
-        phone_number: &PhoneNumber,
+        phone_number_hash: &str,
         days: i64,
     ) -> Result<i64, DbError> {
         let now = chrono::Utc::now().naive_utc();
         let since = now - chrono::Duration::days(days);
-        self.count_verified_sessions_since(phone_number, since)
+        self.count_verified_sessions_since(phone_number_hash, since)
             .await
     }
 
     /// Error if no active (pending) verification session exists for a phone number.
     pub async fn err_if_no_active_verification(
         &self,
-        phone_number: &PhoneNumber,
+        phone_number_hash: &str,
     ) -> Result<(), DbError> {
-        let hashed_phone = self
-            .hasher_argon2id
-            .hash_phone_number(phone_number.as_str());
-
         let statement = Query::select()
             .expr(Expr::value(1))
             .from("sms_verifications")
-            .and_where(Expr::col("phone_number_hash").eq(hashed_phone.as_str()))
+            .and_where(Expr::col("phone_number_hash").eq(phone_number_hash))
             .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
@@ -157,7 +150,7 @@ impl SmsVerificationRepository {
 
         match row_result {
             Some(_) => Ok(()),
-            None => Err(DbError::NotFound(phone_number.to_string())),
+            None => Err(DbError::NotFound(phone_number_hash.to_string())),
         }
     }
 
@@ -214,13 +207,9 @@ impl SmsVerificationRepository {
     /// Mark all PENDING verification as FAILED by phone number (fallback when prelude_id doesn't match)
     pub async fn mark_all_pending_verification_as_failed(
         &self,
-        phone_number: &PhoneNumber,
+        phone_number_hash: &str,
         failure_reason: &str,
     ) -> Result<(), DbError> {
-        let hashed_phone = self
-            .hasher_argon2id
-            .hash_phone_number(phone_number.as_str());
-
         let update_statement = Query::update()
             .table("sms_verifications")
             .values([
@@ -228,7 +217,7 @@ impl SmsVerificationRepository {
                 ("finalised_at", Expr::current_timestamp().into()),
                 ("failure_reason", failure_reason.into()),
             ])
-            .and_where(Expr::col("phone_number_hash").eq(hashed_phone.as_str()))
+            .and_where(Expr::col("phone_number_hash").eq(phone_number_hash))
             .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
             .to_owned();
 
@@ -238,7 +227,7 @@ impl SmsVerificationRepository {
             .await?;
 
         if result.rows_affected() == 0 {
-            return Err(DbError::NotFound(phone_number.to_string()));
+            return Err(DbError::NotFound(phone_number_hash.to_string()));
         }
 
         Ok(())

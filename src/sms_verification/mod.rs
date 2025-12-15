@@ -10,10 +10,9 @@ pub mod repository;
 pub mod service;
 mod types;
 
-pub use error::SmsVerificationError;
 pub use hasher_argon2id::HasherArgon2id;
-pub use repository::SmsVerificationRepository;
-pub use service::SmsVerificationService;
-pub use types::{
-    Code, CreateVerificationRequest, PhoneNumber, ValidateCodeRequest, ValidateCodeResponse,
-};
+pub(crate) use repository::SmsVerificationRepository;
+pub(crate) use types::{Code, PhoneNumber};
+
+#[cfg(test)]
+pub(crate) use types::{CreateVerificationRequest, ValidateCodeRequest, ValidateCodeResponse};

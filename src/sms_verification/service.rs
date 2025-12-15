@@ -1,5 +1,5 @@
-use crate::HomeserverAdminAPI;
-use crate::sms_verification::PhoneNumber;
+use crate::shared::HomeserverAdminAPI;
+use crate::sms_verification::HasherArgon2id;
 use crate::sms_verification::error::SmsVerificationError;
 use crate::sms_verification::prelude_api::{
     PreludeAPI, PreludeCheckCodeResponse, PreludeCreateVerificationResponse,
@@ -15,6 +15,7 @@ pub struct SmsVerificationService {
     repository: SmsVerificationRepository,
     prelude_api: PreludeAPI,
     homeserver_admin_api: HomeserverAdminAPI,
+    hasher_argon2id: HasherArgon2id,
     max_verifications_per_week: u32,
     max_verifications_per_year: u32,
 }
@@ -31,6 +32,7 @@ impl SmsVerificationService {
             repository,
             prelude_api,
             homeserver_admin_api,
+            hasher_argon2id: HasherArgon2id::new(),
             max_verifications_per_week,
             max_verifications_per_year,
         }
@@ -39,15 +41,15 @@ impl SmsVerificationService {
     /// Check if a phone number has reached its limits for new verificaitons
     pub async fn check_verification_limit(
         &self,
-        phone_number: &PhoneNumber,
+        phone_number_hash: &str,
     ) -> Result<(), SmsVerificationError> {
         let weekly_count = self
             .repository
-            .count_verified_sessions_in_last_days(phone_number, 7)
+            .count_verified_sessions_in_last_days(phone_number_hash, 7)
             .await?;
         if weekly_count >= self.max_verifications_per_week as i64 {
             tracing::warn!(
-                phone_number = %phone_number,
+                phone_number = %phone_number_hash,
                 weekly_count = weekly_count,
                 weekly_limit = self.max_verifications_per_week,
                 "Weekly verification limit exceeded"
@@ -57,11 +59,11 @@ impl SmsVerificationService {
 
         let annual_count = self
             .repository
-            .count_verified_sessions_in_last_days(phone_number, 365)
+            .count_verified_sessions_in_last_days(phone_number_hash, 365)
             .await?;
         if annual_count >= self.max_verifications_per_year as i64 {
             tracing::warn!(
-                phone_number = %phone_number,
+                phone_number = %phone_number_hash,
                 annual_count = annual_count,
                 annual_limit = self.max_verifications_per_year,
                 "Annual verification limit exceeded"
@@ -77,11 +79,14 @@ impl SmsVerificationService {
         request: CreateVerificationRequest,
         ip_address: IpAddr,
     ) -> Result<(), SmsVerificationError> {
-        self.check_verification_limit(&request.phone_number).await?;
+        let phone_number_hash = self
+            .hasher_argon2id
+            .hash_phone_number(&request.phone_number.as_str());
+        self.check_verification_limit(&phone_number_hash).await?;
 
         let prelude_response = self
             .prelude_api
-            .create_verification(request.phone_number.as_str(), Some(ip_address))
+            .create_verification(&request.phone_number, Some(ip_address))
             .await?;
 
         let id = match &prelude_response {
@@ -102,20 +107,18 @@ impl SmsVerificationService {
             .await?;
 
         if let PreludeCreateVerificationResponse::Blocked { id, reason } = &prelude_response {
-            self.repository
-                .mark_failed(id, &format!("{:?}", reason))
-                .await?;
-        }
-
-        if let PreludeCreateVerificationResponse::Blocked { id, reason } = prelude_response {
             tracing::info!(
                 "Phone number {} blocked for reason: {:?}. prelude id: {}",
                 request.phone_number,
                 reason,
                 id
             );
+            self.repository
+                .mark_failed(id, &format!("{:?}", reason))
+                .await?;
             return Err(SmsVerificationError::Blocked);
         }
+
         // Return Ok for success or retry
         Ok(())
     }
@@ -125,8 +128,11 @@ impl SmsVerificationService {
         &self,
         request: ValidateCodeRequest,
     ) -> Result<ValidateCodeResponse, SmsVerificationError> {
+        let phone_number_hash = self
+            .hasher_argon2id
+            .hash_phone_number(&request.phone_number.as_str());
         self.repository
-            .err_if_no_active_verification(&request.phone_number)
+            .err_if_no_active_verification(&phone_number_hash)
             .await
             .map_err(|_| {
                 SmsVerificationError::NoActiveVerification(request.phone_number.clone())
@@ -134,7 +140,7 @@ impl SmsVerificationService {
 
         let prelude_response = self
             .prelude_api
-            .check_code(request.phone_number.as_str(), request.code.as_str())
+            .check_code(&request.phone_number, &request.code)
             .await?;
 
         match prelude_response {
@@ -168,7 +174,7 @@ impl SmsVerificationService {
                 if let Err(e) = self
                     .repository
                     .mark_all_pending_verification_as_failed(
-                        &request.phone_number,
+                        &phone_number_hash,
                         "expired_or_not_found",
                     )
                     .await

@@ -10,13 +10,15 @@ use crate::e2e::{
     setup_prelude_create_verification,
 };
 use crate::infrastructure::database::{DbError, SqlDb};
+use crate::shared::HomeserverAdminAPI;
+use crate::sms_verification::error::SmsVerificationError;
 use crate::sms_verification::hasher_argon2id::HasherArgon2id;
 use crate::sms_verification::prelude_api::{PreludeAPI, PreludeBlockedReason};
 use crate::sms_verification::repository::{SmsVerificationRepository, VerificationStatus};
+use crate::sms_verification::service::SmsVerificationService;
 use crate::sms_verification::{
     Code, CreateVerificationRequest, PhoneNumber, ValidateCodeRequest, ValidateCodeResponse,
 };
-use crate::{HomeserverAdminAPI, SmsVerificationService};
 use sqlx::PgPool;
 use std::net::IpAddr;
 
@@ -346,7 +348,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
 
     assert!(result.is_err(), "3rd send_code should fail");
     match result {
-        Err(crate::SmsVerificationError::WeeklyLimitExceeded) => {}
+        Err(SmsVerificationError::WeeklyLimitExceeded) => {}
         _ => panic!("Expected WeeklyLimitExceeded error"),
     }
 
@@ -466,7 +468,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
 
     assert!(result.is_err(), "5th send_code should fail");
     match result {
-        Err(crate::SmsVerificationError::AnnualLimitExceeded) => {}
+        Err(SmsVerificationError::AnnualLimitExceeded) => {}
         other => panic!("Expected AnnualLimitExceeded error, got: {:?}", other),
     }
 }
@@ -580,7 +582,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
 
     // Verify the response is NoActiveVerification error
     match verify_result {
-        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - correct error type
         }
         other => panic!("Expected NoActiveVerification error, got: {:?}", other),
@@ -606,7 +608,9 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     assert!(record.finalised_at.is_some(), "finalised_at should be set");
 
     // Step 6: Verify that check_pending_exists returns NotFound
-    let result = repository.err_if_no_active_verification(&phone).await;
+    let result = repository
+        .err_if_no_active_verification(&hashed_phone_expired)
+        .await;
     assert!(
         matches!(result, Err(DbError::NotFound(_))),
         "Failed sessions should not be considered active"
@@ -713,6 +717,7 @@ async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPo
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30777777777").unwrap();
+    let hashed_phone = test_phone_hasher().hash_phone_number(phone.as_str());
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Create verification session with prelude_id "verification-id-123"
@@ -773,7 +778,7 @@ async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPo
     // Should return NoActiveVerification error
     assert!(matches!(
         result,
-        Err(crate::SmsVerificationError::NoActiveVerification(_))
+        Err(SmsVerificationError::NoActiveVerification(_))
     ));
 
     // Verify session marked FAILED despite prelude_id mismatch
@@ -786,7 +791,9 @@ async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPo
     assert!(record.finalised_at.is_some());
 
     // Verify no active verification remains
-    let result = repository.err_if_no_active_verification(&phone).await;
+    let result = repository
+        .err_if_no_active_verification(&hashed_phone)
+        .await;
     assert!(matches!(result, Err(DbError::NotFound(_))));
 }
 
@@ -796,6 +803,7 @@ async fn test_repository_mark_failed_by_phone_number(pool: PgPool) {
     let repository = SmsVerificationRepository::new(db.clone(), test_phone_hasher());
 
     let phone = PhoneNumber::new("+30999999999").unwrap();
+    let hashed_phone = test_phone_hasher().hash_phone_number(phone.as_str());
 
     // Create PENDING session
     repository
@@ -808,7 +816,7 @@ async fn test_repository_mark_failed_by_phone_number(pool: PgPool) {
 
     // Mark failed by phone number
     repository
-        .mark_all_pending_verification_as_failed(&phone, "test_reason")
+        .mark_all_pending_verification_as_failed(&hashed_phone, "test_reason")
         .await
         .unwrap();
 
@@ -820,7 +828,7 @@ async fn test_repository_mark_failed_by_phone_number(pool: PgPool) {
 
     // Test idempotency - should return NotFound (no PENDING sessions)
     let result = repository
-        .mark_all_pending_verification_as_failed(&phone, "another_reason")
+        .mark_all_pending_verification_as_failed(&hashed_phone, "another_reason")
         .await;
     assert!(matches!(result, Err(DbError::NotFound(_))));
 }
@@ -861,7 +869,7 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
 
     // Should fail with NoActiveVerification error since there's no pending verification for phone_verify
     match result {
-        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - correct error type
         }
         other => panic!("Expected NoActiveVerification, got: {:?}", other),
@@ -869,7 +877,10 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
 
     // Step 3: Verify that the original phone number still has a pending verification
     let repository = SmsVerificationRepository::new(db.clone(), test_phone_hasher());
-    let check_result = repository.err_if_no_active_verification(&phone_send).await;
+    let hashed_phone_send = test_phone_hasher().hash_phone_number(phone_send.as_str());
+    let check_result = repository
+        .err_if_no_active_verification(&hashed_phone_send)
+        .await;
     assert!(
         check_result.is_ok(),
         "Original phone number should still have pending verification"
@@ -925,7 +936,7 @@ async fn test_service_database_error_handling(pool: PgPool) {
 
     // Should propagate NoActiveVerification error from database through service layer
     match result {
-        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - database error was properly propagated
         }
         other => panic!("Expected NoActiveVerification, got: {:?}", other),
@@ -998,7 +1009,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 
     // Should return NoActiveVerification error
     match result {
-        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - correct error type
         }
         other => panic!(
@@ -1057,7 +1068,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 
     // Verify the response is NoActiveVerification error
     match verify_result {
-        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - correct error type
         }
         other => panic!("Expected NoActiveVerification error, got: {:?}", other),
@@ -1083,7 +1094,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 
     // Should return NoActiveVerification error
     match result {
-        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - correct error type
         }
         other => panic!(
@@ -1279,7 +1290,7 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
 
     // Verify the response is NoActiveVerification error
     match response {
-        Err(crate::SmsVerificationError::Blocked) => {
+        Err(SmsVerificationError::Blocked) => {
             // Test passes - correct error type
         }
         other => panic!("Expected Blocked error, got: {:?}", other),
@@ -1332,7 +1343,9 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
 
     // Verify that check_pending_exists returns NotFound
     let repository = SmsVerificationRepository::new(db.clone(), test_phone_hasher());
-    let result = repository.err_if_no_active_verification(&phone).await;
+    let result = repository
+        .err_if_no_active_verification(&hashed_phone_blocked)
+        .await;
     assert!(
         matches!(result, Err(DbError::NotFound(_))),
         "Blocked (FAILED) sessions should not be considered active"
@@ -1540,7 +1553,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
 
     // Should return NoActiveVerification error
     match verify_result {
-        Err(crate::SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification(_)) => {
             // Test passes - correct error type
         }
         other => panic!("Expected NoActiveVerification error, got: {:?}", other),

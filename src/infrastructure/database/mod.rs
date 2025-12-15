@@ -4,4 +4,3 @@ pub mod migrations;
 
 pub use connection::{ConnectionString, SqlDb};
 pub use error::DbError;
-pub use migrations::Migrator;
