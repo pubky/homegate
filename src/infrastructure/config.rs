@@ -22,6 +22,10 @@ pub struct EnvConfig {
     pub max_sms_verifications_per_week: u32,
     #[serde(default = "default_max_sms_verifications_per_year")]
     pub max_sms_verifications_per_year: u32,
+
+    pub lightning_payment_price_sat: u64,
+    pub phoenixd_api_url: Url,
+    pub phoenixd_api_password: String,
 }
 
 fn default_max_sms_verifications_per_week() -> u32 {
@@ -61,6 +65,9 @@ impl EnvConfig {
             homeserver_pubky: "test-homeserver-pubky".to_string(),
             max_sms_verifications_per_week: 2,
             max_sms_verifications_per_year: 4,
+            lightning_payment_price_sat: 1000,
+            phoenixd_api_url: Url::parse("http://localhost:9740").unwrap(),
+            phoenixd_api_password: "test-password".to_string(),
         }
     }
 }
@@ -96,6 +103,15 @@ mod tests {
                 String::from("HOMESERVER_PUBKY"),
                 String::from("test-homeserver-pubky"),
             ),
+            (
+                String::from("LIGHTNING_PAYMENT_PRICE_SAT"),
+                String::from("1000"),
+            ),
+            (
+                String::from("PHOENIXD_API_URL"),
+                String::from("http://localhost:9740"),
+            ),
+            (String::from("PHOENIXD_API_PASSWORD"), String::from("test-password")),
         ])
         .expect("Failed to load config");
 

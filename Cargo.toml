@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 argon2 = "0.5"
 async-trait = "0.1.89"
-axum = { version = "0.8.1", features = ["macros"] }
+axum = { version = "0.8.1", features = ["macros", "ws"] }
 axum-server = { version = "0.7.1", features = ["tls-rustls-no-provider"] }
 base64 = "0.22"
 blake3 = "1.5"
