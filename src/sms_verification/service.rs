@@ -115,8 +115,7 @@ impl SmsVerificationService {
 
         if let PreludeCreateVerificationResponse::Blocked { id, reason } = &prelude_response {
             tracing::info!(
-                "Phone number {} blocked for reason: {:?}. prelude id: {}",
-                request.phone_number,
+                "Phone number blocked for reason: {:?}. prelude id: {}",
                 reason,
                 id
             );

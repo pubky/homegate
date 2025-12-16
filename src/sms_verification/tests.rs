@@ -24,7 +24,7 @@ use std::net::IpAddr;
 
 const TEST_VERIFICATION_CODE: &str = "123456";
 const TEST_WRONG_CODE: &str = "111111";
-
+// TODO replace with faster hasher
 fn test_phone_hasher() -> HasherArgon2id {
     HasherArgon2id::new()
 }
@@ -1711,4 +1711,142 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
         signup_code_failed.is_none(),
         "Signup code should remain NULL for FAILED record"
     );
+}
+
+#[sqlx::test]
+async fn test_create_verification_session_supersession(pool: PgPool) {
+    let db = SqlDb::test(pool.clone()).await;
+    let mut executor = db.pool().into();
+
+    // Scenario 1: Different prelude_id supersedes existing PENDING session
+    let phone1 = PhoneNumber::new("+30555555551").unwrap();
+    let hashed_phone1 = test_phone_hasher().hash_phone_number(phone1.as_str());
+    let prelude_id_1 = "prelude-id-1";
+    let prelude_id_2 = "prelude-id-2";
+
+    SmsVerificationRepository::create_verification(&mut executor, &hashed_phone1, prelude_id_1)
+        .await
+        .expect("First create should succeed");
+
+    let record1 = SmsVerificationRepository::get_by_prelude_id(&mut executor, prelude_id_1)
+        .await
+        .expect("Should find first session");
+    assert_eq!(record1.status, VerificationStatus::Pending);
+
+    // Create second session with different prelude_id - should supersede first
+    SmsVerificationRepository::create_verification(&mut executor, &hashed_phone1, prelude_id_2)
+        .await
+        .expect("Second create should succeed");
+
+    let old_record = SmsVerificationRepository::get_by_prelude_id(&mut executor, prelude_id_1)
+        .await
+        .expect("Should find old session");
+    assert_eq!(old_record.status, VerificationStatus::Failed);
+    assert_eq!(
+        old_record.failure_reason,
+        Some("superseded_by_new_session".to_string())
+    );
+    assert!(old_record.finalised_at.is_some());
+
+    let new_record = SmsVerificationRepository::get_by_prelude_id(&mut executor, prelude_id_2)
+        .await
+        .expect("Should find new session");
+    assert_eq!(new_record.status, VerificationStatus::Pending);
+
+    let count1: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number_hash = $1")
+            .bind(&hashed_phone1)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(count1.0, 2, "Should have 2 records after supersession");
+
+    // Scenario 2: Same prelude_id is idempotent (no duplicate created)
+    let phone2 = PhoneNumber::new("+30555555552").unwrap();
+    let hashed_phone2 = test_phone_hasher().hash_phone_number(phone2.as_str());
+    let prelude_id_same = "prelude-id-same";
+
+    SmsVerificationRepository::create_verification(&mut executor, &hashed_phone2, prelude_id_same)
+        .await
+        .expect("First create should succeed");
+
+    let before_retry = SmsVerificationRepository::get_by_prelude_id(&mut executor, prelude_id_same)
+        .await
+        .expect("Should find session");
+    assert_eq!(before_retry.status, VerificationStatus::Pending);
+
+    // Retry with same prelude_id - should be idempotent
+    SmsVerificationRepository::create_verification(&mut executor, &hashed_phone2, prelude_id_same)
+        .await
+        .expect("Retry should succeed (idempotent)");
+
+    let count2: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number_hash = $1")
+            .bind(&hashed_phone2)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(count2.0, 1, "Should have only 1 record (idempotent)");
+
+    let after_retry = SmsVerificationRepository::get_by_prelude_id(&mut executor, prelude_id_same)
+        .await
+        .expect("Should find session");
+    assert_eq!(after_retry.status, VerificationStatus::Pending);
+
+    // Scenario 3: New session allowed after FAILED session
+    let phone3 = PhoneNumber::new("+30555555553").unwrap();
+    let hashed_phone3 = test_phone_hasher().hash_phone_number(phone3.as_str());
+    let prelude_id_failed = "prelude-id-failed";
+    let prelude_id_after_failed = "prelude-id-after-failed";
+
+    SmsVerificationRepository::create_verification(
+        &mut executor,
+        &hashed_phone3,
+        prelude_id_failed,
+    )
+    .await
+    .expect("Create should succeed");
+
+    SmsVerificationRepository::mark_failed(&mut executor, prelude_id_failed, "test_failure")
+        .await
+        .expect("Mark failed should succeed");
+
+    let failed_record =
+        SmsVerificationRepository::get_by_prelude_id(&mut executor, prelude_id_failed)
+            .await
+            .expect("Should find failed session");
+    assert_eq!(failed_record.status, VerificationStatus::Failed);
+
+    // Create new session - should succeed without superseding FAILED session
+    SmsVerificationRepository::create_verification(
+        &mut executor,
+        &hashed_phone3,
+        prelude_id_after_failed,
+    )
+    .await
+    .expect("Create after failed should succeed");
+
+    let still_failed =
+        SmsVerificationRepository::get_by_prelude_id(&mut executor, prelude_id_failed)
+            .await
+            .expect("Should find old failed session");
+    assert_eq!(still_failed.status, VerificationStatus::Failed);
+    assert_eq!(
+        still_failed.failure_reason,
+        Some("test_failure".to_string())
+    );
+
+    let new_pending =
+        SmsVerificationRepository::get_by_prelude_id(&mut executor, prelude_id_after_failed)
+            .await
+            .expect("Should find new session");
+    assert_eq!(new_pending.status, VerificationStatus::Pending);
+
+    let count3: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sms_verifications WHERE phone_number_hash = $1")
+            .bind(&hashed_phone3)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(count3.0, 2, "Should have 2 records (1 failed, 1 pending)");
 }

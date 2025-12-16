@@ -7,10 +7,10 @@ pub enum SmsVerificationError {
     #[error("Phone number blocked for verification")]
     Blocked,
 
-    #[error("Phone number has exceeded weekly verification limit (2 verifications per 7 days)")]
+    #[error("Phone number has exceeded weekly verification limit")]
     WeeklyLimitExceeded,
 
-    #[error("Phone number has exceeded annual verification limit (4 verifications per 365 days)")]
+    #[error("Phone number has exceeded annual verification limit")]
     AnnualLimitExceeded,
 
     /// This can be either Homegate not having a PENDING entry in its table or Prelude expiring the verification request for this number

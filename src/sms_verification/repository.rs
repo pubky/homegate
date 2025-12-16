@@ -44,31 +44,103 @@ pub struct SmsVerificationEntity {
 pub struct SmsVerificationRepository;
 
 impl SmsVerificationRepository {
-    /// Create a new SMS verification record only if no pending session exists for this phone_number
+    /// Create a new SMS verification record, superseding any existing PENDING session with different prelude_id
     pub async fn create_verification(
         executor: &mut UnifiedExecutor<'_>,
         phone_number_hash: &str,
         prelude_id: &str,
     ) -> Result<(), DbError> {
-        // Build subquery to check for existing pending sessions for this phone number
-        let subquery = Query::select()
-            .expr(Expr::value(1))
+        Self::supersede_existing_pending_session_with_different_prelude_id(
+            executor,
+            phone_number_hash,
+            prelude_id,
+        )
+        .await?;
+        if Self::check_session_exists(executor, phone_number_hash, prelude_id).await? {
+            tracing::debug!("Verification session already exists (idempotent)");
+            return Ok(());
+        }
+
+        Self::insert_verification(executor, phone_number_hash, prelude_id).await
+    }
+
+    /// Supersede any existing PENDING session which has a different prelude_id
+    async fn supersede_existing_pending_session_with_different_prelude_id(
+        executor: &mut UnifiedExecutor<'_>,
+        phone_number_hash: &str,
+        prelude_id: &str,
+    ) -> Result<(), DbError> {
+        let statement = Query::select()
+            .column("prelude_id")
             .from("sms_verifications")
             .and_where(Expr::col("phone_number_hash").eq(phone_number_hash))
             .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
+            .and_where(Expr::col("prelude_id").ne(prelude_id))
             .to_owned();
 
-        // Build INSERT statement with condition that subquery returns nothing (ie, verificaiton session not currently pending for this phone number)
+        let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
+        let row_result = sqlx::query_with(&query, values)
+            .fetch_optional(executor.get_con().await?)
+            .await
+            .map_err(DbError::from)?;
+
+        // If found, mark as superseded
+        if let Some(row) = row_result {
+            let old_prelude_id: String = row.try_get("prelude_id").map_err(DbError::from)?;
+            tracing::info!("Superseding old verification session");
+
+            let update_statement = Query::update()
+                .table("sms_verifications")
+                .values([
+                    ("status", VerificationStatus::Failed.as_str().into()),
+                    ("finalised_at", Expr::current_timestamp().into()),
+                    ("failure_reason", "superseded_by_new_session".into()),
+                ])
+                .and_where(Expr::col("prelude_id").eq(old_prelude_id))
+                .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
+                .to_owned();
+
+            let (query, values) = update_statement.build_sqlx(PostgresQueryBuilder);
+            sqlx::query_with(&query, values)
+                .execute(executor.get_con().await?)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Check if a PENDING session with the same phone_number_hash and prelude_id already exists
+    async fn check_session_exists(
+        executor: &mut UnifiedExecutor<'_>,
+        phone_number_hash: &str,
+        prelude_id: &str,
+    ) -> Result<bool, DbError> {
+        let statement = Query::select()
+            .expr(Expr::value(1))
+            .from("sms_verifications")
+            .and_where(Expr::col("phone_number_hash").eq(phone_number_hash))
+            .and_where(Expr::col("prelude_id").eq(prelude_id))
+            .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
+            .to_owned();
+
+        let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
+        let row_result = sqlx::query_with(&query, values)
+            .fetch_optional(executor.get_con().await?)
+            .await
+            .map_err(DbError::from)?;
+
+        Ok(row_result.is_some())
+    }
+
+    /// Insert a new verification record
+    async fn insert_verification(
+        executor: &mut UnifiedExecutor<'_>,
+        phone_number_hash: &str,
+        prelude_id: &str,
+    ) -> Result<(), DbError> {
         let statement = Query::insert()
             .into_table("sms_verifications")
             .columns(["phone_number_hash", "prelude_id"])
-            .select_from(
-                Query::select()
-                    .expr(Expr::value(phone_number_hash))
-                    .expr(Expr::value(prelude_id))
-                    .cond_where(Expr::exists(subquery).not())
-                    .to_owned(),
-            )
+            .values([phone_number_hash.into(), prelude_id.into()])
             .expect("Failed to build insert query")
             .to_owned();
 

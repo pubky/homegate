@@ -171,8 +171,8 @@ mod tests {
             .await;
 
         // Act: POST to /verify_code endpoint
-        let verify_response = server
-            .post("/sms_verification/verify_code")
+        let verify_response: axum_test::TestResponse = server
+            .post("/sms_verification/validate_code")
             .json(&serde_json::json!({
                 "phone_number": phone,
                 "code": "123456"
@@ -248,7 +248,7 @@ mod tests {
 
         // Test wrong code returns success status but failure in response
         let response = server
-            .post("/sms_verification/verify_code")
+            .post("/sms_verification/validate_code")
             .json(&serde_json::json!({
                 "phone_number": phone,
                 "code": "111111"
@@ -276,7 +276,7 @@ mod tests {
 
         // Test correct code returns success
         let response = server
-            .post("/sms_verification/verify_code")
+            .post("/sms_verification/validate_code")
             .json(&serde_json::json!({
                 "phone_number": phone,
                 "code": "123456"
