@@ -143,9 +143,7 @@ impl SmsVerificationService {
         let mut executor: UnifiedExecutor<'_> = db.pool().into();
         SmsVerificationRepository::err_if_no_active_verification(&mut executor, &phone_number_hash)
             .await
-            .map_err(|_| {
-                SmsVerificationError::NoActiveVerification(request.phone_number.clone())
-            })?;
+            .map_err(|_| SmsVerificationError::NoActiveVerification)?;
 
         let prelude_response = self
             .prelude_api
@@ -192,9 +190,7 @@ impl SmsVerificationService {
                 {
                     tracing::error!("{}", e);
                 }
-                Err(SmsVerificationError::NoActiveVerification(
-                    request.phone_number.clone(),
-                ))
+                Err(SmsVerificationError::NoActiveVerification)
             }
         }
     }

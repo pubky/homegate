@@ -1,9 +1,6 @@
 use thiserror::Error;
 
-use crate::{
-    infrastructure::sql::DbError,
-    sms_verification::{PhoneNumber, prelude_api::PreludeError},
-};
+use crate::{infrastructure::sql::DbError, sms_verification::prelude_api::PreludeError};
 
 #[derive(Error, Debug)]
 pub enum SmsVerificationError {
@@ -18,8 +15,11 @@ pub enum SmsVerificationError {
 
     /// This can be either Homegate not having a PENDING entry in its table or Prelude expiring the verification request for this number
     /// Either way the user must start from the top.
-    #[error("No active verification session for phone number: {0}")]
-    NoActiveVerification(PhoneNumber),
+    #[error("No active verification session for phone number")]
+    NoActiveVerification,
+
+    #[error("Invalid phone number format. Must be in E.164 format (e.g., +30123456789)")]
+    InvalidPhoneNumber,
 
     #[error("External service rate limit exceeded")]
     RateLimited { retry_after: Option<u64> },
@@ -37,6 +37,8 @@ impl From<PreludeError> for SmsVerificationError {
             PreludeError::RateLimited { retry_after } => {
                 SmsVerificationError::RateLimited { retry_after }
             }
+            PreludeError::RegionBlocked => SmsVerificationError::Blocked,
+            PreludeError::InvalidPhoneNumber => SmsVerificationError::InvalidPhoneNumber,
             PreludeError::RequestFailed(e) => SmsVerificationError::RequestFailed(e),
         }
     }

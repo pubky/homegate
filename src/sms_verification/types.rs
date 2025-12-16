@@ -49,8 +49,7 @@ impl PhoneNumber {
             Ok(Self(phone.to_string()))
         } else {
             anyhow::bail!(
-                "Invalid phone number format: {}. Phone number must be in E.164 format (e.g., +30123456789)",
-                phone
+                "Invalid phone number format. Must be in E.164 format (e.g., +30123456789)",
             )
         }
     }

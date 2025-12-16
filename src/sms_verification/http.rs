@@ -23,7 +23,7 @@ pub async fn router(
     let state = AppState::new(config, db);
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
-        .route("/verify_code", post(verify_code_handler))
+        .route("/validate_code", post(validate_code_handler))
         .with_state(state))
 }
 
@@ -35,7 +35,7 @@ pub async fn router_with_db(
     let state = AppState::new(config, db);
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
-        .route("/verify_code", post(verify_code_handler))
+        .route("/validate_code", post(validate_code_handler))
         .with_state(state))
 }
 
@@ -51,7 +51,7 @@ async fn send_code_handler(
     Ok(StatusCode::OK)
 }
 
-async fn verify_code_handler(
+async fn validate_code_handler(
     State(mut state): State<AppState>,
     Json(request): Json<ValidateCodeRequest>,
 ) -> Result<Json<ValidateCodeResponse>, SmsVerificationError> {
@@ -68,7 +68,8 @@ impl IntoResponse for SmsVerificationError {
             SmsVerificationError::Blocked => StatusCode::FORBIDDEN,
             SmsVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             SmsVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
-            SmsVerificationError::NoActiveVerification(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            SmsVerificationError::NoActiveVerification => StatusCode::UNPROCESSABLE_ENTITY,
+            SmsVerificationError::InvalidPhoneNumber => StatusCode::UNPROCESSABLE_ENTITY,
             SmsVerificationError::RateLimited { retry_after } => {
                 let mut response =
                     (StatusCode::TOO_MANY_REQUESTS, self.to_string()).into_response();

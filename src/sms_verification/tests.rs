@@ -607,7 +607,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
 
     // Verify the response is NoActiveVerification error
     match verify_result {
-        Err(SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification) => {
             // Test passes - correct error type
         }
         other => panic!("Expected NoActiveVerification error, got: {:?}", other),
@@ -817,7 +817,7 @@ async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPo
     // Should return NoActiveVerification error
     assert!(matches!(
         result,
-        Err(SmsVerificationError::NoActiveVerification(_))
+        Err(SmsVerificationError::NoActiveVerification)
     ));
 
     // Verify session marked FAILED despite prelude_id mismatch
@@ -923,7 +923,7 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
 
     // Should fail with NoActiveVerification error since there's no pending verification for phone_verify
     match result {
-        Err(SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification) => {
             // Test passes - correct error type
         }
         other => panic!("Expected NoActiveVerification, got: {:?}", other),
@@ -994,7 +994,7 @@ async fn test_service_database_error_handling(pool: PgPool) {
 
     // Should propagate NoActiveVerification error from database through service layer
     match result {
-        Err(SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification) => {
             // Test passes - database error was properly propagated
         }
         other => panic!("Expected NoActiveVerification, got: {:?}", other),
@@ -1074,7 +1074,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 
     // Should return NoActiveVerification error
     match result {
-        Err(SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification) => {
             // Test passes - correct error type
         }
         other => panic!(
@@ -1137,7 +1137,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 
     // Verify the response is NoActiveVerification error
     match verify_result {
-        Err(SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification) => {
             // Test passes - correct error type
         }
         other => panic!("Expected NoActiveVerification error, got: {:?}", other),
@@ -1166,7 +1166,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 
     // Should return NoActiveVerification error
     match result {
-        Err(SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification) => {
             // Test passes - correct error type
         }
         other => panic!(
@@ -1648,7 +1648,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
 
     // Should return NoActiveVerification error
     match verify_result {
-        Err(SmsVerificationError::NoActiveVerification(_)) => {
+        Err(SmsVerificationError::NoActiveVerification) => {
             // Test passes - correct error type
         }
         other => panic!("Expected NoActiveVerification error, got: {:?}", other),
