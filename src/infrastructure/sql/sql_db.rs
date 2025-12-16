@@ -1,6 +1,6 @@
 use sqlx::postgres::PgPool;
 
-use crate::persistence::sql::connection_string::ConnectionString;
+use crate::infrastructure::sql::{Migrator, connection_string::ConnectionString};
 
 /// The SqlDb is a wrapper around the postgres connection pool.
 /// It is used to connect to the database and run queries.
@@ -26,7 +26,12 @@ impl SqlDb {
     /// Connect to the database.
     pub async fn connect(con_string: &ConnectionString) -> Result<Self, sqlx::Error> {
         let pool: PgPool = PgPool::connect(con_string.as_str()).await?;
-        Ok(Self { pool })
+        let db = Self { pool };
+        Migrator::run(&db)
+            .await
+            .map_err(|e| sqlx::Error::Protocol(format!("Migration failed: {}", e)))?;
+
+        Ok(db)
     }
 
     /// Get the connection pool
@@ -37,6 +42,7 @@ impl SqlDb {
     /// Create a test database without running migrations
     /// If the DB_CONNECTION_STRING environment variable is not set, a temporary directory is used for the sqlite database
     /// If the DB_CONNECTION_STRING environment variable is set, the test database is created on the existing database
+    #[cfg(test)]
     pub async fn test_without_migrations(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -44,11 +50,13 @@ impl SqlDb {
     /// Create a test database and run migrations
     /// If the DB_CONNECTION_STRING environment variable is not set, a temporary directory is used for the sqlite database
     /// If the DB_CONNECTION_STRING environment variable is set, the migrations are run on the existing database
+    #[cfg(test)]
     pub async fn test(pool: PgPool) -> Self {
-        use crate::persistence::sql::migrator::Migrator;
+        use crate::infrastructure::sql::migrator;
         let db = Self::test_without_migrations(pool).await;
-        let migrator = Migrator::new(&db);
-        migrator.run().await.expect("Failed to run migrations");
+        migrator::Migrator::<'_>::run(&db)
+            .await
+            .expect("Failed to run migrations");
         db
     }
 }

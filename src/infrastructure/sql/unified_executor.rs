@@ -2,11 +2,13 @@ use futures_util::future::BoxFuture;
 
 /// Macro to create a unified executor from a transaction.
 /// This is a shortcut for `&mut (&mut tx).into()`.
+#[allow(unused_macros)]
 macro_rules! uexecutor {
-    ($tx:expr) => {{ &mut crate::persistence::sql::UnifiedExecutor::from_tx(&mut $tx) }};
+    ($tx:expr) => {{ &mut UnifiedExecutor::from_tx(&mut $tx) }};
 }
 
 // Re-export the macro so it can be imported from this module path
+#[allow(unused_imports)]
 pub(crate) use uexecutor;
 
 /// A unified executor that can be used to execute queries on a pool or a transaction.
@@ -80,7 +82,7 @@ impl std::fmt::Debug for UnifiedExecutor<'_> {
 mod tests {
     use sqlx::PgPool;
 
-    use crate::persistence::sql::SqlDb;
+    use crate::infrastructure::sql::SqlDb;
 
     use super::*;
 

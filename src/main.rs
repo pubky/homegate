@@ -1,7 +1,12 @@
-mod homegate_service;
+mod infrastructure;
+mod shared;
+mod sms_verification;
 
-use homegate::AppContext;
-use homegate_service::HomegateService;
+#[cfg(test)]
+mod e2e;
+
+use anyhow::Context;
+use infrastructure::{EnvConfig, http::HttpServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -14,15 +19,11 @@ async fn main() -> anyhow::Result<()> {
         tracing::debug!("Failed to load .env file: {}", e);
     };
 
-    let context = AppContext::load()
-        .await
-        .map_err(|e| e.context("Failed to load application context"))?;
-    let homegate_service = HomegateService::start(context).await?;
+    let config = EnvConfig::load().context("Failed to load config")?;
 
-    tracing::info!(
-        "Homeserver HTTP listening on {}",
-        homegate_service.client_server().url_string()
-    );
+    let http_server = HttpServer::start(config).await?;
+
+    tracing::info!("Homeserver HTTP listening on {}", http_server.url_string());
 
     tracing::info!("Press Ctrl+C to stop the Homeserver");
     tokio::signal::ctrl_c().await?;

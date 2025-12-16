@@ -3,45 +3,55 @@ use std::{
     time::Duration,
 };
 
-use crate::app_context::AppContext;
-use crate::client_server::{AppState, routes};
-use axum::{Router, routing::get};
+use crate::{
+    EnvConfig,
+    infrastructure::{
+        http::HttpServerError,
+        sql::{DbError, SqlDb},
+    },
+    sms_verification::http::router,
+};
+
+use axum::{Router, response::IntoResponse, routing::get};
 use axum_server::Handle;
 use futures_util::TryFutureExt;
 use tower_http::trace::TraceLayer;
 
-/// An Http server
 pub struct HttpServer {
-    context: AppContext,
     pub(crate) http_handle: Handle,
     pub(crate) http_socket: SocketAddr,
 }
 
 impl HttpServer {
-    pub async fn start(context: AppContext) -> anyhow::Result<Self> {
-        let router = Self::create_router(&context);
-        let (http_handle, http_socket) = Self::start_http_server(&context, router).await?;
+    pub fn create_router(sms_verification_router: Router) -> Router {
+        Router::new()
+            .route("/", get(root))
+            .nest("/sms_verification", sms_verification_router)
+            .layer(TraceLayer::new_for_http())
+    }
+
+    pub async fn start(config: EnvConfig) -> Result<Self, HttpServerError> {
+        let db = SqlDb::connect(&config.database_url)
+            .await
+            .map_err(DbError::from)?;
+
+        let sms_verification_router = router(&config, db).await?;
+        let router = Self::create_router(sms_verification_router);
+
+        let (http_handle, http_socket) =
+            Self::start_http_server(config.http_listen_socket, router).await?;
         Ok(Self {
-            context,
             http_handle,
             http_socket,
         })
     }
 
-    pub(crate) fn create_router(context: &AppContext) -> Router {
-        let state = AppState {
-            sql_db: context.db.clone(),
-        };
-        let app = base().layer(TraceLayer::new_for_http()).with_state(state);
-        app
-    }
-
     /// Start the HTTP server
     async fn start_http_server(
-        context: &AppContext,
+        listen_socket: std::net::SocketAddr,
         router: Router,
-    ) -> anyhow::Result<(Handle, SocketAddr)> {
-        let http_listener = TcpListener::bind(context.config.http_listen_socket)?;
+    ) -> Result<(Handle, SocketAddr), HttpServerError> {
+        let http_listener = TcpListener::bind(listen_socket)?;
         let http_socket = http_listener.local_addr()?;
         let http_handle = Handle::new();
         tokio::spawn(
@@ -73,6 +83,6 @@ impl Drop for HttpServer {
     }
 }
 
-fn base() -> Router<AppState> {
-    Router::new().route("/", get(routes::root::handler))
+pub async fn root() -> Result<impl IntoResponse, String> {
+    Ok("Homegate Service")
 }
