@@ -1,5 +1,12 @@
+mod infrastructure;
+mod shared;
+mod sms_verification;
+
+#[cfg(test)]
+mod e2e;
+
 use anyhow::Context;
-use homegate::{EnvConfig, HttpServer};
+use infrastructure::{EnvConfig, http::HttpServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

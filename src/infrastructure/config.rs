@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use crate::infrastructure::database::ConnectionString;
+use crate::infrastructure::sql::ConnectionString;
 use url::Url;
 
 /// The environment configuration.

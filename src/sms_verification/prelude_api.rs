@@ -2,6 +2,114 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use url::Url;
 
+use crate::sms_verification::{Code, PhoneNumber};
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum PreludeErrorCode {
+    RegionBlockedByCustomer,
+    InvalidPhoneNumber,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Deserialize, Debug)]
+struct PreludeErrorResponse {
+    code: PreludeErrorCode,
+    message: String,
+    #[serde(rename = "type")]
+    error_type: String,
+    request_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum PreludeError {
+    RateLimited { retry_after: Option<u64> },
+    RegionBlocked,
+    InvalidPhoneNumber,
+    RequestFailed(reqwest::Error),
+}
+
+impl PreludeError {
+    /// Check if response is a 429, extract retry-after header if present and return PreludeApi error.
+    /// Otherwise, pass back the same reqwest::Response
+    /// All Prelude errors - https://docs.prelude.so/introduction/errors
+    pub async fn from_response(response: reqwest::Response) -> Result<reqwest::Response, Self> {
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok());
+            return Err(PreludeError::RateLimited { retry_after });
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let status_error = response
+                .error_for_status_ref()
+                .expect_err("Already checked !is_success()");
+            let body_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unable to read body>".to_string());
+
+            match serde_json::from_str::<PreludeErrorResponse>(&body_text) {
+                Ok(error_response) => {
+                    tracing::error!(
+                        status = %status,
+                        code = ?error_response.code,
+                        message = %error_response.message,
+                        error_type = %error_response.error_type,
+                        request_id = ?error_response.request_id,
+                    );
+                    match error_response.code {
+                        PreludeErrorCode::RegionBlockedByCustomer => {
+                            return Err(PreludeError::RegionBlocked);
+                        }
+                        PreludeErrorCode::InvalidPhoneNumber => {
+                            return Err(PreludeError::InvalidPhoneNumber);
+                        }
+                        _ => {}
+                    }
+                }
+                Err(_) => {
+                    tracing::info!(
+                        status = %status,
+                        body = %body_text,
+                        "Prelude API non-2xx response (unable to parse as JSON)"
+                    );
+                }
+            }
+            return Err(PreludeError::RequestFailed(status_error));
+        }
+
+        Ok(response)
+    }
+}
+
+impl std::fmt::Display for PreludeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PreludeError::RateLimited { .. } => write!(f, "Rate limit exceeded"),
+            PreludeError::RequestFailed(e) => write!(f, "Request failed: {}", e),
+            PreludeError::RegionBlocked => write!(f, "Region blocked for given phone number"),
+            PreludeError::InvalidPhoneNumber => write!(
+                f,
+                "The provided phone number is invalid. Provide a valid E.164 phone number."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PreludeError {}
+
+impl From<reqwest::Error> for PreludeError {
+    fn from(e: reqwest::Error) -> Self {
+        PreludeError::RequestFailed(e)
+    }
+}
+
 /// Caller of Prelude's v2 API. Ref: https://docs.prelude.so/verify/v2/api-reference/
 #[derive(Clone, Debug)]
 pub struct PreludeAPI {
@@ -37,8 +145,6 @@ pub enum PreludeBlockedReason {
     InBlockList,
     /// The phone number is not a valid line number (e.g. landline).
     InvalidPhoneLine,
-    /// The phone number is not a valid phone number (e.g. unallocated range).
-    InvalidPhoneNumber,
     /// The signature of the SDK signals is invalid.
     InvalidSignature,
     /// The phone number has made too many verification attempts.
@@ -108,9 +214,9 @@ impl PreludeAPI {
     /// Creates a verification request for the given phone number
     pub async fn create_verification(
         &self,
-        phone_number: &str,
+        phone_number: &PhoneNumber,
         ip_address: Option<IpAddr>,
-    ) -> Result<PreludeCreateVerificationResponse, reqwest::Error> {
+    ) -> Result<PreludeCreateVerificationResponse, PreludeError> {
         let request_body = PreludeCreateVerificationRequest {
             target: Target {
                 target_type: "phone_number".to_string(),
@@ -134,10 +240,9 @@ impl PreludeAPI {
             .send()
             .await?;
 
-        let verification_response = response
-            .error_for_status()?
-            .json::<PreludeCreateVerificationResponse>()
-            .await?;
+        let response = PreludeError::from_response(response).await?;
+
+        let verification_response = response.json::<PreludeCreateVerificationResponse>().await?;
 
         Ok(verification_response)
     }
@@ -145,9 +250,9 @@ impl PreludeAPI {
     /// Checks a verification code for the given phone number
     pub async fn check_code(
         &self,
-        phone_number: &str,
-        code: &str,
-    ) -> Result<PreludeCheckCodeResponse, reqwest::Error> {
+        phone_number: &PhoneNumber,
+        code: &Code,
+    ) -> Result<PreludeCheckCodeResponse, PreludeError> {
         let request_body = PreludeCheckCodeRequest {
             target: Target {
                 target_type: "phone_number".to_string(),
@@ -168,11 +273,9 @@ impl PreludeAPI {
             .json(&request_body)
             .send()
             .await?;
+        let response = PreludeError::from_response(response).await?;
 
-        let check_response = response
-            .error_for_status()?
-            .json::<PreludeCheckCodeResponse>()
-            .await?;
+        let check_response = response.json::<PreludeCheckCodeResponse>().await?;
 
         Ok(check_response)
     }

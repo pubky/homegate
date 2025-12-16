@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use sea_query::{ColumnDef, Index, PostgresQueryBuilder, Table};
 use sqlx::Transaction;
 
-use crate::infrastructure::database::migrations::MigrationTrait;
+use crate::infrastructure::sql::MigrationTrait;
 
 pub struct M20251201CreateSmsVerifications;
 

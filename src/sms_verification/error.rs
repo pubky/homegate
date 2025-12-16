@@ -1,26 +1,45 @@
 use thiserror::Error;
 
-use crate::{infrastructure::database::DbError, sms_verification::PhoneNumber};
+use crate::{infrastructure::sql::DbError, sms_verification::prelude_api::PreludeError};
 
 #[derive(Error, Debug)]
 pub enum SmsVerificationError {
-    #[error(
-        "Invalid phone number format: {0}. Phone number must be in E.164 format (e.g., +30123456789)"
-    )]
-    InvalidPhoneNumber(String),
+    #[error("Phone number blocked for verification")]
+    Blocked,
 
-    #[error("Phone number has exceeded weekly verification limit (2 verifications per 7 days)")]
+    #[error("Phone number has exceeded weekly verification limit")]
     WeeklyLimitExceeded,
 
-    #[error("Phone number has exceeded annual verification limit (4 verifications per 365 days)")]
+    #[error("Phone number has exceeded annual verification limit")]
     AnnualLimitExceeded,
 
-    #[error("No active verification session for phone number: {0}")]
-    NoActiveVerification(PhoneNumber),
+    /// This can be either Homegate not having a PENDING entry in its table or Prelude expiring the verification request for this number
+    /// Either way the user must start from the top.
+    #[error("No active verification session for phone number")]
+    NoActiveVerification,
+
+    #[error("Invalid phone number format. Must be in E.164 format (e.g., +30123456789)")]
+    InvalidPhoneNumber,
+
+    #[error("External service rate limit exceeded")]
+    RateLimited { retry_after: Option<u64> },
 
     #[error("HTTP request failed: {0}")]
     RequestFailed(#[from] reqwest::Error),
 
     #[error("{0}")]
     Database(#[from] DbError),
+}
+
+impl From<PreludeError> for SmsVerificationError {
+    fn from(error: PreludeError) -> Self {
+        match error {
+            PreludeError::RateLimited { retry_after } => {
+                SmsVerificationError::RateLimited { retry_after }
+            }
+            PreludeError::RegionBlocked => SmsVerificationError::Blocked,
+            PreludeError::InvalidPhoneNumber => SmsVerificationError::InvalidPhoneNumber,
+            PreludeError::RequestFailed(e) => SmsVerificationError::RequestFailed(e),
+        }
+    }
 }
