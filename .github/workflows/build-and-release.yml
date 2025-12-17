@@ -7,7 +7,7 @@ on:
 
 # This workflow will trigger on tags to build and create a release
 jobs:
-  build:
+  release-build:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +40,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: release-build
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
