@@ -29,4 +29,3 @@ runs:
         profile: minimal
         components: clippy, rustfmt
         override: true
-

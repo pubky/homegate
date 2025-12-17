@@ -27,11 +27,34 @@ jobs:
     name: Check formatting and run tests
     runs-on: ubuntu-latest
     needs: rust-build
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U test_user"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgres://test_user:test_pass@localhost:5432/postgres?pubky-test=true
     steps:
       - uses: actions/checkout@v4
       - name: Setup environment
         id: setup
         uses: ./.github/setup
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in {1..10}; do
+            pg_isready -h localhost -p 5432 -U test_user && break
+            echo "Postgres not ready yet… sleeping"
+            sleep 3
+          done
 
       - name: Run Rustfmt (Code Formatting)
         run: cargo fmt --all -- --check
@@ -41,5 +64,3 @@ jobs:
 
       - name: Run tests
         run: cargo test --verbose
-
-
