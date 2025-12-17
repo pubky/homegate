@@ -1,0 +1,45 @@
+name: PR actions
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '**'
+  # Enable manual trigger
+  workflow_dispatch:
+
+
+jobs:
+  rust-build:
+    name: Build Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup environment
+        id: setup
+        uses: ./.github/setup
+      - name: Build Project
+        run: cargo build --release
+
+  formatting-and-tests:
+    name: Check formatting and run tests
+    runs-on: ubuntu-latest
+    needs: rust-build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup environment
+        id: setup
+        uses: ./.github/setup
+
+      - name: Run Rustfmt (Code Formatting)
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy (Lint)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --verbose
+
+
