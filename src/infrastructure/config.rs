@@ -74,7 +74,7 @@ impl EnvConfig {
     pub fn for_test(prelude_api_url: Url, homeserver_admin_api_url: Url) -> Self {
         Self {
             database_url: Default::default(),
-            http_listen_socket: "127.0.0.1:0".parse().unwrap(),
+            http_listen_socket: "127.0.0.1:0".parse().expect("Default HTTP listen socket is valid"),
             prelude_api_key: "test-key".to_string(),
             prelude_api_url,
             homeserver_admin_api_url,
@@ -85,7 +85,7 @@ impl EnvConfig {
             lightning_verification_price_sat: 1000,
             lightning_verification_expiry_seconds: 60 * 10,
             lightning_verification_description: "Verification".to_string(),
-            phoenixd_api_url: Url::parse("http://localhost:9740").unwrap(),
+            phoenixd_api_url: Url::parse("http://localhost:9740").expect("Default Phoenixd API URL is valid"),
             phoenixd_api_password:
                 "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef".to_string(),
         }
