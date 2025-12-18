@@ -2,7 +2,12 @@
 
 A backend service to gatekeep [Pubky Homeserver](https://github.com/pubky/pubky-core/) signups.
 
-# Run
+This service depends on
+
+- [Prelude](https://docs.prelude.so/) as a SMS service provider.
+- [PhoenixD](https://github.com/ACINQ/phoenixd) As a Lightning Payment provider.
+
+# Usage
 
 See `.env.example` for a description of which values you need to put in a `.env` file.
 
@@ -21,6 +26,10 @@ If this value is lost then you lose the ability to match phone numbers which hav
 We use [Prelude](https://docs.prelude.so/) for SMS verification. Keep in mind that each phone number:
 - Has a maximum of 10 verifications.
 - Has a single pending verification at a time. Multiple `send_code` calls reuse the existing session.
+
+## Lightning Payment Verification
+
+We use [phoenixd](https://github.com/ACINQ/phoenixd) for Lightning Payment verifications.
 
 ## Running Tests
 
