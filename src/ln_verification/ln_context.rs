@@ -10,7 +10,6 @@ use crate::{
 pub struct LnContext {
     pub service: LnVerificationService,
     pub phoenixd_api: PhoenixdAPI,
-    pub db: SqlDb,
     pub homeserver_api: HomeserverAdminAPI,
 }
 
@@ -32,7 +31,6 @@ impl LnContext {
             config.lightning_verification_expiry_seconds,
         );
         Self {
-            db,
             service,
             phoenixd_api,
             homeserver_api,
@@ -52,7 +50,6 @@ impl LnContext {
             60 * 10,
         );
         Self {
-            db,
             service,
             phoenixd_api,
             homeserver_api,

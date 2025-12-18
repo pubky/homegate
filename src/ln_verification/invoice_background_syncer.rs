@@ -55,7 +55,7 @@ impl InvoiceBackgroundSyncer {
             Err(_) => return Ok(None),
         };
 
-        Ok(self.service.get_verification(payment_hash).await?)
+        self.service.get_verification(payment_hash).await
     }
 
     /// Sync an invoice.

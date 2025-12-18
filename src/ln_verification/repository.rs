@@ -1,5 +1,5 @@
 use crate::{infrastructure::sql::UnifiedExecutor, ln_verification::payment_hash::PaymentHash};
-use chrono::{NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use sea_query_binder::SqlxBinder;
 
@@ -166,6 +166,7 @@ impl LnVerificationRepository {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
     use sqlx::PgPool;
 
     use crate::infrastructure::sql::SqlDb;

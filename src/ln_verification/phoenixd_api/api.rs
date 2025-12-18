@@ -256,10 +256,7 @@ impl PhoenixdAPI {
     pub async fn received_payments_websocket(
         &self,
     ) -> Result<ReceivePaymentsWebsocket, WebsocketError> {
-        Ok(
-            ReceivePaymentsWebsocket::connect(&self.base_url, &self.password, &self.http_client)
-                .await?,
-        )
+        ReceivePaymentsWebsocket::connect(&self.base_url, &self.password, &self.http_client).await
     }
 
     #[cfg(test)]

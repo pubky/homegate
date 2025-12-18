@@ -1,6 +1,5 @@
 use futures_util::Stream;
 use reqwest_websocket::{Message, RequestBuilderExt, WebSocket};
-use serde_json;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use url::Url;
@@ -75,14 +74,6 @@ impl ReceivePaymentsWebsocket {
             websocket,
             closed: false,
         })
-    }
-
-    /// Close the websocket connection
-    pub async fn close(self) -> Result<(), WebsocketError> {
-        self.websocket
-            .close(reqwest_websocket::CloseCode::Normal, None)
-            .await?;
-        Ok(())
     }
 }
 
