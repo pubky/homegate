@@ -342,7 +342,7 @@ mod tests {
             invoice_get.invoice,
             "lnbc1u1p55qgw4pp5hd9cywa09m2sd3wgv7093p6fntlhp9lqv0v3a23dzd07xhyg62yscqzyssp5a4qlh8thyzdv22vl2wyjaz90axeaayxfetz5c5palxfy56dcjczs9q7sqqqqqqqqqqqqqqqqqqqsqqqqqysgqdq523jhxapqf9h8vmmfvdjsmqz9gxqzjcrzjqwryaup9lh50kkranzgcdnn2fgvx390wgj5jd07rwr3vxeje0glcll6h0fz6dguxyqqqqqlgqqqqqeqqjqm20sevvla34cg5gevrzvw47kc7halr0szgamung28wutm8pj4wmygafts8z394gpxus5ap084uaz6cx8mccfes9yqlxg59zf4mwh4ygqkyl75x"
         );
-        assert_eq!(invoice_get.is_paid, false);
+        assert!(!invoice_get.is_paid);
         assert_eq!(invoice_get.received_sat, 0);
         assert_eq!(invoice_get.fees, 1);
         assert_eq!(invoice_get.completed_at, None);
