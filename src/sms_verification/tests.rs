@@ -206,7 +206,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 
     // Second send_code - API might return success again, but our code should
     // see the existing pending session in DB and not create a duplicate
-    let _response2 = service
+    service
         .create_verification(
             &db,
             CreateVerificationRequest {
@@ -329,7 +329,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
                 ip,
             )
             .await
-            .expect(&format!("send_code {} should succeed", i));
+            .unwrap_or_else(|_| panic!("send_code {} should succeed", i));
 
         service
             .validate_code(
@@ -340,7 +340,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
                 },
             )
             .await
-            .expect(&format!("verify_code {} should succeed", i));
+            .unwrap_or_else(|_| panic!("verify_code {} should succeed", i));
     }
 
     // 3rd attempt should fail weekly limit (no mock needed - validation happens before API call)
