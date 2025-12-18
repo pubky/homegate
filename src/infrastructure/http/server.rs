@@ -9,6 +9,7 @@ use crate::{
         http::HttpServerError,
         sql::{DbError, SqlDb},
     },
+    shared::HomeserverObserver,
     sms_verification::http::router,
 };
 
@@ -31,6 +32,8 @@ impl HttpServer {
     }
 
     pub async fn start(config: EnvConfig) -> Result<Self, HttpServerError> {
+        HomeserverObserver::spawn_crash_on_unresponsive_homeserver(&config).await;
+
         let db = SqlDb::connect(&config.database_url)
             .await
             .map_err(DbError::from)?;
