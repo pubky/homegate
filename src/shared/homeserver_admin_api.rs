@@ -36,4 +36,30 @@ impl HomeserverAdminAPI {
     pub fn get_homeserver_pubky(&self) -> String {
         self.homeserver_pubky.clone()
     }
+
+    /// Verifies the admin password by making a GET request to the /info endpoint.
+    /// This request might take a moment.
+    pub async fn verify_password(&self) -> Result<(), reqwest::Error> {
+        let url = self
+            .base_url
+            .join("/info")
+            .expect("Failed to join URL path");
+        let response = self
+            .http_client
+            .get(url)
+            .header("X-Admin-Password", &self.admin_password)
+            .send()
+            .await?;
+        response.error_for_status()?;
+        Ok(())
+    }
+
+    /// Checks if the homeserver is responsive by making a GET request to the root URL
+    /// This is NOT password protected so it won't validate the admin password.
+    pub async fn health_check(&self) -> Result<(), reqwest::Error> {
+        let url = self.base_url.join("/").expect("Failed to join URL path");
+        let response = self.http_client.get(url).send().await?;
+        response.error_for_status()?;
+        Ok(())
+    }
 }
