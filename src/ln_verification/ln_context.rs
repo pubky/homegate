@@ -36,23 +36,4 @@ impl LnContext {
             homeserver_api,
         }
     }
-
-    #[cfg(test)]
-    pub async fn test(db: SqlDb) -> Self {
-        let phoenixd_api = PhoenixdAPI::test();
-        let homeserver_api = HomeserverAdminAPI::test().await;
-        let service = LnVerificationService::new(
-            db.clone(),
-            phoenixd_api.clone(),
-            homeserver_api.clone(),
-            50,
-            "Test Invoice".to_string(),
-            60 * 10,
-        );
-        Self {
-            service,
-            phoenixd_api,
-            homeserver_api,
-        }
-    }
 }

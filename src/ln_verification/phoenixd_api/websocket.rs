@@ -132,7 +132,6 @@ impl Stream for ReceivePaymentsWebsocket {
 #[cfg(test)]
 mod tests {
     use crate::ln_verification::payment_hash::PaymentHash;
-    use crate::ln_verification::phoenixd_api::api::PhoenixdAPI;
     use crate::ln_verification::phoenixd_api::websocket::{
         PaymentReceivedEvent, ReceivePaymentsWebsocket,
     };
@@ -149,8 +148,8 @@ mod tests {
 
     /// Mock websocket server that handles HTTP upgrade and sends payment events
     struct MockWebsocketServer {
-        handle: Handle,
-        port: u16,
+        _handle: Handle,
+        _port: u16,
     }
 
     impl MockWebsocketServer {
@@ -222,7 +221,13 @@ mod tests {
             // Give the server a moment to start
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-            (Self { handle, port }, base_url)
+            (
+                Self {
+                    _handle: handle,
+                    _port: port,
+                },
+                base_url,
+            )
         }
     }
 
@@ -280,41 +285,5 @@ mod tests {
             assert_eq!(event.amount_sat, mock_events[i].amount_sat);
             assert_eq!(event.payment_hash, mock_events[i].payment_hash);
         }
-    }
-
-    #[tokio::test]
-    async fn test_received_payments_websocket_close() {
-        let mut websocket = ReceivePaymentsWebsocket::connect(
-            &Url::parse("http://localhost:9740").unwrap(),
-            "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef",
-            &reqwest::Client::new(),
-        )
-        .await
-        .unwrap();
-
-        let api = PhoenixdAPI::new(
-            &Url::parse("http://localhost:9740").unwrap(),
-            "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef",
-        );
-
-        let invoice = api
-            .create_invoice(100, "Test Invoice", 60 * 10)
-            .await
-            .unwrap();
-        println!("Invoice: {:?}", invoice.bolt11_invoice);
-
-        match websocket.try_next().await {
-            Ok(Some(event)) => {
-                println!("Received event: {:?}", event);
-            }
-            Ok(None) => {
-                println!("No event received");
-            }
-            Err(e) => {
-                println!("Error receiving event: {:?}", e);
-            }
-        }
-
-        println!("Websocket closed: {:?}", websocket.closed);
     }
 }

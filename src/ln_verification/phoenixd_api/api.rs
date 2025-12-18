@@ -258,14 +258,6 @@ impl PhoenixdAPI {
     ) -> Result<ReceivePaymentsWebsocket, WebsocketError> {
         ReceivePaymentsWebsocket::connect(&self.base_url, &self.password, &self.http_client).await
     }
-
-    #[cfg(test)]
-    pub fn test() -> Self {
-        Self::new(
-            &Url::parse("http://localhost:9740").unwrap(),
-            "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef",
-        )
-    }
 }
 
 #[cfg(test)]
