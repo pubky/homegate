@@ -16,7 +16,7 @@ use wiremock::MockServer;
 
 use crate::ln_verification::{
     payment_hash::PaymentHash,
-    phoenixd_api::{WebsocketError, websocket::ReceivePaymentsWebsocket},
+    phoenixd_api::{error::PhoenixdError, websocket::ReceivePaymentsWebsocket},
 };
 
 /// Helper function to deserialize a u64 timestamp in milliseconds to DateTime<Utc>
@@ -145,7 +145,7 @@ impl PhoenixdAPI {
         amount_satoshis: u64,
         description: &str,
         expiry_seconds: u64,
-    ) -> Result<CreateInvoiceResponse, reqwest::Error> {
+    ) -> Result<CreateInvoiceResponse, PhoenixdError> {
         let url = self
             .base_url
             .join("/createinvoice")
@@ -183,7 +183,7 @@ impl PhoenixdAPI {
     pub async fn get_invoice(
         &self,
         payment_hash: &PaymentHash,
-    ) -> Result<GetIncomingInvoiceResponse, reqwest::Error> {
+    ) -> Result<GetIncomingInvoiceResponse, PhoenixdError> {
         let url = self
             .base_url
             .join("/payments/incoming/")
@@ -225,7 +225,7 @@ impl PhoenixdAPI {
         limit: Option<u64>,
         offset: Option<u64>,
         all: bool,
-    ) -> Result<Vec<GetIncomingInvoiceResponse>, reqwest::Error> {
+    ) -> Result<Vec<GetIncomingInvoiceResponse>, PhoenixdError> {
         let url = self
             .base_url
             .join("/payments/incoming")
@@ -255,8 +255,11 @@ impl PhoenixdAPI {
     /// Syntactic sugar to build a websocket connection to receive payment events
     pub async fn received_payments_websocket(
         &self,
-    ) -> Result<ReceivePaymentsWebsocket, WebsocketError> {
-        ReceivePaymentsWebsocket::connect(&self.base_url, &self.password, &self.http_client).await
+    ) -> Result<ReceivePaymentsWebsocket, PhoenixdError> {
+        let websocket =
+            ReceivePaymentsWebsocket::connect(&self.base_url, &self.password, &self.http_client)
+                .await?;
+        Ok(websocket)
     }
 }
 

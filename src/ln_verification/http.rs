@@ -163,10 +163,6 @@ impl IntoResponse for LnVerificationError {
                 tracing::error!(error = %err, "Phoenixd API error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            LnVerificationError::PhoenixdWebsocket(ref err) => {
-                tracing::error!(error = %err, "Phoenixd websocket error");
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
             LnVerificationError::Homeserver(ref err) => {
                 tracing::error!(error = %err, "Homeserver API error");
                 StatusCode::INTERNAL_SERVER_ERROR

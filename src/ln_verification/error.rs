@@ -1,12 +1,9 @@
-use crate::ln_verification::phoenixd_api::WebsocketError;
+use crate::ln_verification::phoenixd_api::PhoenixdError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum LnVerificationError {
-    #[error("Phoenixd API error: {0}")]
-    Phoenixd(#[from] reqwest::Error),
-
-    #[error("Phoenixd websocket error: {0:?}")]
-    PhoenixdWebsocket(#[from] WebsocketError),
+    #[error("Phoenixd: {0}")]
+    Phoenixd(#[from] PhoenixdError),
 
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),

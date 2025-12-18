@@ -111,7 +111,11 @@ impl InvoiceBackgroundSyncer {
         self.catchup_paid_invoices().await?;
         tracing::info!("Listening for live payments...");
         loop {
-            let event = match websocket.try_next().await? {
+            let event = match websocket
+                .try_next()
+                .await
+                .map_err(LnVerificationError::Phoenixd)?
+            {
                 Some(event) => event,
                 None => break, // websocket closed
             };

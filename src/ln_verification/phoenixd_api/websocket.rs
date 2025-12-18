@@ -5,14 +5,7 @@ use std::task::{Context, Poll};
 use url::Url;
 
 use crate::ln_verification::payment_hash::PaymentHash;
-
-#[derive(thiserror::Error, Debug)]
-pub enum WebsocketError {
-    #[error("reqwest: {0:?}")]
-    Phoenixd(#[from] reqwest_websocket::Error),
-    #[error("deserialization error: {0:?}")]
-    Deserialization(#[from] serde_json::Error),
-}
+use crate::ln_verification::phoenixd_api::PhoenixdError;
 
 /// Payment received event
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -59,7 +52,7 @@ impl ReceivePaymentsWebsocket {
         phoenixd_base_url: &Url,
         phoenixd_password: &str,
         reqwest_client: &reqwest::Client,
-    ) -> Result<Self, WebsocketError> {
+    ) -> Result<Self, PhoenixdError> {
         let url = phoenixd_base_url
             .join("/websocket")
             .expect("input is always valid");
@@ -78,7 +71,7 @@ impl ReceivePaymentsWebsocket {
 }
 
 impl Stream for ReceivePaymentsWebsocket {
-    type Item = Result<PaymentReceivedEvent, WebsocketError>;
+    type Item = Result<PaymentReceivedEvent, PhoenixdError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
@@ -113,7 +106,7 @@ impl Stream for ReceivePaymentsWebsocket {
                 Poll::Ready(Some(Err(e))) => {
                     self.closed = true;
                     tracing::error!("Websocket error: {:?}", e);
-                    return Poll::Ready(Some(Err(WebsocketError::Phoenixd(e))));
+                    return Poll::Ready(Some(Err(PhoenixdError::Websocket(e))));
                 }
                 Poll::Ready(None) => {
                     // Stream ended, set closed to true
