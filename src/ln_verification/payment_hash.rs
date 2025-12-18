@@ -34,7 +34,7 @@ impl PaymentHash {
     #[cfg(test)]
     pub fn random() -> Self {
         let mut bytes = [0u8; 32];
-        getrandom::getrandom(&mut bytes).expect("Randomness generation should not fail");
+        getrandom::fill(&mut bytes).expect("Randomness generation should not fail");
         let value = hex::encode(bytes);
         Self::new(&value).expect("Should never fail")
     }
