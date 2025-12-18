@@ -403,7 +403,7 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(invoices[0].description, "Test Invoice");
-        assert_eq!(invoices[0].is_paid, true);
+        assert!(invoices[0].is_paid);
         assert_eq!(invoices[0].received_sat, 100);
         assert_eq!(invoices[0].fees, 1);
         assert_eq!(
