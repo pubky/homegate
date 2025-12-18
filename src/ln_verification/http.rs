@@ -61,9 +61,10 @@ pub async fn router(
 /// Create a new Lightning Network verification handler
 async fn create_verification_handler(
     State(state): State<AppState>,
-) -> Result<Json<RequestVerificationResponse>, LnVerificationError> {
+) -> Result<Json<CreateVerificationResponse>, LnVerificationError> {
     let (verification, invoice) = state.ln_service.create_verification().await?;
-    let response = RequestVerificationResponse {
+    tracing::info!("Created verification {}", verification.payment_hash);
+    let response = CreateVerificationResponse {
         id: verification.payment_hash,
         bolt11_invoice: invoice.invoice,
         amount_sat: invoice.requested_sat,
@@ -82,7 +83,7 @@ async fn get_verification_handler(
         Ok(None) => return (StatusCode::NOT_FOUND, "Not found".to_string()).into_response(),
         Err(e) => return e.into_response(),
     };
-    Json(PaymentVerifiedResponse {
+    Json(GetVerificationResponse {
         id: verification.payment_hash.clone(),
         amount_sat: verification.amount_sat as u64,
         expires_at: verification.expires_at.and_utc().timestamp_millis(),
@@ -121,9 +122,10 @@ async fn await_verification_handler(
             }
             Err(e) => return e.into_response(),
         };
+        tracing::info!("Awaited verification {}", verification.payment_hash);
     };
 
-    Json(PaymentVerifiedResponse {
+    Json(GetVerificationResponse {
         id: verification.payment_hash.clone(),
         amount_sat: verification.amount_sat as u64,
         expires_at: verification.expires_at.and_utc().timestamp_millis(),
@@ -137,7 +139,7 @@ async fn await_verification_handler(
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RequestVerificationResponse {
+pub struct CreateVerificationResponse {
     id: PaymentHash,
     bolt11_invoice: String,
     amount_sat: u64,
@@ -146,7 +148,7 @@ pub struct RequestVerificationResponse {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PaymentVerifiedResponse {
+pub struct GetVerificationResponse {
     id: PaymentHash,
     amount_sat: u64,
     expires_at: i64,
