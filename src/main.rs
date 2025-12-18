@@ -1,7 +1,7 @@
 mod infrastructure;
+mod ln_verification;
 mod shared;
 mod sms_verification;
-mod ln_verification;
 
 #[cfg(test)]
 mod e2e;

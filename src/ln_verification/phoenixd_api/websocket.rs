@@ -7,7 +7,6 @@ use url::Url;
 
 use crate::ln_verification::payment_hash::PaymentHash;
 
-
 #[derive(thiserror::Error, Debug)]
 pub enum WebsocketError {
     #[error("reqwest: {0:?}")]

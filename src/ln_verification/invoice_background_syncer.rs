@@ -1,18 +1,19 @@
-use crate::ln_verification::{
-    LightningVerificationEntity, error::LnVerificationError, ln_context::LnContext, payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI, service::LnVerificationService
-};
-use std::str::FromStr;
+use std::time::Duration;
 
-use chrono::NaiveDateTime;
+use crate::ln_verification::{
+    LightningVerificationEntity, error::LnVerificationError, ln_context::LnContext,
+    payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI, service::LnVerificationService,
+};
+
 use futures_util::TryStreamExt;
 use tokio::sync::broadcast;
 
-/// Struct that syncronizes the lightning payments with the database.
+/// Struct that syncronizes the PhoenixD payments with the database.
 #[derive(Clone, Debug)]
 pub struct InvoiceBackgroundSyncer {
     service: LnVerificationService,
     phoenixd_api: PhoenixdAPI,
-    verification_completed_tx: broadcast::Sender<LightningVerificationEntity>,
+    verification_completed_tx: broadcast::Sender<PaymentHash>,
 }
 
 impl InvoiceBackgroundSyncer {
@@ -28,17 +29,48 @@ impl InvoiceBackgroundSyncer {
 
     /// Subscribe to finalized verification events.
     /// Returns a receiver that will receive notifications whenever a verification is finalized.
-    pub fn subscribe(&self) -> broadcast::Receiver<LightningVerificationEntity> {
+    pub fn subscribe(&self) -> broadcast::Receiver<PaymentHash> {
         self.verification_completed_tx.subscribe()
     }
 
+    /// Await the payment to be finalized.
+    /// Returns Ok(Some(LightningVerificationEntity)) if the payment was finalized, Ok(None) if the timeout was reached.
+    pub async fn wait_for_payment(
+        &self,
+        payment_hash: &PaymentHash,
+        timeout: Duration,
+    ) -> Result<Option<LightningVerificationEntity>, LnVerificationError> {
+        let future = async {
+            let mut receiver = self.subscribe();
+            loop {
+                let finalized_payment_hash = receiver.recv().await.expect("Should never happen");
+                if finalized_payment_hash == *payment_hash {
+                    break;
+                }
+            }
+        };
+
+        match tokio::time::timeout(timeout, future).await {
+            Ok(_) => {}
+            Err(_) => return Ok(None),
+        };
+
+        Ok(self.service.get_verification(payment_hash).await?)
+    }
+
+    /// Sync an invoice.
+    /// If the invoice is finalized, it will be sent to the verification completed channel.
+    /// # Errors
+    /// * `LnVerificationError` - If the invoice sync fails
     async fn sync_invoice(&self, payment_hash: &PaymentHash) -> Result<(), LnVerificationError> {
         let newly_finalised = match self.service.sync_invoice(payment_hash).await? {
             Some(verification) => verification,
             None => return Ok(()),
         };
-        tracing::info!("Verification finalised: {:?}", newly_finalised);
-        let _ = self.verification_completed_tx.send(newly_finalised);
+        tracing::info!("Verification {} finalised", newly_finalised.payment_hash);
+        let _ = self
+            .verification_completed_tx
+            .send(newly_finalised.payment_hash);
         Ok(())
     }
 
@@ -67,7 +99,12 @@ impl InvoiceBackgroundSyncer {
         Ok(())
     }
 
-    async fn listen_for_payments(&self) -> Result<(), LnVerificationError> {
+    /// Run the invoice background syncer.
+    /// This will connect to the PhoenixD websocket and listen for payments.
+    /// It will also catch up on any paid invoices that we might have missed.
+    /// # Errors
+    /// * `LnVerificationError` - If the websocket connection fails or the invoice sync fails
+    pub async fn run(&self) -> Result<(), LnVerificationError> {
         let mut websocket = self.phoenixd_api.received_payments_websocket().await?;
         tracing::info!("Websocket connected");
         tracing::info!("Catching up on paid invoices that we might have missed...");
@@ -82,10 +119,6 @@ impl InvoiceBackgroundSyncer {
         }
         tracing::warn!("Websocket closed");
         Ok(())
-    }
-
-    pub async fn run(&self) -> Result<(), LnVerificationError> {
-        self.listen_for_payments().await
     }
 }
 

@@ -49,7 +49,10 @@ impl HomeserverAdminAPI {
 
     #[cfg(test)]
     pub async fn test() -> Self {
-        use wiremock::{Mock, ResponseTemplate, matchers::{header, method, path}};
+        use wiremock::{
+            Mock, ResponseTemplate,
+            matchers::{header, method, path},
+        };
 
         let signup_token = "token123456";
         let homeserver_pubky = "pubky123456";
@@ -59,11 +62,14 @@ impl HomeserverAdminAPI {
             .and(header("X-Admin-Password", "test-pass"))
             .respond_with(ResponseTemplate::new(200).set_body_string(signup_token))
             .expect(1)
-            .mount(&mock_server).await;
-        let mut api = Self::new(&mock_server.uri().parse().unwrap(), "test-pass", &homeserver_pubky);
+            .mount(&mock_server)
+            .await;
+        let mut api = Self::new(
+            &mock_server.uri().parse().unwrap(),
+            "test-pass",
+            &homeserver_pubky,
+        );
         api.mock_server = Some(Arc::new(mock_server));
         api
     }
 }
-
-

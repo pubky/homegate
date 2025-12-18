@@ -1,10 +1,10 @@
-mod phoenixd_api;
-mod payment_hash;
-mod ln_context;
-mod repository;
-mod invoice_background_syncer;
-mod service;
-mod http;
 mod error;
-pub use repository::*;
+mod http;
+mod invoice_background_syncer;
+mod ln_context;
+mod payment_hash;
+mod phoenixd_api;
+mod repository;
+mod service;
 pub use http::router;
+pub use repository::*;

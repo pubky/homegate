@@ -1,6 +1,5 @@
 use futures_util::future::BoxFuture;
 
-
 /// A unified executor that can be used to execute queries on a pool or a transaction.
 /// A sqlx Executor is onetime use only which is restricting. This wrapper allows to use the same executor multiple times.
 ///

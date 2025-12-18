@@ -23,8 +23,11 @@ pub struct EnvConfig {
     #[serde(default = "default_max_sms_verifications_per_year")]
     pub max_sms_verifications_per_year: u32,
 
+    #[serde(default = "default_lightning_verification_price_sat")]
     pub lightning_verification_price_sat: u64,
+    #[serde(default = "default_lightning_verification_expiry_seconds")]
     pub lightning_verification_expiry_seconds: u64,
+    #[serde(default = "default_lightning_verification_description")]
     pub lightning_verification_description: String,
     pub phoenixd_api_url: Url,
     pub phoenixd_api_password: String,
@@ -36,6 +39,18 @@ fn default_max_sms_verifications_per_week() -> u32 {
 
 fn default_max_sms_verifications_per_year() -> u32 {
     4
+}
+
+fn default_lightning_verification_expiry_seconds() -> u64 {
+    60 * 10
+}
+
+fn default_lightning_verification_description() -> String {
+    "Pubky Homegate Verification".to_string()
+}
+
+fn default_lightning_verification_price_sat() -> u64 {
+    1000
 }
 
 fn default_prelude_api_url() -> Url {
@@ -71,7 +86,8 @@ impl EnvConfig {
             lightning_verification_expiry_seconds: 60 * 10,
             lightning_verification_description: "Verification".to_string(),
             phoenixd_api_url: Url::parse("http://localhost:9740").unwrap(),
-            phoenixd_api_password: "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef".to_string(),
+            phoenixd_api_password:
+                "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef".to_string(),
         }
     }
 }
@@ -115,7 +131,10 @@ mod tests {
                 String::from("PHOENIXD_API_URL"),
                 String::from("http://localhost:9740"),
             ),
-            (String::from("PHOENIXD_API_PASSWORD"), String::from("test-password")),
+            (
+                String::from("PHOENIXD_API_PASSWORD"),
+                String::from("test-password"),
+            ),
         ])
         .expect("Failed to load config");
 

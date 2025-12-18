@@ -1,6 +1,5 @@
 use std::{fmt::Display, str::FromStr};
 
-
 /// Error type for payment hash parse operations
 #[derive(thiserror::Error, Debug)]
 pub enum PaymentHashError {
@@ -10,8 +9,7 @@ pub enum PaymentHashError {
     InvalidCharacters,
 }
 
-
-/// Lightning network payment hash
+/// Lightning network payment hash.
 /// Consists of 64 hex characters aka 32 bytes, and is case insensitive.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PaymentHash(String);
@@ -42,7 +40,6 @@ impl PaymentHash {
     }
 }
 
-
 impl Display for PaymentHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -68,7 +65,9 @@ impl serde::Serialize for PaymentHash {
 
 impl<'de> serde::Deserialize<'de> for PaymentHash {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de>, {
+    where
+        D: serde::Deserializer<'de>,
+    {
         let s = String::deserialize(deserializer)?;
         Self::new(&s).map_err(serde::de::Error::custom)
     }
@@ -89,9 +88,7 @@ impl sqlx::Type<sqlx::Postgres> for PaymentHash {
 }
 
 impl<'r> sqlx::Decode<'r, sqlx::Postgres> for PaymentHash {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> Result<Self, sqlx::error::BoxDynError> {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         // Decode as String first, which handles both CHAR and TEXT
         let s = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
         // Trim whitespace that CHAR columns may have (CHAR is blank-padded)
@@ -144,7 +141,8 @@ mod tests {
 
     #[test]
     fn test_invalid_length_too_long() {
-        let long_hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let long_hash =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let result = PaymentHash::new(long_hash);
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -253,21 +251,31 @@ mod tests {
 
     #[test]
     fn test_partial_eq() {
-        let hash1 = PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
-        let hash2 = PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
+        let hash1 =
+            PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap();
+        let hash2 =
+            PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap();
         assert_eq!(hash1, hash2);
     }
 
     #[test]
     fn test_partial_eq_different() {
-        let hash1 = PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
-        let hash2 = PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdee").unwrap();
+        let hash1 =
+            PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap();
+        let hash2 =
+            PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdee")
+                .unwrap();
         assert_ne!(hash1, hash2);
     }
 
     #[test]
     fn test_clone() {
-        let hash = PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
+        let hash =
+            PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap();
         let cloned = hash.clone();
         assert_eq!(hash, cloned);
     }
@@ -277,8 +285,12 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        let hash1 = PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
-        let hash2 = PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
+        let hash1 =
+            PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap();
+        let hash2 =
+            PaymentHash::new("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap();
 
         let mut hasher1 = DefaultHasher::new();
         hash1.hash(&mut hasher1);
@@ -309,4 +321,3 @@ mod tests {
         );
     }
 }
-

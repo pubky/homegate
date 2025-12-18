@@ -1,14 +1,13 @@
 use crate::{infrastructure::sql::UnifiedExecutor, ln_verification::payment_hash::PaymentHash};
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use sea_query_binder::SqlxBinder;
-
-
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LightningVerificationEntity {
     pub payment_hash: PaymentHash,
     pub amount_sat: i32,
+    pub expires_at: NaiveDateTime,
     pub created_at: NaiveDateTime,
     pub finalised_at: Option<NaiveDateTime>,
     pub signup_code: Option<String>,
@@ -40,12 +39,17 @@ impl LnVerificationRepository {
     pub async fn create_verification<'a>(
         payment_hash: &PaymentHash,
         amount_sat: u64,
+        expires_at: NaiveDateTime,
         executor: &mut UnifiedExecutor<'a>,
     ) -> Result<LightningVerificationEntity, sqlx::Error> {
         let statement = Query::insert()
             .into_table("lightning_verifications")
-            .columns(["payment_hash", "amount_sat"])
-            .values([Expr::value(payment_hash.as_str()), Expr::value(amount_sat)])
+            .columns(["payment_hash", "amount_sat", "expires_at"])
+            .values([
+                Expr::value(payment_hash.as_str()),
+                Expr::value(amount_sat),
+                Expr::value(expires_at),
+            ])
             .expect("Failed to build insert query")
             .returning_all()
             .to_owned();
@@ -78,6 +82,7 @@ impl LnVerificationRepository {
                 "payment_hash",
                 "amount_sat",
                 "created_at",
+                "expires_at",
                 "finalised_at",
                 "signup_code",
             ])
@@ -171,20 +176,31 @@ mod tests {
     async fn test_create_get_verification(pool: PgPool) {
         let db = SqlDb::test(pool).await;
         let payment_hash = PaymentHash::random();
-        let veri =
-            LnVerificationRepository::create_verification(&payment_hash, 1000, &mut db.pool().into())
-                .await
-                .unwrap();
+        let expires_at = Utc::now().naive_utc();
+        let veri = LnVerificationRepository::create_verification(
+            &payment_hash,
+            1000,
+            expires_at,
+            &mut db.pool().into(),
+        )
+        .await
+        .unwrap();
         assert_eq!(veri.payment_hash, payment_hash);
         assert_eq!(veri.amount_sat, 1000);
         assert!(veri.finalised_at.is_none());
         assert!(veri.signup_code.is_none());
+        assert_eq!(veri.expires_at, expires_at);
 
         // Same payment hash should fail
-        LnVerificationRepository::create_verification(&payment_hash, 1000, &mut db.pool().into())
-                .await
-                .unwrap_err();
-        
+        LnVerificationRepository::create_verification(
+            &payment_hash,
+            1000,
+            Utc::now().naive_utc(),
+            &mut db.pool().into(),
+        )
+        .await
+        .unwrap_err();
+
         let veri2 = LnVerificationRepository::get_verification_by_payment_hash(
             &payment_hash,
             &mut db.pool().into(),
@@ -216,10 +232,14 @@ mod tests {
     async fn test_update_verification_finalised(pool: PgPool) {
         let db = SqlDb::test(pool).await;
         let payment_hash = PaymentHash::random();
-        let veri =
-            LnVerificationRepository::create_verification(&payment_hash, 1000, &mut db.pool().into())
-                .await
-                .unwrap();
+        let veri = LnVerificationRepository::create_verification(
+            &payment_hash,
+            1000,
+            Utc::now().naive_utc(),
+            &mut db.pool().into(),
+        )
+        .await
+        .unwrap();
         assert!(veri.finalised_at.is_none());
         assert!(veri.signup_code.is_none());
 
@@ -240,32 +260,53 @@ mod tests {
     async fn test_get_last_finalized_timestamp(pool: PgPool) {
         let db = SqlDb::test(pool).await;
 
-        let timestamp_no_verifications = LnVerificationRepository::get_last_finalized_timestamp(&mut db.pool().into())
-            .await
-            .unwrap();
+        let timestamp_no_verifications =
+            LnVerificationRepository::get_last_finalized_timestamp(&mut db.pool().into())
+                .await
+                .unwrap();
         assert!(timestamp_no_verifications.is_none());
 
         let payment_hash0 = PaymentHash::random();
-        let _veri0 = LnVerificationRepository::create_verification(&payment_hash0, 1000, &mut db.pool().into())
+        let _veri0 = LnVerificationRepository::create_verification(
+            &payment_hash0,
+            1000,
+            Utc::now().naive_utc(),
+            &mut db.pool().into(),
+        )
         .await
         .unwrap();
 
         let payment_hash1 = PaymentHash::random();
-        LnVerificationRepository::create_verification(&payment_hash1, 1000, &mut db.pool().into())
-            .await
-            .unwrap();
-        let veri1 = LnVerificationRepository::update_verification_finalised(&payment_hash1, "1", &mut db.pool().into())
-            .await
-            .unwrap();
-
-        let payment_hash2 = PaymentHash::random();
-        let _veri2 =         LnVerificationRepository::create_verification(&payment_hash2, 1000, &mut db.pool().into())
+        LnVerificationRepository::create_verification(
+            &payment_hash1,
+            1000,
+            Utc::now().naive_utc(),
+            &mut db.pool().into(),
+        )
+        .await
+        .unwrap();
+        let veri1 = LnVerificationRepository::update_verification_finalised(
+            &payment_hash1,
+            "1",
+            &mut db.pool().into(),
+        )
         .await
         .unwrap();
 
-        let timestamp = LnVerificationRepository::get_last_finalized_timestamp(&mut db.pool().into())
-            .await
-            .unwrap();
+        let payment_hash2 = PaymentHash::random();
+        let _veri2 = LnVerificationRepository::create_verification(
+            &payment_hash2,
+            1000,
+            Utc::now().naive_utc(),
+            &mut db.pool().into(),
+        )
+        .await
+        .unwrap();
+
+        let timestamp =
+            LnVerificationRepository::get_last_finalized_timestamp(&mut db.pool().into())
+                .await
+                .unwrap();
         assert_eq!(timestamp, Some(veri1.created_at));
     }
 }

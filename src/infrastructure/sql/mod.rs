@@ -11,4 +11,4 @@ pub use migration::MigrationTrait;
 pub use migrator::Migrator;
 pub use sql_db::SqlDb;
 mod unified_executor;
-pub(crate) use unified_executor::{UnifiedExecutor};
+pub(crate) use unified_executor::UnifiedExecutor;
