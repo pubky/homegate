@@ -14,7 +14,7 @@ use url::Url;
 #[cfg(test)]
 use wiremock::MockServer;
 
-use crate::ln_payments::phoenixd_api::websocket::ReceivePaymentsWebsocket;
+use crate::ln_verification::{payment_hash::PaymentHash, phoenixd_api::{WebsocketError, websocket::ReceivePaymentsWebsocket}};
 
 /// Helper function to deserialize a u64 timestamp in milliseconds to DateTime<Utc>
 fn deserialize_timestamp_millis<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
@@ -49,7 +49,7 @@ pub struct CreateInvoiceResponse {
     /// Invoice Amount in sat
     pub amount_sat: u64,
     /// Payment Hash (hex encoded id)
-    pub payment_hash: String,
+    pub payment_hash: PaymentHash,
     /// Bolt11
     #[serde(rename = "serialized")]
     pub bolt11_invoice: String,
@@ -60,7 +60,7 @@ pub struct CreateInvoiceResponse {
 #[serde(rename_all = "camelCase")]
 pub struct GetIncomingInvoiceResponse {
     /// Payment Hash
-    pub payment_hash: String,
+    pub payment_hash: PaymentHash,
     /// Preimage
     pub preimage: String,
     /// External Id
@@ -105,6 +105,7 @@ pub struct GetIncomingInvoiceResponse {
 ///
 /// * `reqwest::Error` - If the request fails
 ///
+#[derive(Clone, Debug)]
 pub struct PhoenixdAPI {
     http_client: reqwest::Client,
     base_url: Url,
@@ -178,13 +179,13 @@ impl PhoenixdAPI {
     ///
     pub async fn get_invoice(
         &self,
-        payment_hash: &str,
+        payment_hash: &PaymentHash,
     ) -> Result<GetIncomingInvoiceResponse, reqwest::Error> {
         let url = self
             .base_url
             .join("/payments/incoming/")
             .expect("input is always valid")
-            .join(payment_hash)
+            .join(payment_hash.as_str())
             .expect("input is always valid");
         let response = self
             .http_client
@@ -251,11 +252,16 @@ impl PhoenixdAPI {
     /// Syntactic sugar to build a websocket connection to receive payment events
     pub async fn received_payments_websocket(
         &self,
-    ) -> Result<ReceivePaymentsWebsocket, reqwest_websocket::Error> {
+    ) -> Result<ReceivePaymentsWebsocket, WebsocketError> {
         Ok(
             ReceivePaymentsWebsocket::connect(&self.base_url, &self.password, &self.http_client)
                 .await?,
         )
+    }
+
+    #[cfg(test)]
+    pub fn test() -> Self {
+        Self::new(&Url::parse("http://localhost:9740").unwrap(), "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef")
     }
 }
 
@@ -290,7 +296,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(invoice.amount_sat, 100);
-        assert!(!invoice.payment_hash.is_empty());
+        assert_eq!(invoice.payment_hash, PaymentHash::new("bb4b823baf2ed506c5c8679e5887499aff7097e063d91eaa2d135fe35c88d289").unwrap());
         assert!(!invoice.bolt11_invoice.is_empty());
 
         mock_server.verify().await;
@@ -324,8 +330,8 @@ mod tests {
 
         let api = PhoenixdAPI::new(&mock_server.uri().parse().unwrap(), password);
 
-        let invoice_get = api.get_invoice(payment_hash).await.unwrap();
-        assert_eq!(invoice_get.payment_hash, payment_hash);
+        let invoice_get = api.get_invoice(&PaymentHash::new(payment_hash).unwrap()).await.unwrap();
+        assert_eq!(invoice_get.payment_hash, PaymentHash::new(payment_hash).unwrap());
         assert_eq!(invoice_get.description, "Test Invoice");
         assert_eq!(
             invoice_get.invoice,
@@ -388,7 +394,7 @@ mod tests {
         assert_eq!(invoices.len(), 1);
         assert_eq!(
             invoices[0].payment_hash,
-            "bb4b823baf2ed506c5c8679e5887499aff7097e063d91eaa2d135fe35c88d289"
+            PaymentHash::new("bb4b823baf2ed506c5c8679e5887499aff7097e063d91eaa2d135fe35c88d289").unwrap()
         );
         assert_eq!(invoices[0].description, "Test Invoice");
         assert_eq!(invoices[0].is_paid, true);

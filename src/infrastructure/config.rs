@@ -23,7 +23,9 @@ pub struct EnvConfig {
     #[serde(default = "default_max_sms_verifications_per_year")]
     pub max_sms_verifications_per_year: u32,
 
-    pub lightning_payment_price_sat: u64,
+    pub lightning_verification_price_sat: u64,
+    pub lightning_verification_expiry_seconds: u64,
+    pub lightning_verification_description: String,
     pub phoenixd_api_url: Url,
     pub phoenixd_api_password: String,
 }
@@ -65,9 +67,11 @@ impl EnvConfig {
             homeserver_pubky: "test-homeserver-pubky".to_string(),
             max_sms_verifications_per_week: 2,
             max_sms_verifications_per_year: 4,
-            lightning_payment_price_sat: 1000,
+            lightning_verification_price_sat: 1000,
+            lightning_verification_expiry_seconds: 60 * 10,
+            lightning_verification_description: "Verification".to_string(),
             phoenixd_api_url: Url::parse("http://localhost:9740").unwrap(),
-            phoenixd_api_password: "test-password".to_string(),
+            phoenixd_api_password: "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef".to_string(),
         }
     }
 }

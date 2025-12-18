@@ -1,0 +1,129 @@
+use crate::ln_verification::{
+    LightningVerificationEntity, error::LnVerificationError, ln_context::LnContext, payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI, service::LnVerificationService
+};
+use std::str::FromStr;
+
+use chrono::NaiveDateTime;
+use futures_util::TryStreamExt;
+use tokio::sync::broadcast;
+
+/// Struct that syncronizes the lightning payments with the database.
+#[derive(Clone, Debug)]
+pub struct InvoiceBackgroundSyncer {
+    service: LnVerificationService,
+    phoenixd_api: PhoenixdAPI,
+    verification_completed_tx: broadcast::Sender<LightningVerificationEntity>,
+}
+
+impl InvoiceBackgroundSyncer {
+    pub async fn new(context: &LnContext) -> Self {
+        let (tx, _) = broadcast::channel(200);
+
+        Self {
+            service: context.service.clone(),
+            phoenixd_api: context.phoenixd_api.clone(),
+            verification_completed_tx: tx,
+        }
+    }
+
+    /// Subscribe to finalized verification events.
+    /// Returns a receiver that will receive notifications whenever a verification is finalized.
+    pub fn subscribe(&self) -> broadcast::Receiver<LightningVerificationEntity> {
+        self.verification_completed_tx.subscribe()
+    }
+
+    async fn sync_invoice(&self, payment_hash: &PaymentHash) -> Result<(), LnVerificationError> {
+        let newly_finalised = match self.service.sync_invoice(payment_hash).await? {
+            Some(verification) => verification,
+            None => return Ok(()),
+        };
+        tracing::info!("Verification finalised: {:?}", newly_finalised);
+        let _ = self.verification_completed_tx.send(newly_finalised);
+        Ok(())
+    }
+
+    /// Catch up on all paid invoices from the last 14 days
+    /// This is done in case the server was offline for a while and we need to catch up on all paid invoices.
+    async fn catchup_paid_invoices(&self) -> Result<(), LnVerificationError> {
+        let from = self.service.get_catchup_start_timestamp().await?;
+        let limit = 100; // Pull up to 100 invoices at a time
+        let mut offset = 0;
+        loop {
+            let invoices = self
+                .phoenixd_api
+                .list_paid_invoices(from.and_utc(), Some(limit), Some(offset), false)
+                .await?;
+
+            let no_more_invoices = invoices.is_empty();
+            if no_more_invoices {
+                break;
+            }
+            for invoice in invoices.iter() {
+                self.sync_invoice(&invoice.payment_hash).await?;
+            }
+
+            offset += limit;
+        }
+        Ok(())
+    }
+
+    async fn listen_for_payments(&self) -> Result<(), LnVerificationError> {
+        let mut websocket = self.phoenixd_api.received_payments_websocket().await?;
+        tracing::info!("Websocket connected");
+        tracing::info!("Catching up on paid invoices that we might have missed...");
+        self.catchup_paid_invoices().await?;
+        tracing::info!("Listening for live payments...");
+        loop {
+            let event = match websocket.try_next().await? {
+                Some(event) => event,
+                None => break, // websocket closed
+            };
+            self.sync_invoice(&event.payment_hash).await?;
+        }
+        tracing::warn!("Websocket closed");
+        Ok(())
+    }
+
+    pub async fn run(&self) -> Result<(), LnVerificationError> {
+        self.listen_for_payments().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::sql::SqlDb;
+    use sqlx::PgPool;
+
+    #[sqlx::test]
+    async fn test_get_catchup_start_date(pool: PgPool) {
+        let db = SqlDb::test(pool).await;
+        let context = LnContext::test(db.clone()).await;
+        let service = context.service.clone();
+        let (_, invoice) = service.create_verification().await.unwrap();
+        println!("Invoice: {:?}", invoice.invoice);
+        let syncer = InvoiceBackgroundSyncer::new(&context).await;
+        let mut receiver = syncer.subscribe();
+        tokio::task::spawn(async move {
+            syncer.run().await.unwrap();
+        });
+
+        let verification = receiver.recv().await.unwrap();
+        println!("Verification: {:?}", verification);
+        // for i in 0..1000 {
+        //     sleep(Duration::from_millis(100)).await;
+        //     let updated = LnVerificationRepository::get_verification_by_payment_hash(
+        //         &invoice.payment_hash,
+        //         &mut db.pool().into(),
+        //     )
+        //     .await
+        //     .unwrap()
+        //     .unwrap();
+        //     if updated.is_finalised() {
+        //         println!("Verification finalised after {} attempts", i + 1);
+        //         break;
+        //     }
+        //     print!(".")
+        // }
+    }
+}

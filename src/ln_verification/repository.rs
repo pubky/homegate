@@ -1,12 +1,13 @@
-use crate::infrastructure::database::unified_executor::UnifiedExecutor;
+use crate::{infrastructure::sql::UnifiedExecutor, ln_verification::payment_hash::PaymentHash};
 use chrono::NaiveDateTime;
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use sea_query_binder::SqlxBinder;
 
+
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LightningVerificationEntity {
-    pub id: i32,
-    pub payment_hash: String,
+    pub payment_hash: PaymentHash,
     pub amount_sat: i32,
     pub created_at: NaiveDateTime,
     pub finalised_at: Option<NaiveDateTime>,
@@ -17,12 +18,6 @@ impl LightningVerificationEntity {
     /// Check if the verification is finalised aka paid.
     pub fn is_finalised(&self) -> bool {
         self.finalised_at.is_some()
-    }
-
-    /// This is the first 8 characters of the payment hash.
-    /// This is used to identify the payment towards the user in case of customer support requests.
-    pub fn payment_reference(&self) -> String {
-        self.payment_hash[..8].to_string()
     }
 }
 
@@ -43,14 +38,14 @@ impl LnVerificationRepository {
     /// # Errors
     /// * `sqlx::Error` - If the query fails
     pub async fn create_verification<'a>(
-        payment_hash: &str,
+        payment_hash: &PaymentHash,
         amount_sat: u64,
         executor: &mut UnifiedExecutor<'a>,
     ) -> Result<LightningVerificationEntity, sqlx::Error> {
         let statement = Query::insert()
             .into_table("lightning_verifications")
             .columns(["payment_hash", "amount_sat"])
-            .values([Expr::value(payment_hash), Expr::value(amount_sat)])
+            .values([Expr::value(payment_hash.as_str()), Expr::value(amount_sat)])
             .expect("Failed to build insert query")
             .returning_all()
             .to_owned();
@@ -75,12 +70,11 @@ impl LnVerificationRepository {
     /// # Errors
     /// * `sqlx::Error` - If the query fails
     pub async fn get_verification_by_payment_hash<'a>(
-        payment_hash: &str,
+        payment_hash: &PaymentHash,
         executor: &mut UnifiedExecutor<'a>,
     ) -> Result<Option<LightningVerificationEntity>, sqlx::Error> {
         let statement = Query::select()
             .columns([
-                "id",
                 "payment_hash",
                 "amount_sat",
                 "created_at",
@@ -88,7 +82,7 @@ impl LnVerificationRepository {
                 "signup_code",
             ])
             .from("lightning_verifications")
-            .and_where(Expr::col("payment_hash").eq(payment_hash))
+            .and_where(Expr::col("payment_hash").eq(payment_hash.as_str()))
             .to_owned();
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
         let con = executor.get_con().await?;
@@ -115,13 +109,13 @@ impl LnVerificationRepository {
     /// # Errors
     /// * `sqlx::Error` - If the query fails
     pub async fn update_verification_finalised<'a>(
-        payment_hash: &str,
+        payment_hash: &PaymentHash,
         signup_code: &str,
         executor: &mut UnifiedExecutor<'a>,
     ) -> Result<LightningVerificationEntity, sqlx::Error> {
         let statement = Query::update()
             .table("lightning_verifications")
-            .and_where(Expr::col("payment_hash").eq(payment_hash))
+            .and_where(Expr::col("payment_hash").eq(payment_hash.as_str()))
             .values([
                 ("finalised_at", Expr::current_timestamp().into()),
                 ("signup_code", Some(signup_code.to_string()).into()),
@@ -135,36 +129,70 @@ impl LnVerificationRepository {
 
         Ok(verification)
     }
+
+    /// Get the last created at timestamp of the latest finalized verification
+    ///
+    /// # Arguments
+    /// * `executor` - The executor to use to execute the query
+    ///
+    /// # Returns
+    /// * `Option<NaiveDateTime>` - The last created at timestamp of the latest finalized verification. None if no verifications are finalized.
+    ///
+    /// # Errors
+    /// * `sqlx::Error` - If the query fails
+    pub async fn get_last_finalized_timestamp<'a>(
+        executor: &mut UnifiedExecutor<'a>,
+    ) -> Result<Option<NaiveDateTime>, sqlx::Error> {
+        let statement = Query::select()
+            .expr(Expr::col("created_at").max())
+            .from("lightning_verifications")
+            .and_where(Expr::col("finalised_at").is_not_null())
+            .group_by_col("created_at")
+            .to_owned();
+        let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
+        let con = executor.get_con().await?;
+        let timestamp: Option<NaiveDateTime> = sqlx::query_scalar_with(&query, values)
+            .fetch_optional(con)
+            .await?;
+
+        Ok(timestamp)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use sqlx::PgPool;
 
-    use crate::SqlDb;
+    use crate::infrastructure::sql::SqlDb;
 
     use super::*;
 
     #[sqlx::test]
     async fn test_create_get_verification(pool: PgPool) {
         let db = SqlDb::test(pool).await;
+        let payment_hash = PaymentHash::random();
         let veri =
-            LnVerificationRepository::create_verification("12345678", 1000, &mut db.pool().into())
+            LnVerificationRepository::create_verification(&payment_hash, 1000, &mut db.pool().into())
                 .await
                 .unwrap();
-        assert_eq!(veri.payment_hash, "12345678");
+        assert_eq!(veri.payment_hash, payment_hash);
         assert_eq!(veri.amount_sat, 1000);
         assert!(veri.finalised_at.is_none());
         assert!(veri.signup_code.is_none());
 
+        // Same payment hash should fail
+        LnVerificationRepository::create_verification(&payment_hash, 1000, &mut db.pool().into())
+                .await
+                .unwrap_err();
+        
         let veri2 = LnVerificationRepository::get_verification_by_payment_hash(
-            "12345678",
+            &payment_hash,
             &mut db.pool().into(),
         )
         .await
         .unwrap()
         .unwrap();
-        assert_eq!(veri2.payment_hash, "12345678");
+        assert_eq!(veri2.payment_hash, payment_hash);
         assert_eq!(veri2.amount_sat, 1000);
         assert!(veri2.finalised_at.is_none());
         assert!(veri2.signup_code.is_none());
@@ -174,8 +202,9 @@ mod tests {
     async fn test_not_found(pool: PgPool) {
         let db = SqlDb::test(pool).await;
 
+        let payment_hash = PaymentHash::random();
         let veri2 = LnVerificationRepository::get_verification_by_payment_hash(
-            "12345678",
+            &payment_hash,
             &mut db.pool().into(),
         )
         .await
@@ -186,8 +215,9 @@ mod tests {
     #[sqlx::test]
     async fn test_update_verification_finalised(pool: PgPool) {
         let db = SqlDb::test(pool).await;
+        let payment_hash = PaymentHash::random();
         let veri =
-            LnVerificationRepository::create_verification("12345678", 1000, &mut db.pool().into())
+            LnVerificationRepository::create_verification(&payment_hash, 1000, &mut db.pool().into())
                 .await
                 .unwrap();
         assert!(veri.finalised_at.is_none());
@@ -200,9 +230,42 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(veri2.payment_hash, "12345678");
+        assert_eq!(veri2.payment_hash, payment_hash);
         assert_eq!(veri2.amount_sat, 1000);
         assert!(veri2.finalised_at.is_some());
         assert_eq!(veri2.signup_code, Some("123456".to_string()));
+    }
+
+    #[sqlx::test]
+    async fn test_get_last_finalized_timestamp(pool: PgPool) {
+        let db = SqlDb::test(pool).await;
+
+        let timestamp_no_verifications = LnVerificationRepository::get_last_finalized_timestamp(&mut db.pool().into())
+            .await
+            .unwrap();
+        assert!(timestamp_no_verifications.is_none());
+
+        let payment_hash0 = PaymentHash::random();
+        let _veri0 = LnVerificationRepository::create_verification(&payment_hash0, 1000, &mut db.pool().into())
+        .await
+        .unwrap();
+
+        let payment_hash1 = PaymentHash::random();
+        LnVerificationRepository::create_verification(&payment_hash1, 1000, &mut db.pool().into())
+            .await
+            .unwrap();
+        let veri1 = LnVerificationRepository::update_verification_finalised(&payment_hash1, "1", &mut db.pool().into())
+            .await
+            .unwrap();
+
+        let payment_hash2 = PaymentHash::random();
+        let _veri2 =         LnVerificationRepository::create_verification(&payment_hash2, 1000, &mut db.pool().into())
+        .await
+        .unwrap();
+
+        let timestamp = LnVerificationRepository::get_last_finalized_timestamp(&mut db.pool().into())
+            .await
+            .unwrap();
+        assert_eq!(timestamp, Some(veri1.created_at));
     }
 }

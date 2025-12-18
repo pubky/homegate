@@ -18,9 +18,9 @@ use crate::{
 
 pub async fn router(
     config: &EnvConfig,
-    db: crate::infrastructure::sql::SqlDb,
+    db: &crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db);
+    let state = AppState::new(config, db.clone());
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
@@ -127,7 +127,7 @@ mod tests {
             .await
             .expect("Failed to create router");
 
-        let router = crate::HttpServer::create_router(sms_verification_router);
+        let router = Router::new().nest("/sms_verification", sms_verification_router);
         let app = router.into_make_service_with_connect_info::<SocketAddr>();
         let server = TestServer::new(app).expect("Failed to create test server");
 

@@ -13,14 +13,7 @@ impl MigrationTrait for M20251216CreateLnVerification {
         let statement = Table::create()
             .table("lightning_verifications")
             .if_not_exists()
-            .col(
-                ColumnDef::new("id")
-                    .integer()
-                    .not_null()
-                    .auto_increment()
-                    .primary_key(),
-            )
-            .col(ColumnDef::new("payment_hash").text().not_null())
+            .col(ColumnDef::new("payment_hash").char_len(64).not_null().primary_key()) // 64 hex characters
             .col(ColumnDef::new("amount_sat").integer().not_null())
             .col(ColumnDef::new("signup_code").text().null().default(sea_query::Expr::val(None::<String>)))
             .col(ColumnDef::new("finalised_at").timestamp().null().default(sea_query::Expr::val(None::<NaiveDateTime>)))

@@ -5,6 +5,17 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use url::Url;
 
+use crate::ln_verification::payment_hash::PaymentHash;
+
+
+#[derive(thiserror::Error, Debug)]
+pub enum WebsocketError {
+    #[error("reqwest: {0:?}")]
+    Phoenixd(#[from] reqwest_websocket::Error),
+    #[error("deserialization error: {0:?}")]
+    Deserialization(#[from] serde_json::Error),
+}
+
 /// Payment received event
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,7 +23,7 @@ pub struct PaymentReceivedEvent {
     /// Amount of the payment received in satoshis
     pub amount_sat: u64,
     /// Payment hash of the payment received
-    pub payment_hash: String,
+    pub payment_hash: PaymentHash,
 }
 
 /// Internal struct for deserializing websocket messages
@@ -50,7 +61,7 @@ impl ReceivePaymentsWebsocket {
         phoenixd_base_url: &Url,
         phoenixd_password: &str,
         reqwest_client: &reqwest::Client,
-    ) -> Result<Self, reqwest_websocket::Error> {
+    ) -> Result<Self, WebsocketError> {
         let url = phoenixd_base_url
             .join("/websocket")
             .expect("input is always valid");
@@ -68,37 +79,28 @@ impl ReceivePaymentsWebsocket {
     }
 
     /// Close the websocket connection
-    pub async fn close(self) -> Result<(), reqwest_websocket::Error> {
+    pub async fn close(self) -> Result<(), WebsocketError> {
         self.websocket
             .close(reqwest_websocket::CloseCode::Normal, None)
-            .await
+            .await?;
+        Ok(())
     }
 }
 
 impl Stream for ReceivePaymentsWebsocket {
-    type Item = Result<PaymentReceivedEvent, Box<dyn std::error::Error + Send + Sync>>;
+    type Item = Result<PaymentReceivedEvent, WebsocketError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
             match Pin::new(&mut self.websocket).poll_next(cx) {
                 Poll::Ready(Some(Ok(Message::Text(text)))) => {
-                    let message = match serde_json::from_str::<WebsocketMessage>(&text) {
-                        Ok(msg) => msg,
-                        Err(e) => {
-                            return Poll::Ready(Some(Err(Box::new(e))));
-                        }
-                    };
+                    let message = serde_json::from_str::<WebsocketMessage>(&text)?;
                     if message.message_type != "payment_received" {
                         // Not a payment_received message, skip it
                         continue;
                     }
 
-                    let actual = match serde_json::from_str::<PaymentReceivedEvent>(&text) {
-                        Ok(msg) => msg,
-                        Err(e) => {
-                            return Poll::Ready(Some(Err(Box::new(e))));
-                        }
-                    };
+                    let actual = serde_json::from_str::<PaymentReceivedEvent>(&text)?;
 
                     return Poll::Ready(Some(Ok(actual)));
                 }
@@ -119,16 +121,14 @@ impl Stream for ReceivePaymentsWebsocket {
                     continue;
                 }
                 Poll::Ready(Some(Err(e))) => {
-                    // Websocket error
-                    println!("Websocket error: {:?}", e);
                     self.closed = true;
-                    println!("Websocket closed");
-                    return Poll::Ready(Some(Err(Box::new(e))));
+                    tracing::error!("Websocket error: {:?}", e);
+                    return Poll::Ready(Some(Err(WebsocketError::Phoenixd(e))));
                 }
                 Poll::Ready(None) => {
                     // Stream ended, set closed to true
                     self.closed = true;
-                    println!("Websocket closed");
+                    tracing::error!("Websocket closed");
                     return Poll::Ready(None);
                 }
                 Poll::Pending => {
@@ -141,8 +141,9 @@ impl Stream for ReceivePaymentsWebsocket {
 
 #[cfg(test)]
 mod tests {
-    use crate::ln_payments::phoenixd_api::api::PhoenixdAPI;
-    use crate::ln_payments::phoenixd_api::websocket::{
+    use crate::ln_verification::payment_hash::PaymentHash;
+    use crate::ln_verification::phoenixd_api::api::PhoenixdAPI;
+    use crate::ln_verification::phoenixd_api::websocket::{
         PaymentReceivedEvent, ReceivePaymentsWebsocket,
     };
     use axum::{
@@ -241,11 +242,11 @@ mod tests {
         let mock_events = vec![
             PaymentReceivedEvent {
                 amount_sat: 100,
-                payment_hash: "hash1".to_string(),
+                payment_hash: PaymentHash::random(),
             },
             PaymentReceivedEvent {
                 amount_sat: 200,
-                payment_hash: "hash2".to_string(),
+                payment_hash: PaymentHash::random(),
             },
         ];
 
