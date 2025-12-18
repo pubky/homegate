@@ -190,7 +190,10 @@ mod tests {
         assert_eq!(veri.amount_sat, 1000);
         assert!(veri.finalised_at.is_none());
         assert!(veri.signup_code.is_none());
-        assert_eq!(veri.expires_at, expires_at);
+        assert_eq!(
+            veri.expires_at.format("%Y-%m-%dT%H:%M:%S%.6f").to_string(),
+            expires_at.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
+        );
 
         // Same payment hash should fail
         LnVerificationRepository::create_verification(

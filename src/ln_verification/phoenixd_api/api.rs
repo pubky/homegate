@@ -417,26 +417,4 @@ mod tests {
 
         mock_server.verify().await;
     }
-
-    #[tokio::test]
-    async fn test_list_paid_invoices_real() {
-        let password = "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef";
-        let base_url = Url::parse("http://localhost:9740").unwrap();
-        let api = PhoenixdAPI::new(&base_url, password);
-
-        let invoices = api
-            .list_paid_invoices(
-                Utc::now().checked_sub_days(Days::new(7)).unwrap(),
-                Some(2),
-                None,
-                false,
-            )
-            .await
-            .unwrap();
-
-        println!("Invoices: {:?}", invoices.len());
-        for invoice in invoices {
-            println!("Invoice: {:?}", invoice);
-        }
-    }
 }
