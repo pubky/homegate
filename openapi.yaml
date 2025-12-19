@@ -74,6 +74,17 @@ paths:
       responses:
         '200':
           description: Verification code sent successfully (empty response body)
+        '400':
+          description: Invalid request body - failed to parse JSON or phone number format is invalid
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                invalidPhone:
+                  value: "Invalid phone number format. Must be in E.164 format (e.g., +30123456789)"
+                malformedJson:
+                  value: "Failed to deserialize the JSON body into the target type"
         '403':
           description: Phone number is blocked for verification
           content:
@@ -81,17 +92,6 @@ paths:
               schema:
                 type: string
                 example: "Phone number blocked for verification"
-        '422':
-          description: Invalid request
-          content:
-            text/plain:
-              schema:
-                type: string
-                examples:
-                  invalidPhone:
-                    value: "Invalid phone number format. Must be in E.164 format (e.g., +30123456789)"
-                  noActiveVerification:
-                    value: "No active verification session for phone number"
         '429':
           description: Rate limit exceeded
           headers:
@@ -162,17 +162,26 @@ paths:
                   summary: Invalid code
                   value:
                     valid: "false"
-        '422':
-          description: Invalid request
+        '400':
+          description: Invalid request body - failed to parse JSON, phone number format, or code format
           content:
             text/plain:
               schema:
                 type: string
-                examples:
-                  invalidPhone:
-                    value: "Invalid phone number format. Must be in E.164 format (e.g., +30123456789)"
-                  noActiveVerification:
-                    value: "No active verification session for phone number"
+              examples:
+                invalidPhone:
+                  value: "Invalid phone number format. Must be in E.164 format (e.g., +30123456789)"
+                invalidCode:
+                  value: "Invalid code format: abc123. Code must be exactly 6 digits (0-9)"
+                malformedJson:
+                  value: "Failed to deserialize the JSON body into the target type"
+        '422':
+          description: No active verification session
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "No active verification session for phone number"
         '500':
           description: Internal server error
           content:
@@ -267,6 +276,17 @@ paths:
                     signupCode: null
                     homeserverPubky: "test-homeserver-pubky"
                     createdAt: 1704066600000
+        '400':
+          description: Invalid payment hash format
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                invalidLength:
+                  value: "Payment hash must be exactly 64 hex characters, got 32 characters"
+                invalidCharacters:
+                  value: "Payment hash must contain only hex characters (0-9, a-f, A-F)"
         '404':
           description: Verification not found
           content:
@@ -327,6 +347,17 @@ paths:
                     signupCode: "token-uuid-123"
                     homeserverPubky: "test-homeserver-pubky"
                     createdAt: 1704066600000
+        '400':
+          description: Invalid payment hash format
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                invalidLength:
+                  value: "Payment hash must be exactly 64 hex characters, got 32 characters"
+                invalidCharacters:
+                  value: "Payment hash must contain only hex characters (0-9, a-f, A-F)"
         '404':
           description: Verification not found
           content:
@@ -551,4 +582,3 @@ tags:
     description: SMS-based phone number verification endpoints
   - name: Lightning Network Verification
     description: Lightning Network payment-based verification endpoints
-
