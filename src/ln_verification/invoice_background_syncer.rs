@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use crate::ln_verification::{
-    LightningVerificationEntity, error::LnVerificationError,
-    payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI, service::LnVerificationService,
+    LightningVerificationEntity, error::LnVerificationError, payment_hash::PaymentHash,
+    phoenixd_api::PhoenixdAPI, service::LnVerificationService,
 };
 
 use futures_util::TryStreamExt;

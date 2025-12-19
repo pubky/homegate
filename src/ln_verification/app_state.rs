@@ -3,7 +3,8 @@ use std::process;
 use crate::{
     EnvConfig,
     ln_verification::{
-        invoice_background_syncer::InvoiceBackgroundSyncer, phoenixd_api::PhoenixdAPI, service::LnVerificationService
+        invoice_background_syncer::InvoiceBackgroundSyncer, phoenixd_api::PhoenixdAPI,
+        service::LnVerificationService,
     },
     shared::HomeserverAdminAPI,
 };
@@ -45,8 +46,7 @@ impl AppState {
         Self {
             syncer,
             ln_service: service,
-            homeserver_api: homeserver_api,
+            homeserver_api,
         }
     }
 }
-

@@ -11,11 +11,7 @@ use axum::{
 use crate::{
     EnvConfig,
     infrastructure::http::HttpServerError,
-    ln_verification::{
-        app_state::AppState,
-        error::LnVerificationError,
-        payment_hash::PaymentHash,
-    },
+    ln_verification::{app_state::AppState, error::LnVerificationError, payment_hash::PaymentHash},
 };
 
 pub async fn router(

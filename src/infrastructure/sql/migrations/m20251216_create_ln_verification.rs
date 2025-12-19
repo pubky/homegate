@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use sea_query::{ColumnDef, Index, PostgresQueryBuilder, Table};
+use sea_query::{ColumnDef, PostgresQueryBuilder, Table};
 use sqlx::Transaction;
 
 use crate::infrastructure::sql::MigrationTrait;
