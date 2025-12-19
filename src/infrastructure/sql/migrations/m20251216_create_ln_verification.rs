@@ -44,16 +44,6 @@ impl MigrationTrait for M20251216CreateLnVerification {
         let query = statement.build(PostgresQueryBuilder);
         sqlx::query(&query).execute(&mut **tx).await?;
 
-        // Create index on payment hash
-        let index = Index::create()
-            .name("idx_lightning_invoices_payment_hash")
-            .table("lightning_verifications")
-            .col("payment_hash")
-            .to_owned();
-
-        let query = index.build(PostgresQueryBuilder);
-        sqlx::query(&query).execute(&mut **tx).await?;
-
         Ok(())
     }
 

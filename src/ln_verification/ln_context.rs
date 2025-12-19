@@ -26,9 +26,9 @@ impl LnContext {
             db.clone(),
             phoenixd_api.clone(),
             homeserver_api.clone(),
-            config.lightning_verification_price_sat,
-            config.lightning_verification_description.clone(),
-            config.lightning_verification_expiry_seconds,
+            config.lightning_invoice_price_sat,
+            config.lightning_invoice_description.clone(),
+            config.lightning_invoice_expiry_seconds,
         );
         Self {
             service,

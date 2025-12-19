@@ -24,11 +24,11 @@ pub struct EnvConfig {
     pub max_sms_verifications_per_year: u32,
 
     #[serde(default = "default_lightning_verification_price_sat")]
-    pub lightning_verification_price_sat: u64,
+    pub lightning_invoice_price_sat: u64,
     #[serde(default = "default_lightning_verification_expiry_seconds")]
-    pub lightning_verification_expiry_seconds: u64,
+    pub lightning_invoice_expiry_seconds: u64,
     #[serde(default = "default_lightning_verification_description")]
-    pub lightning_verification_description: String,
+    pub lightning_invoice_description: String,
     pub phoenixd_api_url: Url,
     pub phoenixd_api_password: String,
 }
@@ -84,9 +84,9 @@ impl EnvConfig {
             homeserver_pubky: "test-homeserver-pubky".to_string(),
             max_sms_verifications_per_week: 2,
             max_sms_verifications_per_year: 4,
-            lightning_verification_price_sat: 1000,
-            lightning_verification_expiry_seconds: 60 * 10,
-            lightning_verification_description: "Verification".to_string(),
+            lightning_invoice_price_sat: 1000,
+            lightning_invoice_expiry_seconds: 60 * 10,
+            lightning_invoice_description: "Verification".to_string(),
             phoenixd_api_url: Url::parse("http://localhost:9740")
                 .expect("Default Phoenixd API URL is valid"),
             phoenixd_api_password:
@@ -127,8 +127,16 @@ mod tests {
                 String::from("test-homeserver-pubky"),
             ),
             (
-                String::from("LIGHTNING_PAYMENT_PRICE_SAT"),
+                String::from("lightning_invoice_price_sat"),
                 String::from("1000"),
+            ),
+            (
+                String::from("lightning_invoice_expiry_seconds"),
+                String::from("600"),
+            ),
+            (
+                String::from("lightning_invoice_description"),
+                String::from("Verification"),
             ),
             (
                 String::from("PHOENIXD_API_URL"),
