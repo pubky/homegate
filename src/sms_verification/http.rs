@@ -127,7 +127,7 @@ mod tests {
             .await
             .expect("Failed to create router");
 
-        let router = crate::HttpServer::create_router(sms_verification_router);
+        let router = crate::HttpServer::create_router(sms_verification_router, true);
         let app = router.into_make_service_with_connect_info::<SocketAddr>();
         let server = TestServer::new(app).expect("Failed to create test server");
 

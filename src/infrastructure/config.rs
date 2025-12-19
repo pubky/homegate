@@ -22,6 +22,13 @@ pub struct EnvConfig {
     pub max_sms_verifications_per_week: u32,
     #[serde(default = "default_max_sms_verifications_per_year")]
     pub max_sms_verifications_per_year: u32,
+
+    #[serde(default = "default_allow_cors")]
+    pub allow_cors: bool,
+}
+
+fn default_allow_cors() -> bool {
+    false
 }
 
 fn default_max_sms_verifications_per_week() -> u32 {
@@ -61,6 +68,7 @@ impl EnvConfig {
             homeserver_pubky: "test-homeserver-pubky".to_string(),
             max_sms_verifications_per_week: 2,
             max_sms_verifications_per_year: 4,
+            allow_cors: true,
         }
     }
 }

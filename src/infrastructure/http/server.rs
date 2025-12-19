@@ -16,7 +16,10 @@ use crate::{
 use axum::{Router, response::IntoResponse, routing::get};
 use axum_server::Handle;
 use futures_util::TryFutureExt;
-use tower_http::trace::TraceLayer;
+use tower_http::{
+    cors::{Any, CorsLayer},
+    trace::TraceLayer,
+};
 
 pub struct HttpServer {
     pub(crate) http_handle: Handle,
@@ -24,11 +27,24 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    pub fn create_router(sms_verification_router: Router) -> Router {
-        Router::new()
+    pub fn create_router(sms_verification_router: Router, allow_cors: bool) -> Router {
+        let router = Router::new()
             .route("/", get(root))
-            .nest("/sms_verification", sms_verification_router)
-            .layer(TraceLayer::new_for_http())
+            .nest("/sms_verification", sms_verification_router);
+
+        let router = if allow_cors {
+            tracing::info!("Enabling CORS for any origin, method, and headers");
+            router.layer(
+                CorsLayer::new()
+                    .allow_origin(Any)
+                    .allow_methods(Any)
+                    .allow_headers(Any),
+            )
+        } else {
+            router
+        };
+
+        router.layer(TraceLayer::new_for_http())
     }
 
     pub async fn start(config: EnvConfig) -> Result<Self, HttpServerError> {
@@ -39,7 +55,7 @@ impl HttpServer {
             .map_err(DbError::from)?;
 
         let sms_verification_router = router(&config, db).await?;
-        let router = Self::create_router(sms_verification_router);
+        let router = Self::create_router(sms_verification_router, config.allow_cors);
 
         let (http_handle, http_socket) =
             Self::start_http_server(config.http_listen_socket, router).await?;
