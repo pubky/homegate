@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::ln_verification::{
-    LightningVerificationEntity, error::LnVerificationError, ln_context::LnContext,
+    LightningVerificationEntity, error::LnVerificationError,
     payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI, service::LnVerificationService,
 };
 
@@ -17,12 +17,12 @@ pub struct InvoiceBackgroundSyncer {
 }
 
 impl InvoiceBackgroundSyncer {
-    pub async fn new(context: &LnContext) -> Self {
+    pub async fn new(service: LnVerificationService, phoenixd_api: PhoenixdAPI) -> Self {
         let (tx, _) = broadcast::channel(200);
 
         Self {
-            service: context.service.clone(),
-            phoenixd_api: context.phoenixd_api.clone(),
+            service,
+            phoenixd_api,
             verification_completed_tx: tx,
         }
     }

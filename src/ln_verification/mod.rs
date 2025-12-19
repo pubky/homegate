@@ -1,7 +1,6 @@
 mod error;
 mod http;
 mod invoice_background_syncer;
-mod ln_context;
 mod payment_hash;
 mod phoenixd_api;
 mod repository;
