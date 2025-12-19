@@ -74,7 +74,7 @@ impl InvoiceBackgroundSyncer {
         Ok(())
     }
 
-    /// Catch up on all paid invoices from the last 14 days
+    /// Catch up on all paid invoices
     /// This is done in case the server was offline for a while and we need to catch up on all paid invoices.
     async fn catchup_paid_invoices(&self) -> Result<(), LnVerificationError> {
         let from = self.service.get_catchup_start_timestamp().await?;
@@ -86,8 +86,7 @@ impl InvoiceBackgroundSyncer {
                 .list_paid_invoices(from.and_utc(), Some(limit), Some(offset), false)
                 .await?;
 
-            let no_more_invoices = invoices.is_empty();
-            if no_more_invoices {
+            if invoices.is_empty() {
                 break;
             }
             for invoice in invoices.iter() {
