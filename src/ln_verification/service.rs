@@ -130,10 +130,10 @@ impl LnVerificationService {
         let timestamp = timestamp.map(|timestamp| {
             timestamp
                 .checked_sub_signed(TimeDelta::seconds(self.invoice_expiry_seconds as i64))
-                .expect("Infalliable")
+                .expect("Infallible")
         });
         let default_start_date =
-            NaiveDateTime::from_str("2025-12-01T00:00:00").expect("Infalliable");
+            NaiveDateTime::from_str("2025-12-01T00:00:00").expect("Infallible");
         let timestamp = timestamp.unwrap_or(default_start_date);
         Ok(timestamp)
     }

@@ -20,6 +20,9 @@ impl LightningVerificationEntity {
     }
 }
 
+/// Table name for Lightning verifications in the database
+const TABLE_NAME: &str = "lightning_verifications";
+
 #[derive(Clone, Debug)]
 pub struct LnVerificationRepository;
 
@@ -43,7 +46,7 @@ impl LnVerificationRepository {
         executor: &mut UnifiedExecutor<'a>,
     ) -> Result<LightningVerificationEntity, sqlx::Error> {
         let statement = Query::insert()
-            .into_table("lightning_verifications")
+            .into_table(TABLE_NAME)
             .columns(["payment_hash", "amount_sat", "expires_at"])
             .values([
                 Expr::value(payment_hash.as_str()),
@@ -86,7 +89,7 @@ impl LnVerificationRepository {
                 "finalised_at",
                 "signup_code",
             ])
-            .from("lightning_verifications")
+            .from(TABLE_NAME)
             .and_where(Expr::col("payment_hash").eq(payment_hash.as_str()))
             .to_owned();
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -119,7 +122,7 @@ impl LnVerificationRepository {
         executor: &mut UnifiedExecutor<'a>,
     ) -> Result<LightningVerificationEntity, sqlx::Error> {
         let statement = Query::update()
-            .table("lightning_verifications")
+            .table(TABLE_NAME)
             .and_where(Expr::col("payment_hash").eq(payment_hash.as_str()))
             .values([
                 ("finalised_at", Expr::current_timestamp().into()),
@@ -150,7 +153,7 @@ impl LnVerificationRepository {
     ) -> Result<Option<NaiveDateTime>, sqlx::Error> {
         let statement = Query::select()
             .expr(Expr::col("created_at").max())
-            .from("lightning_verifications")
+            .from(TABLE_NAME)
             .and_where(Expr::col("finalised_at").is_not_null())
             .group_by_col("created_at")
             .to_owned();

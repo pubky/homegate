@@ -1,3 +1,4 @@
+use std::process;
 use std::time::Duration;
 
 use axum::{
@@ -11,14 +12,43 @@ use axum::{
 use crate::{
     EnvConfig,
     infrastructure::http::HttpServerError,
-    ln_verification::{app_state::AppState, error::LnVerificationError, payment_hash::PaymentHash},
+    ln_verification::{
+        app_state::AppState, error::LnVerificationError,
+        invoice_background_syncer::InvoiceBackgroundSyncer, payment_hash::PaymentHash,
+        phoenixd_api::PhoenixdAPI, service::LnVerificationService,
+    },
+    shared::HomeserverAdminAPI,
 };
 
 pub async fn router(
     config: &EnvConfig,
     db: &crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db.clone()).await;
+    let phoenixd_api = PhoenixdAPI::new(&config.phoenixd_api_url, &config.phoenixd_api_password);
+    let homeserver_api = HomeserverAdminAPI::new(
+        &config.homeserver_admin_api_url,
+        &config.homeserver_admin_password,
+        &config.homeserver_pubky,
+    );
+    let ln_service = LnVerificationService::new(
+        db.clone(),
+        phoenixd_api.clone(),
+        homeserver_api.clone(),
+        config.lightning_invoice_price_sat,
+        config.lightning_invoice_description.clone(),
+        config.lightning_invoice_expiry_seconds,
+    );
+
+    let syncer = InvoiceBackgroundSyncer::new(ln_service.clone(), phoenixd_api).await;
+    let syncer_for_task = syncer.clone();
+    tokio::task::spawn(async move {
+        if let Err(e) = syncer_for_task.run().await {
+            tracing::error!(error = %e, "Error running invoice background syncer");
+            process::exit(1); // Force a restart of the server
+        }
+    });
+
+    let state = AppState::new(syncer, ln_service, homeserver_api);
     Ok(Router::new()
         .route("/", post(create_verification_handler))
         .route("/{id}", get(get_verification_handler))
@@ -51,15 +81,10 @@ async fn get_verification_handler(
         Ok(None) => return (StatusCode::NOT_FOUND, "Not found".to_string()).into_response(),
         Err(e) => return e.into_response(),
     };
-    Json(GetVerificationResponse {
-        id: verification.payment_hash.clone(),
-        amount_sat: verification.amount_sat as u64,
-        expires_at: verification.expires_at.and_utc().timestamp_millis(),
-        is_paid: verification.is_finalised(),
-        signup_code: verification.signup_code,
-        homeserver_pubky: state.homeserver_api.get_homeserver_pubky(),
-        created_at: verification.created_at.and_utc().timestamp_millis(),
-    })
+    Json(GetVerificationResponse::from_entity(
+        verification,
+        state.homeserver_api.get_homeserver_pubky(),
+    ))
     .into_response()
 }
 
@@ -93,15 +118,10 @@ async fn await_verification_handler(
         tracing::info!("Awaited verification {}", verification.payment_hash);
     };
 
-    Json(GetVerificationResponse {
-        id: verification.payment_hash.clone(),
-        amount_sat: verification.amount_sat as u64,
-        expires_at: verification.expires_at.and_utc().timestamp_millis(),
-        is_paid: verification.is_finalised(),
-        signup_code: verification.signup_code,
-        homeserver_pubky: state.homeserver_api.get_homeserver_pubky(),
-        created_at: verification.created_at.and_utc().timestamp_millis(),
-    })
+    Json(GetVerificationResponse::from_entity(
+        verification,
+        state.homeserver_api.get_homeserver_pubky(),
+    ))
     .into_response()
 }
 
@@ -124,6 +144,24 @@ pub struct GetVerificationResponse {
     signup_code: Option<String>,
     homeserver_pubky: String,
     created_at: i64,
+}
+
+impl GetVerificationResponse {
+    fn from_entity(
+        entity: crate::ln_verification::LightningVerificationEntity,
+        homeserver_pubky: String,
+    ) -> Self {
+        let is_paid = entity.is_finalised();
+        Self {
+            id: entity.payment_hash,
+            amount_sat: entity.amount_sat as u64,
+            expires_at: entity.expires_at.and_utc().timestamp_millis(),
+            is_paid,
+            signup_code: entity.signup_code,
+            homeserver_pubky,
+            created_at: entity.created_at.and_utc().timestamp_millis(),
+        }
+    }
 }
 
 impl IntoResponse for LnVerificationError {

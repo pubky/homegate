@@ -28,7 +28,6 @@ struct WebsocketMessage {
 /// Receive Payments Websocket
 pub struct ReceivePaymentsWebsocket {
     websocket: WebSocket,
-    closed: bool,
 }
 
 impl ReceivePaymentsWebsocket {
@@ -63,10 +62,7 @@ impl ReceivePaymentsWebsocket {
             .send()
             .await?;
         let websocket = response.into_websocket().await?;
-        Ok(Self {
-            websocket,
-            closed: false,
-        })
+        Ok(Self { websocket })
     }
 }
 
@@ -104,13 +100,10 @@ impl Stream for ReceivePaymentsWebsocket {
                     continue;
                 }
                 Poll::Ready(Some(Err(e))) => {
-                    self.closed = true;
                     tracing::error!("Websocket error: {:?}", e);
                     return Poll::Ready(Some(Err(PhoenixdError::Websocket(e))));
                 }
                 Poll::Ready(None) => {
-                    // Stream ended, set closed to true
-                    self.closed = true;
                     tracing::error!("Websocket closed");
                     return Poll::Ready(None);
                 }

@@ -20,11 +20,7 @@ impl MigrationTrait for M20251216CreateLnVerification {
                     .primary_key(),
             ) // 64 hex characters
             .col(ColumnDef::new("amount_sat").integer().not_null())
-            .col(
-                ColumnDef::new("signup_code")
-                    .text()
-                    .null(),
-            )
+            .col(ColumnDef::new("signup_code").text().null())
             .col(ColumnDef::new("expires_at").timestamp().not_null())
             .col(
                 ColumnDef::new("finalised_at")

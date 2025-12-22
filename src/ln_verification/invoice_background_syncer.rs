@@ -43,9 +43,17 @@ impl InvoiceBackgroundSyncer {
         let future = async {
             let mut receiver = self.subscribe();
             loop {
-                let finalized_payment_hash = receiver.recv().await.expect("Should never happen");
-                if finalized_payment_hash == *payment_hash {
-                    break;
+                match receiver.recv().await {
+                    Ok(finalized_payment_hash) if finalized_payment_hash == *payment_hash => break,
+                    Ok(_) => continue, // Different payment hash, keep waiting
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Broadcast receiver lagged by {} messages", n);
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        tracing::error!("Broadcast channel closed unexpectedly");
+                        return;
+                    }
                 }
             }
         };
