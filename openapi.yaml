@@ -70,12 +70,21 @@ paths:
               valid:
                 summary: Valid phone number
                 value:
-                  phone_number: "+30123456789"
+                  phoneNumber: "+30123456789"
       responses:
         '200':
           description: Verification code sent successfully (empty response body)
         '400':
           description: Invalid request body - failed to parse JSON or phone number format is invalid
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                malformedJson:
+                  value: "Failed to deserialize the JSON body into the target type"
+        '422':
+          description: Invalid phone number format
           content:
             text/plain:
               schema:
@@ -140,7 +149,7 @@ paths:
               valid:
                 summary: Valid code
                 value:
-                  phone_number: "+30123456789"
+                  phoneNumber: "+30123456789"
                   code: "123456"
       responses:
         '200':
@@ -156,14 +165,23 @@ paths:
                   summary: Valid code
                   value:
                     valid: "true"
-                    signup_code: "token-uuid-123"
-                    homeserver_pubky: "test-homeserver-pubky"
+                    signupCode: "token-uuid-123"
+                    homeserverPubky: "test-homeserver-pubky"
                 invalid:
                   summary: Invalid code
                   value:
                     valid: "false"
         '400':
-          description: Invalid request body - failed to parse JSON, phone number format, or code format
+          description: Invalid request body - failed to parse JSON
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                malformedJson:
+                  value: "Failed to deserialize the JSON body into the target type"
+        '422':
+          description: Invalid phone number format or code format
           content:
             text/plain:
               schema:
@@ -173,8 +191,6 @@ paths:
                   value: "Invalid phone number format. Must be in E.164 format (e.g., +30123456789)"
                 invalidCode:
                   value: "Invalid code format: abc123. Code must be exactly 6 digits (0-9)"
-                malformedJson:
-                  value: "Failed to deserialize the JSON body into the target type"
         '422':
           description: No active verification session
           content:
@@ -385,43 +401,43 @@ components:
     CreateVerificationRequest:
       type: object
       required:
-        - phone_number
+        - phoneNumber
       properties:
-        phone_number:
+        phoneNumber:
           $ref: '#/components/schemas/PhoneNumber'
       example:
-        phone_number: "+30123456789"
+        phoneNumber: "+30123456789"
 
     ValidateCodeRequest:
       type: object
       required:
-        - phone_number
+        - phoneNumber
         - code
       properties:
-        phone_number:
+        phoneNumber:
           $ref: '#/components/schemas/PhoneNumber'
         code:
           $ref: '#/components/schemas/Code'
       example:
-        phone_number: "+30123456789"
+        phoneNumber: "+30123456789"
         code: "123456"
 
     ValidateCodeResponseValid:
       type: object
       required:
         - valid
-        - signup_code
-        - homeserver_pubky
+        - signupCode
+        - homeserverPubky
       properties:
         valid:
           type: string
           enum: ["true"]
           description: Indicates the code is valid
-        signup_code:
+        signupCode:
           type: string
           description: Signup token to use for homeserver registration
           example: "token-uuid-123"
-        homeserver_pubky:
+        homeserverPubky:
           type: string
           description: Public key of the homeserver
           example: "test-homeserver-pubky"
