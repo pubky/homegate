@@ -23,8 +23,7 @@ impl MigrationTrait for M20251216CreateLnVerification {
             .col(
                 ColumnDef::new("signup_code")
                     .text()
-                    .null()
-                    .default(sea_query::Expr::val(None::<String>)),
+                    .null(),
             )
             .col(ColumnDef::new("expires_at").timestamp().not_null())
             .col(

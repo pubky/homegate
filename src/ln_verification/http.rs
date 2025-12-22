@@ -21,8 +21,8 @@ pub async fn router(
     let state = AppState::new(config, db.clone()).await;
     Ok(Router::new()
         .route("/", post(create_verification_handler))
-        .route("/{payment_hash}", get(get_verification_handler))
-        .route("/{payment_hash}/await", get(await_verification_handler))
+        .route("/{id}", get(get_verification_handler))
+        .route("/{id}/await", get(await_verification_handler))
         .with_state(state))
 }
 
@@ -44,9 +44,9 @@ async fn create_verification_handler(
 /// Get a Lightning Network verification handler
 async fn get_verification_handler(
     State(state): State<AppState>,
-    Path(payment_hash): Path<PaymentHash>,
+    Path(id): Path<PaymentHash>,
 ) -> Response {
-    let verification = match state.ln_service.get_verification(&payment_hash).await {
+    let verification = match state.ln_service.get_verification(&id).await {
         Ok(Some(verification)) => verification,
         Ok(None) => return (StatusCode::NOT_FOUND, "Not found".to_string()).into_response(),
         Err(e) => return e.into_response(),
@@ -66,9 +66,9 @@ async fn get_verification_handler(
 /// Await for a Lightning Network verification to be finalized handler
 async fn await_verification_handler(
     State(state): State<AppState>,
-    Path(payment_hash): Path<PaymentHash>,
+    Path(id): Path<PaymentHash>,
 ) -> impl IntoResponse {
-    let mut verification = match state.ln_service.get_verification(&payment_hash).await {
+    let mut verification = match state.ln_service.get_verification(&id).await {
         Ok(Some(verification)) => verification,
         Ok(None) => return (StatusCode::NOT_FOUND, "Not found".to_string()).into_response(),
         Err(e) => return e.into_response(),
@@ -77,7 +77,7 @@ async fn await_verification_handler(
     if !verification.is_finalised() {
         verification = match state
             .syncer
-            .wait_for_payment(&payment_hash, Duration::from_secs(60))
+            .wait_for_payment(&id, Duration::from_secs(60))
             .await
         {
             Ok(Some(verification)) => verification,
