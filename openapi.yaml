@@ -1,0 +1,600 @@
+openapi: 3.0.3
+info:
+  title: Homegate API
+  description: |
+    #### WARNING: This OpenAPI specification is AI generated. It may not be accurate.
+
+    A backend service to gatekeep Pubky Homeserver signups. Provides two verification methods:
+    - SMS verification via Prelude
+    - Lightning Network payment verification
+    
+    ## SMS Verification
+    Uses Prelude for SMS verification. Each phone number:
+    - Has a single pending verification at a time. Multiple `send_code` calls reuse the existing session.
+    
+    ## Lightning Network Verification
+    Uses Phoenixd for Lightning Network invoice generation and payment tracking.
+    The verification process involves:
+    1. Creating a verification request to get a BOLT11 invoice
+    2. Paying the invoice
+    3. Checking payment status via the GET endpoint or polling the `/await` endpoint to wait for payment confirmation
+  version: 0.1.0
+  contact:
+    name: Homegate API Support
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://api.example.com
+    description: Production server (example)
+
+paths:
+  /:
+    get:
+      summary: Root endpoint
+      description: Returns a simple service identifier
+      operationId: root
+      tags:
+        - General
+      responses:
+        '200':
+          description: Service identifier
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Homegate Service"
+
+  /sms_verification/send_code:
+    post:
+      summary: Send SMS verification code
+      description: |
+        Creates a new SMS verification request for the given phone number.
+        If a pending verification already exists for this phone number, it will be reused.
+        
+        The phone number must be in E.164 format (e.g., +30123456789).
+        
+        Rate limits apply:
+        - Weekly limit: 2 verifications per phone number (default, configurable via `HG_MAX_SMS_VERIFICATIONS_PER_WEEK`)
+        - Annual limit: 4 verifications per phone number (default, configurable via `HG_MAX_SMS_VERIFICATIONS_PER_YEAR`)
+      operationId: sendSmsCode
+      tags:
+        - SMS Verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVerificationRequest'
+            examples:
+              valid:
+                summary: Valid phone number
+                value:
+                  phoneNumber: "+30123456789"
+      responses:
+        '200':
+          description: Verification code sent successfully (empty response body)
+        '400':
+          description: Invalid request body - failed to parse JSON or phone number format is invalid
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                malformedJson:
+                  value: "Failed to deserialize the JSON body into the target type"
+        '422':
+          description: Invalid phone number format
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                invalidPhone:
+                  value: "Invalid phone number format. Must be in E.164 format (e.g., +30123456789)"
+                malformedJson:
+                  value: "Failed to deserialize the JSON body into the target type"
+        '403':
+          description: Phone number is blocked for verification
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Phone number blocked for verification"
+        '429':
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Number of seconds to wait before retrying
+              schema:
+                type: integer
+                example: 3600
+          content:
+            text/plain:
+              schema:
+                type: string
+                examples:
+                  weeklyLimit:
+                    value: "Phone number has exceeded weekly verification limit"
+                  annualLimit:
+                    value: "Phone number has exceeded annual verification limit"
+                  rateLimited:
+                    value: "External service rate limit exceeded"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Internal Server Error"
+
+  /sms_verification/validate_code:
+    post:
+      summary: Validate SMS verification code
+      description: |
+        Validates a verification code for a phone number.
+        Returns whether the code is valid and, if valid, provides a signup code and homeserver public key.
+        
+        The code must be exactly 6 digits (0-9).
+      operationId: validateSmsCode
+      tags:
+        - SMS Verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateCodeRequest'
+            examples:
+              valid:
+                summary: Valid code
+                value:
+                  phoneNumber: "+30123456789"
+                  code: "123456"
+      responses:
+        '200':
+          description: Code validation result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ValidateCodeResponseValid'
+                  - $ref: '#/components/schemas/ValidateCodeResponseInvalid'
+              examples:
+                valid:
+                  summary: Valid code
+                  value:
+                    valid: "true"
+                    signupCode: "token-uuid-123"
+                    homeserverPubky: "test-homeserver-pubky"
+                invalid:
+                  summary: Invalid code
+                  value:
+                    valid: "false"
+        '400':
+          description: Invalid request body - failed to parse JSON
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                malformedJson:
+                  value: "Failed to deserialize the JSON body into the target type"
+        '422':
+          description: Invalid phone number format or code format
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                invalidPhone:
+                  value: "Invalid phone number format. Must be in E.164 format (e.g., +30123456789)"
+                invalidCode:
+                  value: "Invalid code format: abc123. Code must be exactly 6 digits (0-9)"
+        '422':
+          description: No active verification session
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "No active verification session for phone number"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Internal Server Error"
+
+  /ln_verification:
+    post:
+      summary: Create Lightning Network verification
+      description: |
+        Creates a new Lightning Network payment verification request.
+        Returns a BOLT11 invoice that must be paid to complete verification.
+        
+        The invoice expires after a configured time period (default 10 minutes).
+        
+        No request body is required.
+      operationId: createLnVerification
+      tags:
+        - Lightning Network Verification
+      responses:
+        '200':
+          description: Verification request created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestVerificationResponse'
+              examples:
+                success:
+                  summary: Successful verification request
+                  value:
+                    id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    bolt11Invoice: "lnbc10u1p3qjqkapp5q..."
+                    amountSat: 1000
+                    expiresAt: 1704067200000
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Internal Server Error"
+
+  /ln_verification/{payment_hash}:
+    get:
+      summary: Get Lightning Network verification status
+      description: |
+        Retrieves the current status of a Lightning Network payment verification.
+        
+        Returns the verification details including payment status, invoice information, and signup code (if payment is confirmed).
+        
+        The payment_hash must be exactly 64 hexadecimal characters (case-insensitive).
+      operationId: getLnVerification
+      tags:
+        - Lightning Network Verification
+      parameters:
+        - name: payment_hash
+          in: path
+          required: true
+          description: The payment hash (64 hex characters) returned from the create verification endpoint
+          schema:
+            $ref: '#/components/schemas/PaymentHash'
+          examples:
+            valid:
+              value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      responses:
+        '200':
+          description: Verification status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentVerifiedResponse'
+              examples:
+                paid:
+                  summary: Payment confirmed
+                  value:
+                    id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    amountSat: 1000
+                    expiresAt: 1704067200000
+                    isPaid: true
+                    signupCode: "token-uuid-123"
+                    homeserverPubky: "test-homeserver-pubky"
+                    createdAt: 1704066600000
+                unpaid:
+                  summary: Payment pending
+                  value:
+                    id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    amountSat: 1000
+                    expiresAt: 1704067200000
+                    isPaid: false
+                    signupCode: null
+                    homeserverPubky: "test-homeserver-pubky"
+                    createdAt: 1704066600000
+        '400':
+          description: Invalid payment hash format
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                invalidLength:
+                  value: "Payment hash must be exactly 64 hex characters, got 32 characters"
+                invalidCharacters:
+                  value: "Payment hash must contain only hex characters (0-9, a-f, A-F)"
+        '404':
+          description: Verification not found
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Not found"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Internal Server Error"
+
+  /ln_verification/{payment_hash}/await:
+    get:
+      summary: Wait for Lightning Network payment verification
+      description: |
+        Long-polling endpoint that waits for a Lightning Network payment to be confirmed.
+        
+        This endpoint will:
+        - Return immediately if the payment is already confirmed
+        - Wait up to 60 seconds for payment confirmation
+        - Return a timeout error if payment is not confirmed within 60 seconds
+        
+        If a timeout occurs, the client should retry the request. The payment may still be processing.
+        
+        The payment_hash must be exactly 64 hexadecimal characters (case-insensitive).
+      operationId: awaitLnVerification
+      tags:
+        - Lightning Network Verification
+      parameters:
+        - name: payment_hash
+          in: path
+          required: true
+          description: The payment hash (64 hex characters) returned from the create verification endpoint
+          schema:
+            $ref: '#/components/schemas/PaymentHash'
+          examples:
+            valid:
+              value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      responses:
+        '200':
+          description: Payment verified successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentVerifiedResponse'
+              examples:
+                success:
+                  summary: Payment confirmed
+                  value:
+                    id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    amountSat: 1000
+                    expiresAt: 1704067200000
+                    isPaid: true
+                    signupCode: "token-uuid-123"
+                    homeserverPubky: "test-homeserver-pubky"
+                    createdAt: 1704066600000
+        '400':
+          description: Invalid payment hash format
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                invalidLength:
+                  value: "Payment hash must be exactly 64 hex characters, got 32 characters"
+                invalidCharacters:
+                  value: "Payment hash must contain only hex characters (0-9, a-f, A-F)"
+        '404':
+          description: Verification not found
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Not found"
+        '408':
+          description: Request timeout - payment not confirmed within 60 seconds
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Long poll timeout. Please try again."
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Internal Server Error"
+
+components:
+  schemas:
+    CreateVerificationRequest:
+      type: object
+      required:
+        - phoneNumber
+      properties:
+        phoneNumber:
+          $ref: '#/components/schemas/PhoneNumber'
+      example:
+        phoneNumber: "+30123456789"
+
+    ValidateCodeRequest:
+      type: object
+      required:
+        - phoneNumber
+        - code
+      properties:
+        phoneNumber:
+          $ref: '#/components/schemas/PhoneNumber'
+        code:
+          $ref: '#/components/schemas/Code'
+      example:
+        phoneNumber: "+30123456789"
+        code: "123456"
+
+    ValidateCodeResponseValid:
+      type: object
+      required:
+        - valid
+        - signupCode
+        - homeserverPubky
+      properties:
+        valid:
+          type: string
+          enum: ["true"]
+          description: Indicates the code is valid
+        signupCode:
+          type: string
+          description: Signup token to use for homeserver registration
+          example: "token-uuid-123"
+        homeserverPubky:
+          type: string
+          description: Public key of the homeserver
+          example: "test-homeserver-pubky"
+
+    ValidateCodeResponseInvalid:
+      type: object
+      required:
+        - valid
+      properties:
+        valid:
+          type: string
+          enum: ["false"]
+          description: Indicates the code is invalid
+
+    RequestVerificationResponse:
+      type: object
+      required:
+        - id
+        - bolt11Invoice
+        - amountSat
+        - expiresAt
+      properties:
+        id:
+          $ref: '#/components/schemas/PaymentHash'
+          description: Payment hash identifier for this verification
+        bolt11Invoice:
+          type: string
+          description: BOLT11 Lightning Network invoice string
+          example: "lnbc10u1p3qjqkapp5q..."
+        amountSat:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Invoice amount in satoshis
+          example: 1000
+        expiresAt:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when the invoice expires
+          example: 1704067200000
+
+    PaymentVerifiedResponse:
+      type: object
+      required:
+        - id
+        - amountSat
+        - expiresAt
+        - isPaid
+        - homeserverPubky
+        - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/PaymentHash'
+          description: Payment hash identifier
+        amountSat:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Invoice amount in satoshis
+          example: 1000
+        expiresAt:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when the invoice expires
+          example: 1704067200000
+        isPaid:
+          type: boolean
+          description: Whether the payment has been confirmed
+          example: true
+        signupCode:
+          type: string
+          nullable: true
+          description: Signup token to use for homeserver registration. Only present when payment is confirmed (isPaid is true)
+          example: "token-uuid-123"
+        homeserverPubky:
+          type: string
+          description: Public key of the homeserver
+          example: "test-homeserver-pubky"
+        createdAt:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds when the verification was created
+          example: 1704066600000
+
+    PhoneNumber:
+      type: string
+      pattern: '^\+[1-9]\d{1,14}$'
+      description: |
+        Phone number in E.164 format.
+        - Must start with +
+        - Followed by 1-15 digits
+        - First digit after + must be 1-9 (not 0)
+      example: "+30123456789"
+      minLength: 3
+      maxLength: 16
+
+    Code:
+      type: string
+      pattern: '^\d{6}$'
+      description: |
+        Verification code.
+        Must be exactly 6 digits (0-9).
+      example: "123456"
+      minLength: 6
+      maxLength: 6
+
+    PaymentHash:
+      type: string
+      pattern: '^[0-9a-fA-F]{64}$'
+      description: |
+        Lightning Network payment hash.
+        Must be exactly 64 hexadecimal characters (case-insensitive).
+        The value is normalized to lowercase.
+      example: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      minLength: 64
+      maxLength: 64
+
+  responses:
+    InternalServerError:
+      description: Internal server error
+      content:
+        text/plain:
+          schema:
+            type: string
+            example: "Internal Server Error"
+
+    NotFound:
+      description: Resource not found
+      content:
+        text/plain:
+          schema:
+            type: string
+            example: "Not found"
+
+    UnprocessableEntity:
+      description: Invalid request
+      content:
+        text/plain:
+          schema:
+            type: string
+
+    TooManyRequests:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          description: Number of seconds to wait before retrying
+          schema:
+            type: integer
+      content:
+        text/plain:
+          schema:
+            type: string
+
+tags:
+  - name: General
+    description: General endpoints
+  - name: SMS Verification
+    description: SMS-based phone number verification endpoints
+  - name: Lightning Network Verification
+    description: Lightning Network payment-based verification endpoints

@@ -9,6 +9,7 @@ use crate::{
         http::HttpServerError,
         sql::{DbError, SqlDb},
     },
+    ln_verification,
     shared::HomeserverObserver,
     sms_verification::http::router,
 };
@@ -24,10 +25,14 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    pub fn create_router(sms_verification_router: Router) -> Router {
+    pub fn create_router(
+        sms_verification_router: Router,
+        ln_verification_router: Router,
+    ) -> Router {
         Router::new()
             .route("/", get(root))
             .nest("/sms_verification", sms_verification_router)
+            .nest("/ln_verification", ln_verification_router)
             .layer(TraceLayer::new_for_http())
     }
 
@@ -38,8 +43,9 @@ impl HttpServer {
             .await
             .map_err(DbError::from)?;
 
-        let sms_verification_router = router(&config, db).await?;
-        let router = Self::create_router(sms_verification_router);
+        let sms_verification_router = router(&config, &db).await?;
+        let ln_verification_router = ln_verification::router(&config, &db).await?;
+        let router = Self::create_router(sms_verification_router, ln_verification_router);
 
         let (http_handle, http_socket) =
             Self::start_http_server(config.http_listen_socket, router).await?;

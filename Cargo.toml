@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 argon2 = "0.5"
 async-trait = "0.1.89"
-axum = { version = "0.8.1", features = ["macros"] }
+axum = { version = "0.8.1", features = ["macros", "ws"] }
 axum-server = { version = "0.7.1", features = ["tls-rustls-no-provider"] }
 base64 = "0.22"
 blake3 = "1.5"
@@ -15,10 +15,11 @@ chrono = "0.4"
 dotenvy = "0.15.7"
 envy = "0.4.2"
 futures-util = "0.3.31"
-getrandom = "0.2"
+getrandom = "0.3.4"
 hex = "0.4"
 regex = "1.11"
 reqwest = { version = "0.12", features = ["json"] }
+reqwest-websocket = "0.5.1"
 sea-query = { version = "0.32.6", features = [ "with-chrono", "postgres-array" ]}
 sea-query-binder = { version = "0.7.0", features = [ "with-chrono", "runtime-tokio", "sqlx-postgres", "postgres-array" ] }
 serde = { version = "1.0.228", features = ["derive"] }
