@@ -4,7 +4,10 @@ use sqlx::{Row, Transaction};
 
 use crate::infrastructure::sql::{
     MigrationTrait, SqlDb,
-    migrations::m20251201_create_sms_verifications::M20251201CreateSmsVerifications,
+    migrations::{
+        m20251201_create_sms_verifications::M20251201CreateSmsVerifications,
+        m20251216_create_ln_verification::M20251216CreateLnVerification,
+    },
 };
 
 /// The name of the migration table to keep track of which migrations have been applied.
@@ -25,7 +28,10 @@ impl<'a> Migrator<'a> {
     /// Returns a list of migrations to run.
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         // Add new migrations here. They run from top to bottom.
-        vec![Box::new(M20251201CreateSmsVerifications)]
+        vec![
+            Box::new(M20251201CreateSmsVerifications),
+            Box::new(M20251216CreateLnVerification),
+        ]
     }
 
     /// Runs all migrations that are not yet applied.

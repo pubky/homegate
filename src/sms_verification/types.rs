@@ -5,26 +5,32 @@ use serde::{Deserialize, Serialize};
 
 /// Request to create a verification
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateVerificationRequest {
     pub phone_number: PhoneNumber,
 }
 
 /// Request to validate a verification code
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ValidateCodeRequest {
     pub phone_number: PhoneNumber,
     pub code: Code,
 }
 
 // This enum serialises into either:
-// - {valid: true, signup_code: "some_string", homeserver_pubky: "some_String"}
+// - {valid: true, signupCode: "some_string", homeserverPubky: "some_String"}
 // - {valid: false}
+// Note: We use explicit renames on variant fields because rename_all doesn't work
+// when combined with variant-level #[serde(rename = "...")] attributes.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "valid")]
 pub enum ValidateCodeResponse {
     #[serde(rename = "true")]
     Valid {
+        #[serde(rename = "signupCode")]
         signup_code: String,
+        #[serde(rename = "homeserverPubky")]
         homeserver_pubky: String,
     },
     #[serde(rename = "false")]

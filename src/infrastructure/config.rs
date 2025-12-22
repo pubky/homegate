@@ -22,7 +22,14 @@ pub struct EnvConfig {
     pub max_sms_verifications_per_week: u32,
     #[serde(default = "default_max_sms_verifications_per_year")]
     pub max_sms_verifications_per_year: u32,
-
+    #[serde(default = "default_lightning_verification_price_sat")]
+    pub lightning_invoice_price_sat: u64,
+    #[serde(default = "default_lightning_verification_expiry_seconds")]
+    pub lightning_invoice_expiry_seconds: u64,
+    #[serde(default = "default_lightning_verification_description")]
+    pub lightning_invoice_description: String,
+    pub phoenixd_api_url: Url,
+    pub phoenixd_api_password: String,
     #[serde(default = "default_allow_cors")]
     pub allow_cors: bool,
 }
@@ -37,6 +44,18 @@ fn default_max_sms_verifications_per_week() -> u32 {
 
 fn default_max_sms_verifications_per_year() -> u32 {
     4
+}
+
+fn default_lightning_verification_expiry_seconds() -> u64 {
+    60 * 10
+}
+
+fn default_lightning_verification_description() -> String {
+    "Pubky Homegate Verification".to_string()
+}
+
+fn default_lightning_verification_price_sat() -> u64 {
+    1000
 }
 
 fn default_prelude_api_url() -> Url {
@@ -60,7 +79,9 @@ impl EnvConfig {
     pub fn for_test(prelude_api_url: Url, homeserver_admin_api_url: Url) -> Self {
         Self {
             database_url: Default::default(),
-            http_listen_socket: "127.0.0.1:0".parse().unwrap(),
+            http_listen_socket: "127.0.0.1:0"
+                .parse()
+                .expect("Default HTTP listen socket is valid"),
             prelude_api_key: "test-key".to_string(),
             prelude_api_url,
             homeserver_admin_api_url,
@@ -69,6 +90,13 @@ impl EnvConfig {
             max_sms_verifications_per_week: 2,
             max_sms_verifications_per_year: 4,
             allow_cors: true,
+            lightning_invoice_price_sat: 1000,
+            lightning_invoice_expiry_seconds: 60 * 10,
+            lightning_invoice_description: "Verification".to_string(),
+            phoenixd_api_url: Url::parse("http://localhost:9740")
+                .expect("Default Phoenixd API URL is valid"),
+            phoenixd_api_password:
+                "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef".to_string(),
         }
     }
 }
@@ -103,6 +131,26 @@ mod tests {
             (
                 String::from("HOMESERVER_PUBKY"),
                 String::from("test-homeserver-pubky"),
+            ),
+            (
+                String::from("lightning_invoice_price_sat"),
+                String::from("1000"),
+            ),
+            (
+                String::from("lightning_invoice_expiry_seconds"),
+                String::from("600"),
+            ),
+            (
+                String::from("lightning_invoice_description"),
+                String::from("Verification"),
+            ),
+            (
+                String::from("PHOENIXD_API_URL"),
+                String::from("http://localhost:9740"),
+            ),
+            (
+                String::from("PHOENIXD_API_PASSWORD"),
+                String::from("test-password"),
             ),
         ])
         .expect("Failed to load config");

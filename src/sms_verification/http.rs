@@ -18,9 +18,9 @@ use crate::{
 
 pub async fn router(
     config: &EnvConfig,
-    db: crate::infrastructure::sql::SqlDb,
+    db: &crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db);
+    let state = AppState::new(config, db.clone());
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
@@ -127,7 +127,7 @@ mod tests {
             .await
             .expect("Failed to create router");
 
-        let router = crate::HttpServer::create_router(sms_verification_router, true);
+        let router = Router::new().nest("/sms_verification", sms_verification_router);
         let app = router.into_make_service_with_connect_info::<SocketAddr>();
         let server = TestServer::new(app).expect("Failed to create test server");
 
@@ -136,7 +136,7 @@ mod tests {
 
     /// Tests the complete HTTP request/response flow for a successful verification:
     /// - POST /send_code returns 200 with correct JSON response structure
-    /// - POST /verify_code returns 200 with success status and signup_code field
+    /// - POST /verify_code returns 200 with success status and signupCode field
     #[sqlx::test]
     async fn http_returns_200_and_correct_json_for_successful_verification(pool: PgPool) {
         let servers = WiremockServers::start().await;
@@ -153,7 +153,7 @@ mod tests {
         // Act: POST to /send_code endpoint
         let send_response = server
             .post("/sms_verification/send_code")
-            .json(&serde_json::json!({ "phone_number": phone }))
+            .json(&serde_json::json!({ "phoneNumber": phone }))
             .await;
 
         // Assert: HTTP 200
@@ -174,12 +174,12 @@ mod tests {
         let verify_response: axum_test::TestResponse = server
             .post("/sms_verification/validate_code")
             .json(&serde_json::json!({
-                "phone_number": phone,
+                "phoneNumber": phone,
                 "code": "123456"
             }))
             .await;
 
-        // Assert: HTTP 200 with valid=true, signup_code, and homeserver_pubky in JSON response
+        // Assert: HTTP 200 with valid=true, signupCode, and homeserverPubky in JSON response
         verify_response.assert_status_ok();
         let verify_body: serde_json::Value = verify_response.json();
         assert_eq!(
@@ -187,12 +187,12 @@ mod tests {
             "Response JSON should have valid=true"
         );
         assert_eq!(
-            verify_body["signup_code"], "token-uuid-123",
-            "Response JSON should include signup_code"
+            verify_body["signupCode"], "token-uuid-123",
+            "Response JSON should include signupCode"
         );
         assert_eq!(
-            verify_body["homeserver_pubky"], "test-homeserver-pubky",
-            "Response JSON should include homeserver_pubky"
+            verify_body["homeserverPubky"], "test-homeserver-pubky",
+            "Response JSON should include homeserverPubky"
         );
     }
 
@@ -204,7 +204,7 @@ mod tests {
         // Test invalid phone number returns proper error format
         let response = server
             .post("/sms_verification/send_code")
-            .json(&serde_json::json!({ "phone_number": "invalid-phone" }))
+            .json(&serde_json::json!({ "phoneNumber": "invalid-phone" }))
             .await;
 
         response.assert_status_unprocessable_entity();
@@ -237,7 +237,7 @@ mod tests {
         // First send a code
         server
             .post("/sms_verification/send_code")
-            .json(&serde_json::json!({ "phone_number": phone }))
+            .json(&serde_json::json!({ "phoneNumber": phone }))
             .await;
 
         // Setup mock for wrong code - returns "failure"
@@ -250,7 +250,7 @@ mod tests {
         let response = server
             .post("/sms_verification/validate_code")
             .json(&serde_json::json!({
-                "phone_number": phone,
+                "phoneNumber": phone,
                 "code": "111111"
             }))
             .await;
@@ -278,7 +278,7 @@ mod tests {
         let response = server
             .post("/sms_verification/validate_code")
             .json(&serde_json::json!({
-                "phone_number": phone,
+                "phoneNumber": phone,
                 "code": "123456"
             }))
             .await;
@@ -286,10 +286,10 @@ mod tests {
         response.assert_status_ok();
         let body: serde_json::Value = response.json();
         assert_eq!(body["valid"], "true", "Response should have valid=true");
-        assert_eq!(body["signup_code"], "token-uuid-456");
+        assert_eq!(body["signupCode"], "token-uuid-456");
         assert_eq!(
-            body["homeserver_pubky"], "test-homeserver-pubky",
-            "Response should include homeserver_pubky"
+            body["homeserverPubky"], "test-homeserver-pubky",
+            "Response should include homeserverPubky"
         );
 
         // Wiremock verifies all expected calls were made
