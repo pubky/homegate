@@ -24,6 +24,11 @@ pub async fn router(
     config: &EnvConfig,
     db: &crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
+    // Run this module's migrations
+    crate::ln_verification::migrations::run_migrations(db)
+        .await
+        .map_err(crate::infrastructure::sql::DbError::from)?;
+
     let phoenixd_api = PhoenixdAPI::new(&config.phoenixd_api_url, &config.phoenixd_api_password);
     let homeserver_api = HomeserverAdminAPI::new(
         &config.homeserver_admin_api_url,

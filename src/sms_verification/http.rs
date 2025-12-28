@@ -20,6 +20,11 @@ pub async fn router(
     config: &EnvConfig,
     db: &crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
+    // Run this module's migrations
+    crate::sms_verification::migrations::run_migrations(db)
+        .await
+        .map_err(crate::infrastructure::sql::DbError::from)?;
+
     let state = AppState::new(config, db.clone());
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
@@ -112,7 +117,6 @@ mod tests {
         servers: &WiremockServers,
     ) -> (TestServer, PgPool) {
         use crate::EnvConfig;
-        use crate::infrastructure::sql::SqlDb;
 
         let config = EnvConfig::for_test(
             servers.prelude_server.uri().parse().unwrap(),
@@ -120,7 +124,7 @@ mod tests {
         );
 
         // Create SqlDb from the pool with migrations
-        let db = SqlDb::test(pool.clone()).await;
+        let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
         // We need to create AppState with the wiremock config and test pool
         let sms_verification_router = router_with_db(&config, db)

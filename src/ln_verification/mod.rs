@@ -2,6 +2,7 @@ mod app_state;
 mod error;
 mod http;
 mod invoice_background_syncer;
+pub mod migrations;
 mod payment_hash;
 mod phoenixd_api;
 mod repository;

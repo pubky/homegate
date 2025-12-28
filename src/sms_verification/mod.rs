@@ -5,6 +5,7 @@ mod app_state;
 mod error;
 pub(crate) mod hasher_argon2id;
 pub mod http;
+pub mod migrations;
 pub mod prelude_api;
 pub mod repository;
 pub mod service;

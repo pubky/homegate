@@ -1,6 +1,6 @@
 use sqlx::postgres::PgPool;
 
-use crate::infrastructure::sql::{Migrator, connection_string::ConnectionString};
+use crate::infrastructure::sql::connection_string::ConnectionString;
 
 /// The SqlDb is a wrapper around the postgres connection pool.
 /// It is used to connect to the database and run queries.
@@ -24,14 +24,11 @@ impl std::fmt::Debug for SqlDb {
 
 impl SqlDb {
     /// Connect to the database.
+    /// Note: Migrations are not run automatically. Each module is responsible
+    /// for running its own migrations during initialization.
     pub async fn connect(con_string: &ConnectionString) -> Result<Self, sqlx::Error> {
         let pool: PgPool = PgPool::connect(con_string.as_str()).await?;
-        let db = Self { pool };
-        Migrator::run(&db)
-            .await
-            .map_err(|e| sqlx::Error::Protocol(format!("Migration failed: {}", e)))?;
-
-        Ok(db)
+        Ok(Self { pool })
     }
 
     /// Get the connection pool
@@ -39,22 +36,22 @@ impl SqlDb {
         &self.pool
     }
 
-    /// Create a test database without running migrations
-    /// If the DB_CONNECTION_STRING environment variable is not set, a temporary directory is used for the sqlite database
-    /// If the DB_CONNECTION_STRING environment variable is set, the test database is created on the existing database
+    /// Create a test database without running migrations.
+    /// Each module test should run its own migrations after calling this.
     #[cfg(test)]
     pub async fn test_without_migrations(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    /// Create a test database and run migrations
-    /// If the DB_CONNECTION_STRING environment variable is not set, a temporary directory is used for the sqlite database
-    /// If the DB_CONNECTION_STRING environment variable is set, the migrations are run on the existing database
+    /// Create a test database and run the provided migrations.
+    /// Use this in module tests by passing the module's migrations.
     #[cfg(test)]
-    pub async fn test(pool: PgPool) -> Self {
-        use crate::infrastructure::sql::migrator;
+    pub async fn test_with_migrations(
+        pool: PgPool,
+        migrations: Vec<Box<dyn crate::infrastructure::sql::MigrationTrait>>,
+    ) -> Self {
         let db = Self::test_without_migrations(pool).await;
-        migrator::Migrator::<'_>::run(&db)
+        crate::infrastructure::sql::Migrator::run(&db, migrations)
             .await
             .expect("Failed to run migrations");
         db

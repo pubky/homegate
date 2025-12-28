@@ -7,4 +7,7 @@ pub enum DbError {
 
     #[error("Database item not found: {0}")]
     NotFound(String),
+
+    #[error("Migration error: {0}")]
+    Migration(#[from] anyhow::Error),
 }

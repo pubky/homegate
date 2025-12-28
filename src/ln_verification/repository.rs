@@ -172,13 +172,11 @@ mod tests {
     use chrono::Utc;
     use sqlx::PgPool;
 
-    use crate::infrastructure::sql::SqlDb;
-
     use super::*;
 
     #[sqlx::test]
     async fn test_create_get_verification(pool: PgPool) {
-        let db = SqlDb::test(pool).await;
+        let db = crate::ln_verification::migrations::test_db(pool).await;
         let payment_hash = PaymentHash::random();
         let expires_at = Utc::now().naive_utc();
         let veri = LnVerificationRepository::create_verification(
@@ -223,7 +221,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_not_found(pool: PgPool) {
-        let db = SqlDb::test(pool).await;
+        let db = crate::ln_verification::migrations::test_db(pool).await;
 
         let payment_hash = PaymentHash::random();
         let veri2 = LnVerificationRepository::get_verification_by_payment_hash(
@@ -237,7 +235,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_update_verification_finalised(pool: PgPool) {
-        let db = SqlDb::test(pool).await;
+        let db = crate::ln_verification::migrations::test_db(pool).await;
         let payment_hash = PaymentHash::random();
         let veri = LnVerificationRepository::create_verification(
             &payment_hash,
@@ -265,7 +263,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_get_last_finalized_timestamp(pool: PgPool) {
-        let db = SqlDb::test(pool).await;
+        let db = crate::ln_verification::migrations::test_db(pool).await;
 
         let timestamp_no_verifications =
             LnVerificationRepository::get_last_finalized_timestamp(&mut db.pool().into())

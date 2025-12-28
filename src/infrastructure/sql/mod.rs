@@ -1,7 +1,6 @@
 pub mod connection_string;
 pub mod error;
 pub mod migration;
-pub mod migrations;
 pub mod migrator;
 mod sql_db;
 

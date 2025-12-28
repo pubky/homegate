@@ -2,13 +2,7 @@ use sea_query::{ColumnDef, Expr, PostgresQueryBuilder, Query, SimpleExpr, Table}
 use sea_query_binder::SqlxBinder;
 use sqlx::{Row, Transaction};
 
-use crate::infrastructure::sql::{
-    MigrationTrait, SqlDb,
-    migrations::{
-        m20251201_create_sms_verifications::M20251201CreateSmsVerifications,
-        m20251216_create_ln_verification::M20251216CreateLnVerification,
-    },
-};
+use crate::infrastructure::sql::{MigrationTrait, SqlDb};
 
 /// The name of the migration table to keep track of which migrations have been applied.
 const MIGRATION_TABLE: &str = "migrations";
@@ -25,25 +19,15 @@ impl<'a> Migrator<'a> {
         Self { db }
     }
 
-    /// Returns a list of migrations to run.
-    fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        // Add new migrations here. They run from top to bottom.
-        vec![
-            Box::new(M20251201CreateSmsVerifications),
-            Box::new(M20251216CreateLnVerification),
-        ]
-    }
-
-    /// Runs all migrations that are not yet applied.
-    /// This is a convenience method that creates a new migrator and runs migrations.
-    pub async fn run(db: &'a SqlDb) -> anyhow::Result<()> {
+    /// Runs a specific list of migrations.
+    /// This is the main entry point for running migrations.
+    /// Each module should call this with its own migrations list.
+    pub async fn run(
+        db: &'a SqlDb,
+        migrations: Vec<Box<dyn MigrationTrait>>,
+    ) -> anyhow::Result<()> {
         let migrator = Self::new(db);
-        migrator.run_all().await
-    }
-
-    /// Runs all migrations that are not yet applied.
-    pub async fn run_all(&self) -> anyhow::Result<()> {
-        self.run_migrations(Self::migrations()).await
+        migrator.run_migrations(migrations).await
     }
 
     /// Runs a specific list of migrations.

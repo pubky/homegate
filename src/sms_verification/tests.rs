@@ -9,7 +9,7 @@ use crate::e2e::{
     WiremockServers, setup_homeserver_signup_token, setup_prelude_check_code,
     setup_prelude_create_verification,
 };
-use crate::infrastructure::sql::{DbError, SqlDb};
+use crate::infrastructure::sql::DbError;
 use crate::shared::HomeserverAdminAPI;
 use crate::sms_verification::error::SmsVerificationError;
 use crate::sms_verification::hasher_argon2id::HasherArgon2id;
@@ -51,7 +51,7 @@ async fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerifi
 async fn test_service_full_verification_flow(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30123456789").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -170,7 +170,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
 async fn test_service_session_lifecycle(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     // Test 1: Active session reuse
     let phone1 = PhoneNumber::new("+30999999999").unwrap();
@@ -298,7 +298,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 async fn test_service_max_verified_sessions_limits(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
     let phone = PhoneNumber::new("+30111111112").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
@@ -494,7 +494,7 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
 async fn test_service_input_validation_and_errors(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     // Invalid verification code - should return Failure status
@@ -554,7 +554,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
 async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30666666666").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -678,7 +678,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
 async fn test_service_success_but_homeserver_fails_marks_failed(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30888888888").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -747,7 +747,7 @@ async fn test_service_success_but_homeserver_fails_marks_failed(pool: PgPool) {
 async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30777777777").unwrap();
     let hashed_phone = test_phone_hasher().hash_phone_number(phone.as_str());
@@ -840,7 +840,7 @@ async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPo
 
 #[sqlx::test]
 async fn test_repository_mark_failed_by_phone_number(pool: PgPool) {
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
     let mut executor = db.pool().into();
 
     let phone = PhoneNumber::new("+30999999999").unwrap();
@@ -887,7 +887,7 @@ async fn test_repository_mark_failed_by_phone_number(pool: PgPool) {
 async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let phone_send = PhoneNumber::new("+30666666666").unwrap();
     let phone_verify = PhoneNumber::new("+30888888889").unwrap();
@@ -945,7 +945,7 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
 async fn test_service_database_error_handling(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30777777777").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -1005,7 +1005,7 @@ async fn test_service_database_error_handling(pool: PgPool) {
 async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
@@ -1192,7 +1192,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30333333333").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -1342,7 +1342,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
 async fn test_service_blocked_phone_number(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30444444444").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -1439,7 +1439,7 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
 async fn test_service_retry_response_from_prelude(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30555555555").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -1494,7 +1494,7 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
 async fn test_repository_state_mutation_protection(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
 
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
@@ -1715,7 +1715,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
 
 #[sqlx::test]
 async fn test_create_verification_session_supersession(pool: PgPool) {
-    let db = SqlDb::test(pool.clone()).await;
+    let db = crate::sms_verification::migrations::test_db(pool.clone()).await;
     let mut executor = db.pool().into();
 
     // Scenario 1: Different prelude_id supersedes existing PENDING session

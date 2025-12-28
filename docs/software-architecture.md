@@ -163,8 +163,9 @@ src/
 │   └── sql/                     # Database abstraction
 │       ├── mod.rs
 │       ├── sql_db.rs            # SqlDb wrapper around PgPool
-│       ├── unified_executor.rs  # Abstraction for pool/transaction
-│       └── migrations/          # SQL migration files
+│       ├── migrator.rs          # Generic migration runner
+│       ├── migration.rs         # MigrationTrait definition
+│       └── unified_executor.rs  # Abstraction for pool/transaction
 │
 ├── shared/                      # Shared services layer
 │   ├── mod.rs
@@ -179,7 +180,9 @@ src/
 │   ├── repository.rs            # SmsVerificationRepository
 │   ├── types.rs                 # PhoneNumber, Code, entities
 │   ├── error.rs                 # SmsVerificationError
-│   └── prelude_api.rs           # Prelude SMS provider client
+│   ├── prelude_api.rs           # Prelude SMS provider client
+│   └── migrations/              # Module-owned migrations
+│       └── m20251201_create_sms_verifications.rs
 │
 └── ln_verification/             # Lightning verification module
     ├── mod.rs                   # Public exports
@@ -190,7 +193,9 @@ src/
     ├── types.rs                 # PaymentHash, entities
     ├── error.rs                 # LnVerificationError
     ├── phoenixd_api/            # Phoenixd Lightning node client
-    └── invoice_background_syncer.rs  # Background invoice polling
+    ├── invoice_background_syncer.rs  # Background invoice polling
+    └── migrations/              # Module-owned migrations
+        └── m20251216_create_ln_verification.rs
 ```
 
 ## Module Structure
@@ -418,8 +423,8 @@ When adding a new feature module:
 - [ ] Create `repository.rs` if persisting data
 - [ ] Create `http.rs` with router factory and handlers
 - [ ] Create `*_api.rs` for each external API integration
+- [ ] Create `migrations/` directory with module-owned migrations (runs on `router()` init)
 - [ ] Add `pub mod new_module;` to `main.rs`
 - [ ] Call `new_module::router()` in `HttpServer::start()`
 - [ ] Nest router under appropriate path
-- [ ] Add database migrations if needed
-- [ ] Write tests
+- [ ] Write tests (use `migrations::test_db(pool)` for test database setup)
