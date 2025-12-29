@@ -12,7 +12,7 @@ use crate::sms_verification::{
 };
 use crate::{
     EnvConfig,
-    infrastructure::http::{HttpServerError, RequestOrigin},
+    infrastructure::http::{HttpServerError, RequestOrigin, UserAgent},
     sms_verification::app_state::AppState,
 };
 
@@ -42,11 +42,12 @@ pub async fn router_with_db(
 async fn send_code_handler(
     State(mut state): State<AppState>,
     RequestOrigin(ip_address): RequestOrigin,
+    UserAgent(user_agent): UserAgent,
     Json(request): Json<CreateVerificationRequest>,
 ) -> Result<StatusCode, SmsVerificationError> {
     state
         .sms_verification
-        .create_verification(&state.db, request, ip_address)
+        .create_verification(&state.db, request, ip_address, user_agent)
         .await?;
     Ok(StatusCode::OK)
 }

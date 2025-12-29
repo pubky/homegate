@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct CreateVerificationRequest {
     pub phone_number: PhoneNumber,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_id: Option<String>,
 }
 
 /// Request to validate a verification code

@@ -48,6 +48,32 @@ where
     }
 }
 
+/// Axum extractor for User-Agent header
+///
+/// Extracts the User-Agent header from HTTP requests.
+/// Returns None if the header is missing or cannot be parsed as a valid string.
+pub struct UserAgent(pub Option<String>);
+
+impl<S> FromRequestParts<S> for UserAgent
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let headers = HeaderMap::from_request_parts(parts, state)
+            .await
+            .expect("HeaderMap extractor should never fail");
+
+        let user_agent = headers
+            .get("user-agent")
+            .and_then(|hv| hv.to_str().ok())
+            .map(|s| s.to_string());
+
+        Ok(UserAgent(user_agent))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +198,28 @@ mod tests {
             .unwrap();
         // Should trim whitespace
         assert_eq!(result, "203.0.113.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_user_agent_present() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "user-agent",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+                .parse()
+                .unwrap(),
+        );
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+
+        let request = make_request(headers, addr);
+        let (mut parts, _) = request.into_parts();
+        let UserAgent(result) = UserAgent::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            Some("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36".to_string())
+        );
     }
 }
