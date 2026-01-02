@@ -35,15 +35,18 @@ where
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let headers = HeaderMap::from_request_parts(parts, state)
+        let headers = HeaderMap::from_request_parts(parts, state).await?;
+
+        let addr = ConnectInfo::<SocketAddr>::from_request_parts(parts, state)
             .await
-            .expect("HeaderMap extractor should never fail");
-        let ConnectInfo(addr) = ConnectInfo::<SocketAddr>::from_request_parts(parts, state)
-            .await
-            .expect("ConnectInfo extractor should never fail");
+            .ok()
+            .map(|ConnectInfo(addr)| addr);
+
         let ip = maybe_x_forwarded_for(&headers)
             .or_else(|| maybe_x_real_ip(&headers))
-            .unwrap_or_else(|| addr.ip());
+            .or_else(|| addr.map(|a| a.ip()))
+            .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+
         Ok(RequestOrigin(ip))
     }
 }

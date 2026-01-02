@@ -49,15 +49,41 @@ async fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerifi
 
 #[sqlx::test]
 async fn test_service_full_verification_flow(pool: PgPool) {
+    use serde_json::json;
+    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::{Mock, ResponseTemplate};
+
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers).await;
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30123456789").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let user_agent = Some("Mozilla/5.0 (Test Client)".to_string());
+    let dispatch_id = Some("test-dispatch-id-123".to_string());
 
-    // Setup wiremock expectations
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+    // Setup wiremock expectations - verify exact request body with signals
+    let expected_body = json!({
+        "target": {
+            "type": "phone_number",
+            "value": phone.as_str()
+        },
+        "signals": {
+            "ip_address": ip.to_string(),
+            "user_agent": user_agent.clone().unwrap()
+        },
+        "dispatch_id": dispatch_id.clone().unwrap()
+    });
+
+    Mock::given(method("POST"))
+        .and(path("/v2/verification"))
+        .and(header("Authorization", "Bearer test-key"))
+        .and(header("Content-Type", "application/json"))
+        .and(body_json(&expected_body))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "verification-id-123",
+            "status": "success"
+        })))
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -72,14 +98,16 @@ async fn test_service_full_verification_flow(pool: PgPool) {
         .mount(&servers.homeserver_server)
         .await;
 
-    // Step 1: Initiate verification
+    // Step 1: Initiate verification with user_agent and dispatch_id
     service
         .create_verification(
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: dispatch_id.clone(),
             },
             ip,
+            user_agent.clone(),
         )
         .await
         .expect("verify_init should succeed");
@@ -189,8 +217,10 @@ async fn test_service_session_lifecycle(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone1.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("First send_code should succeed");
@@ -211,8 +241,10 @@ async fn test_service_session_lifecycle(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone1.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("Second send_code should succeed");
@@ -251,8 +283,10 @@ async fn test_service_session_lifecycle(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone2.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("send_code should succeed");
@@ -275,8 +309,10 @@ async fn test_service_session_lifecycle(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone2.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("send_code after verification should succeed");
@@ -325,8 +361,10 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
                 &db,
                 CreateVerificationRequest {
                     phone_number: phone.clone(),
+                    dispatch_id: None,
                 },
                 ip,
+                None,
             )
             .await
             .unwrap_or_else(|_| panic!("send_code {} should succeed", i));
@@ -349,8 +387,10 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await;
 
@@ -386,8 +426,10 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("3rd send_code should succeed after aging");
@@ -434,8 +476,10 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("4th send_code should succeed");
@@ -478,8 +522,10 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await;
 
@@ -515,8 +561,10 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone_wrong_code.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("send_code should succeed");
@@ -571,8 +619,10 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("send_code should succeed");
@@ -649,8 +699,10 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("Should be able to create new session after failure");
@@ -694,8 +746,10 @@ async fn test_service_success_but_homeserver_fails_marks_failed(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("create_verification should succeed");
@@ -764,8 +818,10 @@ async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPo
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("create_verification should succeed");
@@ -904,8 +960,10 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone_send.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("send_code should succeed");
@@ -961,8 +1019,10 @@ async fn test_service_database_error_handling(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("send_code should succeed");
@@ -1034,8 +1094,10 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone_verified.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("create_verification should succeed");
@@ -1109,8 +1171,10 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone_failed.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("create_verification should succeed");
@@ -1208,8 +1272,10 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("create_verification should succeed");
@@ -1364,8 +1430,10 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await;
 
@@ -1456,8 +1524,10 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("create_verification should succeed");
@@ -1522,8 +1592,10 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone1.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("create_verification should succeed");
@@ -1624,8 +1696,10 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
             &db,
             CreateVerificationRequest {
                 phone_number: phone2.clone(),
+                dispatch_id: None,
             },
             ip,
+            None,
         )
         .await
         .expect("create_verification should succeed");

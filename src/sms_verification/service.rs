@@ -82,6 +82,7 @@ impl SmsVerificationService {
         db: &SqlDb,
         request: CreateVerificationRequest,
         ip_address: IpAddr,
+        user_agent: Option<String>,
     ) -> Result<(), SmsVerificationError> {
         let phone_number_hash = self
             .hasher_argon2id
@@ -94,7 +95,12 @@ impl SmsVerificationService {
 
         let prelude_response = self
             .prelude_api
-            .create_verification(&request.phone_number, Some(ip_address))
+            .create_verification(
+                &request.phone_number,
+                ip_address,
+                user_agent,
+                request.dispatch_id,
+            )
             .await?;
 
         let id = match &prelude_response {
