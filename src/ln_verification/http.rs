@@ -53,6 +53,7 @@ pub async fn router(
         .route("/", post(create_verification_handler))
         .route("/{id}", get(get_verification_handler))
         .route("/{id}/await", get(await_verification_handler))
+        .route("/price", get(get_price_handler))
         .with_state(state))
 }
 
@@ -125,6 +126,13 @@ async fn await_verification_handler(
     .into_response()
 }
 
+/// Get the configured Lightning invoice price handler
+async fn get_price_handler(State(state): State<AppState>) -> Json<GetPriceResponse> {
+    Json(GetPriceResponse {
+        amount_sat: state.ln_service.get_price_sat(),
+    })
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateVerificationResponse {
@@ -162,6 +170,12 @@ impl GetVerificationResponse {
             created_at: entity.created_at.and_utc().timestamp_millis(),
         }
     }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetPriceResponse {
+    amount_sat: u64,
 }
 
 impl IntoResponse for LnVerificationError {

@@ -151,4 +151,9 @@ impl LnVerificationService {
                 .await?;
         Ok(verification)
     }
+
+    /// Get the configured price for Lightning invoices in satoshis.
+    pub fn get_price_sat(&self) -> u64 {
+        self.amount_sat
+    }
 }
