@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use sea_query::{ColumnDef, PostgresQueryBuilder, Table};
+use sea_query::{ColumnDef, Index, PostgresQueryBuilder, Table};
 use sqlx::Transaction;
 
 use crate::infrastructure::sql::MigrationTrait;
@@ -14,10 +14,17 @@ impl MigrationTrait for M20251216CreateLnVerification {
             .table("lightning_verifications")
             .if_not_exists()
             .col(
+                ColumnDef::new("id")
+                    .uuid()
+                    .not_null()
+                    .primary_key()
+                    .default(sea_query::Expr::cust("gen_random_uuid()")),
+            )
+            .col(
                 ColumnDef::new("payment_hash")
                     .char_len(64)
                     .not_null()
-                    .primary_key(),
+                    .unique_key(),
             ) // 64 hex characters
             .col(ColumnDef::new("amount_sat").integer().not_null())
             .col(ColumnDef::new("signup_code").text().null())
@@ -37,6 +44,15 @@ impl MigrationTrait for M20251216CreateLnVerification {
             .to_owned();
 
         let query = statement.build(PostgresQueryBuilder);
+        sqlx::query(&query).execute(&mut **tx).await?;
+
+        let index = Index::create()
+            .name("idx_lightning_verifications_payment_hash")
+            .table("lightning_verifications")
+            .col("payment_hash")
+            .to_owned();
+
+        let query = index.build(PostgresQueryBuilder);
         sqlx::query(&query).execute(&mut **tx).await?;
 
         Ok(())

@@ -1,10 +1,15 @@
-use crate::{infrastructure::sql::UnifiedExecutor, ln_verification::payment_hash::PaymentHash};
+use crate::{
+    infrastructure::sql::UnifiedExecutor,
+    ln_verification::{payment_hash::PaymentHash, verification_id::VerificationId},
+};
 use chrono::NaiveDateTime;
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use sea_query_binder::SqlxBinder;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LightningVerificationEntity {
+    pub id: VerificationId,
+    #[allow(dead_code)] // Used for internal Phoenix sync operations
     pub payment_hash: PaymentHash,
     pub amount_sat: i32,
     pub expires_at: NaiveDateTime,
@@ -65,6 +70,46 @@ impl LnVerificationRepository {
         Ok(verification)
     }
 
+    /// Get a verification by its public ID (for API requests)
+    ///
+    /// # Arguments
+    /// * `id` - The verification ID
+    /// * `executor` - The executor to use to execute the query
+    ///
+    /// # Returns
+    /// * `LightningVerificationEntity` - The verification record
+    ///
+    /// # Errors
+    /// * `sqlx::Error` - If the query fails
+    pub async fn get_verification_by_id<'a>(
+        id: &VerificationId,
+        executor: &mut UnifiedExecutor<'a>,
+    ) -> Result<Option<LightningVerificationEntity>, sqlx::Error> {
+        let statement = Query::select()
+            .columns([
+                "id",
+                "payment_hash",
+                "amount_sat",
+                "created_at",
+                "expires_at",
+                "finalised_at",
+                "signup_code",
+            ])
+            .from(TABLE_NAME)
+            .and_where(Expr::col("id").eq(*id.as_uuid()))
+            .to_owned();
+        let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
+        let con = executor.get_con().await?;
+        let verification: LightningVerificationEntity =
+            match sqlx::query_as_with(&query, values).fetch_one(con).await {
+                Ok(verification) => verification,
+                Err(sqlx::Error::RowNotFound) => return Ok(None),
+                Err(e) => return Err(e),
+            };
+
+        Ok(Some(verification))
+    }
+
     /// Get a verification by payment hash
     ///
     /// # Arguments
@@ -82,6 +127,7 @@ impl LnVerificationRepository {
     ) -> Result<Option<LightningVerificationEntity>, sqlx::Error> {
         let statement = Query::select()
             .columns([
+                "id",
                 "payment_hash",
                 "amount_sat",
                 "created_at",
@@ -315,5 +361,40 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(timestamp, Some(veri1.created_at));
+    }
+
+    #[sqlx::test]
+    async fn test_get_verification_by_id(pool: PgPool) {
+        let db = SqlDb::test(pool).await;
+        let payment_hash = PaymentHash::random();
+        let expires_at = Utc::now().naive_utc();
+        let veri = LnVerificationRepository::create_verification(
+            &payment_hash,
+            1000,
+            expires_at,
+            &mut db.pool().into(),
+        )
+        .await
+        .unwrap();
+
+        // Should be able to get by ID
+        let veri_by_id =
+            LnVerificationRepository::get_verification_by_id(&veri.id, &mut db.pool().into())
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(veri_by_id.id, veri.id);
+        assert_eq!(veri_by_id.payment_hash, payment_hash);
+        assert_eq!(veri_by_id.amount_sat, 1000);
+
+        // Non-existent ID should return None
+        let non_existent = LnVerificationRepository::get_verification_by_id(
+            &VerificationId::random(),
+            &mut db.pool().into(),
+        )
+        .await
+        .unwrap();
+        assert!(non_existent.is_none());
     }
 }

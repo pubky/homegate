@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use crate::ln_verification::{
-    LightningVerificationEntity, error::LnVerificationError, payment_hash::PaymentHash,
-    phoenixd_api::PhoenixdAPI, service::LnVerificationService,
+    LightningVerificationEntity, VerificationId, error::LnVerificationError,
+    payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI, service::LnVerificationService,
 };
 
 use futures_util::TryStreamExt;
@@ -13,7 +13,7 @@ use tokio::sync::broadcast;
 pub struct InvoiceBackgroundSyncer {
     service: LnVerificationService,
     phoenixd_api: PhoenixdAPI,
-    verification_completed_tx: broadcast::Sender<PaymentHash>,
+    verification_completed_tx: broadcast::Sender<VerificationId>,
 }
 
 impl InvoiceBackgroundSyncer {
@@ -29,7 +29,7 @@ impl InvoiceBackgroundSyncer {
 
     /// Subscribe to finalized verification events.
     /// Returns a receiver that will receive notifications whenever a verification is finalized.
-    pub fn subscribe(&self) -> broadcast::Receiver<PaymentHash> {
+    pub fn subscribe(&self) -> broadcast::Receiver<VerificationId> {
         self.verification_completed_tx.subscribe()
     }
 
@@ -37,15 +37,15 @@ impl InvoiceBackgroundSyncer {
     /// Returns Ok(Some(LightningVerificationEntity)) if the payment was finalized, Ok(None) if the timeout was reached.
     pub async fn wait_for_payment(
         &self,
-        payment_hash: &PaymentHash,
+        id: &VerificationId,
         timeout: Duration,
     ) -> Result<Option<LightningVerificationEntity>, LnVerificationError> {
         let future = async {
             let mut receiver = self.subscribe();
             loop {
                 match receiver.recv().await {
-                    Ok(finalized_payment_hash) if finalized_payment_hash == *payment_hash => break,
-                    Ok(_) => continue, // Different payment hash, keep waiting
+                    Ok(finalized_id) if finalized_id == *id => break,
+                    Ok(_) => continue, // Different verification ID, keep waiting
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("Broadcast receiver lagged by {} messages", n);
                         continue;
@@ -63,7 +63,7 @@ impl InvoiceBackgroundSyncer {
             Err(_) => return Ok(None),
         };
 
-        self.service.get_verification(payment_hash).await
+        self.service.get_verification(id).await
     }
 
     /// Sync an invoice.
@@ -75,10 +75,8 @@ impl InvoiceBackgroundSyncer {
             Some(verification) => verification,
             None => return Ok(()),
         };
-        tracing::info!("Verification {} finalised", newly_finalised.payment_hash);
-        let _ = self
-            .verification_completed_tx
-            .send(newly_finalised.payment_hash);
+        tracing::info!("Verification {} finalised", newly_finalised.id);
+        let _ = self.verification_completed_tx.send(newly_finalised.id);
         Ok(())
     }
 
