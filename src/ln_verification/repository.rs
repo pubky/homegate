@@ -9,7 +9,8 @@ use sea_query_binder::SqlxBinder;
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LightningVerificationEntity {
     pub id: VerificationId,
-    #[allow(dead_code)] // Stored for data integrity and testing. Sync operations use payment_hash from phoenixd API responses
+    #[allow(dead_code)]
+    // Stored for data integrity and testing. Sync operations use payment_hash from phoenixd API responses
     pub payment_hash: PaymentHash,
     pub amount_sat: i32,
     pub expires_at: NaiveDateTime,

@@ -253,7 +253,10 @@ mod tests {
     #[test]
     fn test_error_display() {
         let error = VerificationIdError::InvalidFormat("test error".to_string());
-        assert_eq!(error.to_string(), "Invalid verification ID format: test error");
+        assert_eq!(
+            error.to_string(),
+            "Invalid verification ID format: test error"
+        );
     }
 
     #[test]
