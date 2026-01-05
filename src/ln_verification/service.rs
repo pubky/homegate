@@ -5,8 +5,8 @@ use chrono::{NaiveDateTime, TimeDelta};
 use crate::{
     infrastructure::sql::{SqlDb, UnifiedExecutor},
     ln_verification::{
-        LightningVerificationEntity, LnVerificationRepository, error::LnVerificationError,
-        payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI,
+        LightningVerificationEntity, LnVerificationRepository, VerificationId,
+        error::LnVerificationError, payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI,
     },
     shared::HomeserverAdminAPI,
 };
@@ -138,19 +138,22 @@ impl LnVerificationService {
         Ok(timestamp)
     }
 
-    /// Get a verification by its payment hash.
+    /// Get a verification by its verification ID.
     /// Returns the verification if it exists, None if it does not exist.
     /// # Errors
     /// * `LnVerificationError` - If the verification retrieval fails
     pub async fn get_verification(
         &self,
-        payment_hash: &PaymentHash,
+        id: &VerificationId,
     ) -> Result<Option<LightningVerificationEntity>, LnVerificationError> {
-        let verification = LnVerificationRepository::get_verification_by_payment_hash(
-            payment_hash,
-            &mut self.db.pool().into(),
-        )
-        .await?;
+        let verification =
+            LnVerificationRepository::get_verification_by_id(id, &mut self.db.pool().into())
+                .await?;
         Ok(verification)
+    }
+
+    /// Get the configured price for Lightning invoices in satoshis.
+    pub fn get_price_sat(&self) -> u64 {
+        self.amount_sat
     }
 }

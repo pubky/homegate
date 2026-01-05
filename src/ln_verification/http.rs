@@ -13,9 +13,9 @@ use crate::{
     EnvConfig,
     infrastructure::http::HttpServerError,
     ln_verification::{
-        app_state::AppState, error::LnVerificationError,
-        invoice_background_syncer::InvoiceBackgroundSyncer, payment_hash::PaymentHash,
-        phoenixd_api::PhoenixdAPI, service::LnVerificationService,
+        VerificationId, app_state::AppState, error::LnVerificationError,
+        invoice_background_syncer::InvoiceBackgroundSyncer, phoenixd_api::PhoenixdAPI,
+        service::LnVerificationService,
     },
     shared::HomeserverAdminAPI,
 };
@@ -53,6 +53,7 @@ pub async fn router(
         .route("/", post(create_verification_handler))
         .route("/{id}", get(get_verification_handler))
         .route("/{id}/await", get(await_verification_handler))
+        .route("/price", get(get_price_handler))
         .with_state(state))
 }
 
@@ -61,9 +62,9 @@ async fn create_verification_handler(
     State(state): State<AppState>,
 ) -> Result<Json<CreateVerificationResponse>, LnVerificationError> {
     let (verification, invoice) = state.ln_service.create_verification().await?;
-    tracing::info!("Created verification {}", verification.payment_hash);
+    tracing::info!("Created verification {}", verification.id);
     let response = CreateVerificationResponse {
-        id: verification.payment_hash,
+        id: verification.id,
         bolt11_invoice: invoice.invoice,
         amount_sat: invoice.requested_sat,
         expires_at: invoice.expires_at.timestamp_millis(),
@@ -74,7 +75,7 @@ async fn create_verification_handler(
 /// Get a Lightning Network verification handler
 async fn get_verification_handler(
     State(state): State<AppState>,
-    Path(id): Path<PaymentHash>,
+    Path(id): Path<VerificationId>,
 ) -> Response {
     let verification = match state.ln_service.get_verification(&id).await {
         Ok(Some(verification)) => verification,
@@ -91,7 +92,7 @@ async fn get_verification_handler(
 /// Await for a Lightning Network verification to be finalized handler
 async fn await_verification_handler(
     State(state): State<AppState>,
-    Path(id): Path<PaymentHash>,
+    Path(id): Path<VerificationId>,
 ) -> impl IntoResponse {
     let mut verification = match state.ln_service.get_verification(&id).await {
         Ok(Some(verification)) => verification,
@@ -115,7 +116,7 @@ async fn await_verification_handler(
             }
             Err(e) => return e.into_response(),
         };
-        tracing::info!("Awaited verification {}", verification.payment_hash);
+        tracing::info!("Awaited verification {}", verification.id);
     };
 
     Json(GetVerificationResponse::from_entity(
@@ -125,10 +126,17 @@ async fn await_verification_handler(
     .into_response()
 }
 
+/// Get the configured Lightning invoice price handler
+async fn get_price_handler(State(state): State<AppState>) -> Json<GetPriceResponse> {
+    Json(GetPriceResponse {
+        amount_sat: state.ln_service.get_price_sat(),
+    })
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateVerificationResponse {
-    id: PaymentHash,
+    id: VerificationId,
     bolt11_invoice: String,
     amount_sat: u64,
     expires_at: i64,
@@ -137,7 +145,7 @@ pub struct CreateVerificationResponse {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetVerificationResponse {
-    id: PaymentHash,
+    id: VerificationId,
     amount_sat: u64,
     expires_at: i64,
     is_paid: bool,
@@ -153,7 +161,7 @@ impl GetVerificationResponse {
     ) -> Self {
         let is_paid = entity.is_finalised();
         Self {
-            id: entity.payment_hash,
+            id: entity.id,
             amount_sat: entity.amount_sat as u64,
             expires_at: entity.expires_at.and_utc().timestamp_millis(),
             is_paid,
@@ -162,6 +170,12 @@ impl GetVerificationResponse {
             created_at: entity.created_at.and_utc().timestamp_millis(),
         }
     }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetPriceResponse {
+    amount_sat: u64,
 }
 
 impl IntoResponse for LnVerificationError {

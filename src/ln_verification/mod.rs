@@ -6,5 +6,7 @@ mod payment_hash;
 mod phoenixd_api;
 mod repository;
 mod service;
+mod verification_id;
 pub use http::router;
 pub use repository::*;
+pub use verification_id::*;
