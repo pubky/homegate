@@ -191,13 +191,8 @@ paths:
                   value: "Invalid phone number format. Must be in E.164 format (e.g., +30123456789)"
                 invalidCode:
                   value: "Invalid code format: abc123. Code must be exactly 6 digits (0-9)"
-        '422':
-          description: No active verification session
-          content:
-            text/plain:
-              schema:
-                type: string
-                example: "No active verification session for phone number"
+                noActiveVerification:
+                  value: "No active verification session for phone number"
         '500':
           description: Internal server error
           content:
@@ -225,12 +220,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RequestVerificationResponse'
+                $ref: '#/components/schemas/CreateLnVerificationResponse'
               examples:
                 success:
                   summary: Successful verification request
                   value:
-                    id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    id: "550e8400-e29b-41d4-a716-446655440000"
                     bolt11Invoice: "lnbc10u1p3qjqkapp5q..."
                     amountSat: 1000
                     expiresAt: 1704067200000
@@ -242,7 +237,29 @@ paths:
                 type: string
                 example: "Internal Server Error"
 
-  /ln_verification/{payment_hash}:
+  /ln_verification/price:
+    get:
+      summary: Get Lightning Network verification price
+      description: |
+        Returns the configured price in satoshis for Lightning Network verification.
+        This is the amount that must be paid to complete a verification.
+      operationId: getLnVerificationPrice
+      tags:
+        - Lightning Network Verification
+      responses:
+        '200':
+          description: Price retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetPriceResponse'
+              examples:
+                success:
+                  summary: Price response
+                  value:
+                    amountSat: 1000
+
+  /ln_verification/{id}:
     get:
       summary: Get Lightning Network verification status
       description: |
@@ -250,32 +267,32 @@ paths:
         
         Returns the verification details including payment status, invoice information, and signup code (if payment is confirmed).
         
-        The payment_hash must be exactly 64 hexadecimal characters (case-insensitive).
+        The id must be a valid UUID.
       operationId: getLnVerification
       tags:
         - Lightning Network Verification
       parameters:
-        - name: payment_hash
+        - name: id
           in: path
           required: true
-          description: The payment hash (64 hex characters) returned from the create verification endpoint
+          description: The verification ID (UUID) returned from the create verification endpoint
           schema:
-            $ref: '#/components/schemas/PaymentHash'
+            $ref: '#/components/schemas/VerificationId'
           examples:
             valid:
-              value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+              value: "550e8400-e29b-41d4-a716-446655440000"
       responses:
         '200':
           description: Verification status retrieved successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaymentVerifiedResponse'
+                $ref: '#/components/schemas/GetLnVerificationResponse'
               examples:
                 paid:
                   summary: Payment confirmed
                   value:
-                    id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    id: "550e8400-e29b-41d4-a716-446655440000"
                     amountSat: 1000
                     expiresAt: 1704067200000
                     isPaid: true
@@ -285,7 +302,7 @@ paths:
                 unpaid:
                   summary: Payment pending
                   value:
-                    id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    id: "550e8400-e29b-41d4-a716-446655440000"
                     amountSat: 1000
                     expiresAt: 1704067200000
                     isPaid: false
@@ -293,16 +310,14 @@ paths:
                     homeserverPubky: "test-homeserver-pubky"
                     createdAt: 1704066600000
         '400':
-          description: Invalid payment hash format
+          description: Invalid verification ID format
           content:
             text/plain:
               schema:
                 type: string
               examples:
-                invalidLength:
-                  value: "Payment hash must be exactly 64 hex characters, got 32 characters"
-                invalidCharacters:
-                  value: "Payment hash must contain only hex characters (0-9, a-f, A-F)"
+                invalidFormat:
+                  value: "Invalid verification ID format: invalid input"
         '404':
           description: Verification not found
           content:
@@ -318,7 +333,7 @@ paths:
                 type: string
                 example: "Internal Server Error"
 
-  /ln_verification/{payment_hash}/await:
+  /ln_verification/{id}/await:
     get:
       summary: Wait for Lightning Network payment verification
       description: |
@@ -331,32 +346,32 @@ paths:
         
         If a timeout occurs, the client should retry the request. The payment may still be processing.
         
-        The payment_hash must be exactly 64 hexadecimal characters (case-insensitive).
+        The id must be a valid UUID.
       operationId: awaitLnVerification
       tags:
         - Lightning Network Verification
       parameters:
-        - name: payment_hash
+        - name: id
           in: path
           required: true
-          description: The payment hash (64 hex characters) returned from the create verification endpoint
+          description: The verification ID (UUID) returned from the create verification endpoint
           schema:
-            $ref: '#/components/schemas/PaymentHash'
+            $ref: '#/components/schemas/VerificationId'
           examples:
             valid:
-              value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+              value: "550e8400-e29b-41d4-a716-446655440000"
       responses:
         '200':
           description: Payment verified successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaymentVerifiedResponse'
+                $ref: '#/components/schemas/GetLnVerificationResponse'
               examples:
                 success:
                   summary: Payment confirmed
                   value:
-                    id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    id: "550e8400-e29b-41d4-a716-446655440000"
                     amountSat: 1000
                     expiresAt: 1704067200000
                     isPaid: true
@@ -364,16 +379,14 @@ paths:
                     homeserverPubky: "test-homeserver-pubky"
                     createdAt: 1704066600000
         '400':
-          description: Invalid payment hash format
+          description: Invalid verification ID format
           content:
             text/plain:
               schema:
                 type: string
               examples:
-                invalidLength:
-                  value: "Payment hash must be exactly 64 hex characters, got 32 characters"
-                invalidCharacters:
-                  value: "Payment hash must contain only hex characters (0-9, a-f, A-F)"
+                invalidFormat:
+                  value: "Invalid verification ID format: invalid input"
         '404':
           description: Verification not found
           content:
@@ -405,6 +418,9 @@ components:
       properties:
         phoneNumber:
           $ref: '#/components/schemas/PhoneNumber'
+        dispatchId:
+          type: string
+          description: Optional dispatch ID for tracking verification requests
       example:
         phoneNumber: "+30123456789"
 
@@ -452,7 +468,7 @@ components:
           enum: ["false"]
           description: Indicates the code is invalid
 
-    RequestVerificationResponse:
+    CreateLnVerificationResponse:
       type: object
       required:
         - id
@@ -461,8 +477,8 @@ components:
         - expiresAt
       properties:
         id:
-          $ref: '#/components/schemas/PaymentHash'
-          description: Payment hash identifier for this verification
+          $ref: '#/components/schemas/VerificationId'
+          description: Verification ID for this verification request
         bolt11Invoice:
           type: string
           description: BOLT11 Lightning Network invoice string
@@ -479,7 +495,7 @@ components:
           description: Unix timestamp in milliseconds when the invoice expires
           example: 1704067200000
 
-    PaymentVerifiedResponse:
+    GetLnVerificationResponse:
       type: object
       required:
         - id
@@ -490,8 +506,8 @@ components:
         - createdAt
       properties:
         id:
-          $ref: '#/components/schemas/PaymentHash'
-          description: Payment hash identifier
+          $ref: '#/components/schemas/VerificationId'
+          description: Verification ID
         amountSat:
           type: integer
           format: int64
@@ -522,6 +538,18 @@ components:
           description: Unix timestamp in milliseconds when the verification was created
           example: 1704066600000
 
+    GetPriceResponse:
+      type: object
+      required:
+        - amountSat
+      properties:
+        amountSat:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Configured price in satoshis for Lightning Network verification
+          example: 1000
+
     PhoneNumber:
       type: string
       pattern: '^\+[1-9]\d{1,14}$'
@@ -544,16 +572,14 @@ components:
       minLength: 6
       maxLength: 6
 
-    PaymentHash:
+    VerificationId:
       type: string
-      pattern: '^[0-9a-fA-F]{64}$'
+      format: uuid
       description: |
-        Lightning Network payment hash.
-        Must be exactly 64 hexadecimal characters (case-insensitive).
+        Lightning Network verification ID.
+        Must be a valid UUID (e.g., 550e8400-e29b-41d4-a716-446655440000).
         The value is normalized to lowercase.
-      example: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-      minLength: 64
-      maxLength: 64
+      example: "550e8400-e29b-41d4-a716-446655440000"
 
   responses:
     InternalServerError:
