@@ -8,6 +8,7 @@ use crate::{
 pub struct AppState {
     pub db: SqlDb,
     pub sms_verification: SmsVerificationService,
+    pub homeserver_admin_api: HomeserverAdminAPI,
 }
 
 impl AppState {
@@ -20,13 +21,14 @@ impl AppState {
         );
         let sms_verification = SmsVerificationService::new(
             prelude_api,
-            homeserver_admin_api,
+            homeserver_admin_api.clone(),
             config.max_sms_verifications_per_week,
             config.max_sms_verifications_per_year,
         );
         Self {
             db,
             sms_verification,
+            homeserver_admin_api,
         }
     }
 }

@@ -2,6 +2,7 @@ use axum::{
     Json, Router,
     extract::State,
     http::StatusCode,
+    middleware,
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -21,9 +22,15 @@ pub async fn router(
     db: &crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
     let state = AppState::new(config, db.clone());
+    let homeserver_api = state.homeserver_admin_api.clone();
+
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
+        .route_layer(middleware::from_fn(move |req, next| {
+            let api = homeserver_api.clone();
+            crate::shared::check_homeserver_health(api, req, next)
+        }))
         .with_state(state))
 }
 
@@ -294,5 +301,125 @@ mod tests {
         );
 
         // Wiremock verifies all expected calls were made
+    }
+
+    /// Integration tests that verify the homeserver health middleware actually works
+    /// when integrated with the full router (not router_with_db which bypasses middleware)
+    mod middleware_integration {
+        use super::*;
+        use crate::e2e::WiremockServers;
+        use wiremock::{
+            Mock, ResponseTemplate,
+            matchers::{method, path},
+        };
+
+        /// Helper to create a router with the production path that includes middleware
+        async fn create_router_with_middleware(
+            pool: PgPool,
+            servers: &WiremockServers,
+        ) -> (TestServer, PgPool) {
+            use crate::EnvConfig;
+            use crate::infrastructure::sql::SqlDb;
+
+            let config = EnvConfig::for_test(
+                servers.prelude_server.uri().parse().unwrap(),
+                servers.homeserver_server.uri().parse().unwrap(),
+            );
+
+            let db = SqlDb::test(pool.clone()).await;
+
+            // Use the production router() function which includes middleware
+            let sms_verification_router =
+                router(&config, &db).await.expect("Failed to create router");
+
+            let router = Router::new().nest("/sms_verification", sms_verification_router);
+            let app = router.into_make_service_with_connect_info::<SocketAddr>();
+            let server = TestServer::new(app).expect("Failed to create test server");
+
+            (server, pool)
+        }
+
+        #[sqlx::test]
+        async fn middleware_blocks_send_code_when_homeserver_is_down(pool: PgPool) {
+            let servers = WiremockServers::start().await;
+
+            // Setup homeserver to be unresponsive (return 500)
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(500))
+                .expect(1)
+                .mount(&servers.homeserver_server)
+                .await;
+
+            let (server, _pool) = create_router_with_middleware(pool, &servers).await;
+
+            // Attempt to send code
+            let response = server
+                .post("/sms_verification/send_code")
+                .json(&serde_json::json!({ "phoneNumber": "+30123456789" }))
+                .await;
+
+            // Should return 503 due to homeserver being down
+            response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response.text(),
+                "Homeserver temporarily unavailable, please retry"
+            );
+        }
+
+        #[sqlx::test]
+        async fn middleware_blocks_validate_code_when_homeserver_is_down(pool: PgPool) {
+            let servers = WiremockServers::start().await;
+
+            // Setup homeserver to return 500
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(500))
+                .expect(1)
+                .mount(&servers.homeserver_server)
+                .await;
+
+            let (server, _pool) = create_router_with_middleware(pool, &servers).await;
+
+            // Attempt to validate code when homeserver is down
+            // Should be blocked by middleware before reaching the handler
+            let response = server
+                .post("/sms_verification/validate_code")
+                .json(&serde_json::json!({
+                    "phoneNumber": "+30123456789",
+                    "code": "123456"
+                }))
+                .await;
+
+            // Should return 503 due to homeserver being down
+            // The middleware blocks the request before it reaches the handler
+            response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response.text(),
+                "Homeserver temporarily unavailable, please retry"
+            );
+        }
+
+        #[sqlx::test]
+        async fn middleware_blocks_when_homeserver_is_unreachable(pool: PgPool) {
+            let servers = WiremockServers::start().await;
+
+            // Don't mount any mock - this simulates connection refused
+            // The middleware will try to connect and fail
+
+            let (server, _pool) = create_router_with_middleware(pool, &servers).await;
+
+            // Attempt to send code - should be blocked immediately by middleware
+            let response = server
+                .post("/sms_verification/send_code")
+                .json(&serde_json::json!({ "phoneNumber": "+30123456789" }))
+                .await;
+
+            response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response.text(),
+                "Homeserver temporarily unavailable, please retry"
+            );
+        }
     }
 }
