@@ -53,13 +53,4 @@ impl HomeserverAdminAPI {
         response.error_for_status()?;
         Ok(())
     }
-
-    /// Checks if the homeserver is responsive by making a GET request to the root URL
-    /// This is NOT password protected so it won't validate the admin password.
-    pub async fn health_check(&self) -> Result<(), reqwest::Error> {
-        let url = self.base_url.join("/").expect("Failed to join URL path");
-        let response = self.http_client.get(url).send().await?;
-        response.error_for_status()?;
-        Ok(())
-    }
 }

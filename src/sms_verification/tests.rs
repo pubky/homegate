@@ -794,6 +794,20 @@ async fn test_service_success_but_homeserver_fails_marks_failed(pool: PgPool) {
         record.failure_reason,
         Some("homeserver_signup_token_generation_failed".to_string())
     );
+
+    // Verify that failed verification does NOT count towards quota
+    let phone_hash = test_phone_hasher().hash_phone_number(phone.as_str());
+    let failed_count = SmsVerificationRepository::count_verified_sessions_in_last_days(
+        &mut executor,
+        &phone_hash,
+        7,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        failed_count, 0,
+        "Failed verification should NOT count towards weekly quota"
+    );
 }
 
 // This circumstance happens if validate_code() is called before send_code() - Prelude has no prelude_id for the verification session yet so it returns a dummy value which doesnt match to anything in our db.

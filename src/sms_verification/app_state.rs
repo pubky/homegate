@@ -8,7 +8,6 @@ use crate::{
 pub struct AppState {
     pub db: SqlDb,
     pub sms_verification: SmsVerificationService,
-    pub homeserver_admin_api: HomeserverAdminAPI,
 }
 
 impl AppState {
@@ -28,7 +27,6 @@ impl AppState {
         Self {
             db,
             sms_verification,
-            homeserver_admin_api,
         }
     }
 }
