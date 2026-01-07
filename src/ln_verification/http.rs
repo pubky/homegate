@@ -13,9 +13,9 @@ use crate::{
     EnvConfig,
     infrastructure::http::HttpServerError,
     ln_verification::{
-        VerificationId, app_state::AppState, error::LnVerificationError,
-        invoice_background_syncer::InvoiceBackgroundSyncer, phoenixd_api::PhoenixdAPI,
-        service::LnVerificationService,
+        LightningVerificationEntity, VerificationId, app_state::AppState,
+        error::LnVerificationError, invoice_background_syncer::InvoiceBackgroundSyncer,
+        phoenixd_api::PhoenixdAPI, service::LnVerificationService,
     },
     shared::HomeserverAdminAPI,
 };
@@ -72,15 +72,49 @@ async fn create_verification_handler(
     Ok(Json(response))
 }
 
+/// Helper to first get verification and if not finalised then sync with phoenixd.
+/// We re-sync here to catch edge cases such as missing Phoenixd Webhooks or the Homeserver generate_signup_code() call failing upon Webhooks arrival.
+async fn get_and_sync_verification(
+    state: &AppState,
+    id: &VerificationId,
+) -> Result<LightningVerificationEntity, Response> {
+    let verification = match state.ln_service.get_verification(id).await {
+        Ok(Some(verification)) => verification,
+        Ok(None) => return Err((StatusCode::NOT_FOUND, "Not found".to_string()).into_response()),
+        Err(e) => return Err(e.into_response()),
+    };
+
+    if !verification.is_finalised() {
+        match state.syncer.sync_invoice(&verification.payment_hash).await {
+            Ok(Some(newly_finalised)) => {
+                return Ok(newly_finalised);
+            }
+            Ok(None) => {
+                return Ok(verification);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    verification_id = %id,
+                    payment_hash = %verification.payment_hash.as_str(),
+                    error = %e,
+                    "Failed to sync invoice, returning current state"
+                );
+                return Ok(verification);
+            }
+        }
+    }
+
+    Ok(verification)
+}
+
 /// Get a Lightning Network verification handler
 async fn get_verification_handler(
     State(state): State<AppState>,
     Path(id): Path<VerificationId>,
 ) -> Response {
-    let verification = match state.ln_service.get_verification(&id).await {
-        Ok(Some(verification)) => verification,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Not found".to_string()).into_response(),
-        Err(e) => return e.into_response(),
+    let verification = match get_and_sync_verification(&state, &id).await {
+        Ok(verification) => verification,
+        Err(response) => return response,
     };
     Json(GetVerificationResponse::from_entity(
         verification,
@@ -94,10 +128,9 @@ async fn await_verification_handler(
     State(state): State<AppState>,
     Path(id): Path<VerificationId>,
 ) -> impl IntoResponse {
-    let mut verification = match state.ln_service.get_verification(&id).await {
-        Ok(Some(verification)) => verification,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Not found".to_string()).into_response(),
-        Err(e) => return e.into_response(),
+    let mut verification = match get_and_sync_verification(&state, &id).await {
+        Ok(verification) => verification,
+        Err(response) => return response,
     };
 
     if !verification.is_finalised() {
@@ -183,10 +216,6 @@ impl IntoResponse for LnVerificationError {
         let status = match self {
             LnVerificationError::Phoenixd(ref err) => {
                 tracing::error!(error = %err, "Phoenixd API error");
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-            LnVerificationError::Homeserver(ref err) => {
-                tracing::error!(error = %err, "Homeserver API error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             LnVerificationError::Database(ref err) => {

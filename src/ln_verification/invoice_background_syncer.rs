@@ -68,16 +68,24 @@ impl InvoiceBackgroundSyncer {
 
     /// Sync an invoice.
     /// If the invoice is finalized, it will be sent to the verification completed channel.
+    /// # Returns
+    /// * `Ok(Some(verification))` - If the invoice was newly finalized during this sync
+    /// * `Ok(None)` - If the invoice was already finalized, not found, not paid, or homeserver failed
     /// # Errors
     /// * `LnVerificationError` - If the invoice sync fails
-    async fn sync_invoice(&self, payment_hash: &PaymentHash) -> Result<(), LnVerificationError> {
+    pub async fn sync_invoice(
+        &self,
+        payment_hash: &PaymentHash,
+    ) -> Result<Option<LightningVerificationEntity>, LnVerificationError> {
         let newly_finalised = match self.service.sync_invoice(payment_hash).await? {
             Some(verification) => verification,
-            None => return Ok(()),
+            None => return Ok(None),
         };
         tracing::info!("Verification {} finalised", newly_finalised.id);
-        let _ = self.verification_completed_tx.send(newly_finalised.id);
-        Ok(())
+        let _ = self
+            .verification_completed_tx
+            .send(newly_finalised.id.clone());
+        Ok(Some(newly_finalised))
     }
 
     /// Catch up on all paid invoices

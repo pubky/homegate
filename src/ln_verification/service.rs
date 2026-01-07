@@ -77,7 +77,11 @@ impl LnVerificationService {
 
     /// Sync an phonenixd invoice with the database.
     /// This is necessary to keep our database in sync with the phoenixd invoice status.
-    /// Returns the updated verification if the invoice was finalized, None if the invoice was not found or already finalised.
+    /// # Returns
+    /// * `Ok(Some(verification))` - If the invoice was newly finalized during this sync
+    /// * `Ok(None)` - If the invoice was already finalized, not found, not paid, or homeserver failed
+    /// # Errors
+    /// * `LnVerificationError` - If database or phoenixd errors occur (homeserver errors are handled gracefully)
     pub async fn sync_invoice(
         &self,
         payment_hash: &PaymentHash,
@@ -104,11 +108,17 @@ impl LnVerificationService {
             return Ok(None);
         }
 
-        let signup_code = self
-            .homeserver_api
-            .generate_signup_token()
-            .await
-            .map_err(LnVerificationError::Homeserver)?;
+        let signup_code = match self.homeserver_api.generate_signup_token().await {
+            Ok(code) => code,
+            Err(e) => {
+                tracing::warn!(
+                    payment_hash = %payment_hash.as_str(),
+                    error = %e,
+                    "Homeserver unavailable during invoice sync, will retry later"
+                );
+                return Ok(None);
+            }
+        };
         let verification = LnVerificationRepository::update_verification_finalised(
             payment_hash,
             &signup_code,
