@@ -5,7 +5,6 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
-    middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -49,19 +48,13 @@ pub async fn router(
         }
     });
 
-    let state = AppState::new(syncer, ln_service, homeserver_api.clone());
-    let routes_with_homeserver_check = Router::new()
+    let state = AppState::new(syncer, ln_service, homeserver_api);
+    Ok(Router::new()
         .route("/", post(create_verification_handler))
         .route("/{id}", get(get_verification_handler))
         .route("/{id}/await", get(await_verification_handler))
-        .route_layer(middleware::from_fn(move |req, next| {
-            let api = homeserver_api.clone();
-            crate::shared::check_homeserver_health(api, req, next)
-        }));
-
-    let routes = Router::new().route("/price", get(get_price_handler));
-
-    Ok(routes_with_homeserver_check.merge(routes).with_state(state))
+        .route("/price", get(get_price_handler))
+        .with_state(state))
 }
 
 /// Create a new Lightning Network verification handler

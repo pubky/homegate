@@ -24,6 +24,13 @@ pub async fn router(
     let state = AppState::new(config, db.clone());
     let homeserver_api = state.homeserver_admin_api.clone();
 
+    // NOTE: SMS verification routes REQUIRE homeserver health check middleware.
+    // Unlike LN verification, SMS cannot use database transactions for atomicity because:
+    // 1. Prelude API destructively marks verification as complete when check_code() succeeds
+    // 2. If generate_signup_token() fails after that, we can't rollback Prelude's state
+    // 3. This would create an inconsistent state: Prelude says "verified", our DB says "failed"
+    //
+    // The middleware mitigates this by failing fast (503) if homeserver is unreachable.
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
