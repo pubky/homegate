@@ -191,7 +191,11 @@ impl IntoResponse for LnVerificationError {
                 tracing::error!(error = %err, "Database operation failed");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
+            LnVerificationError::HomeserverUnavailable => {
+                tracing::error!("Homeserver unavailable during LN verification");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         };
-        (status, "Internal Server Error").into_response()
+        (status, self.to_string()).into_response()
     }
 }

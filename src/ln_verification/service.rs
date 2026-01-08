@@ -121,9 +121,9 @@ impl LnVerificationService {
                 tracing::warn!(
                     payment_hash = %payment_hash.as_str(),
                     error = %e,
-                    "Homeserver unavailable during invoice sync, will retry later"
+                    "Homeserver unavailable during invoice sync"
                 );
-                return Ok(None);
+                return Err(LnVerificationError::HomeserverUnavailable);
             }
         };
         let verification = LnVerificationRepository::update_verification_finalised(
@@ -192,20 +192,10 @@ impl LnVerificationService {
             None => return Ok(None),
         };
 
-        if !verification.is_finalised() {
-            match self.sync_invoice(&verification.payment_hash).await {
-                Ok(Some(newly_finalised)) => return Ok(Some(newly_finalised)),
-                Ok(None) => return Ok(Some(verification)),
-                Err(e) => {
-                    tracing::warn!(
-                        verification_id = %id,
-                        payment_hash = %verification.payment_hash.as_str(),
-                        error = %e,
-                        "Failed to sync invoice, returning current state"
-                    );
-                    return Ok(Some(verification));
-                }
-            }
+        if !verification.is_finalised()
+            && let Some(newly_finalised) = self.sync_invoice(&verification.payment_hash).await?
+        {
+            return Ok(Some(newly_finalised));
         }
 
         Ok(Some(verification))
@@ -298,7 +288,17 @@ impl LnVerificationService {
                 break;
             }
             for invoice in invoices.iter() {
-                self.sync_invoice(&invoice.payment_hash).await?;
+                match self.sync_invoice(&invoice.payment_hash).await {
+                    Ok(_) => {}
+                    // Homeserver unavailable is transient, will retry on next API call or sync
+                    Err(LnVerificationError::HomeserverUnavailable) => {
+                        tracing::warn!(
+                            payment_hash = %invoice.payment_hash.as_str(),
+                            "Homeserver unavailable during catchup sync, will retry later"
+                        );
+                    }
+                    Err(e) => return Err(e),
+                }
             }
 
             offset += limit;
@@ -333,7 +333,17 @@ impl LnVerificationService {
                 Some(event) => event,
                 None => break, // websocket closed
             };
-            self.sync_invoice(&event.payment_hash).await?;
+            match self.sync_invoice(&event.payment_hash).await {
+                Ok(_) => {}
+                // Homeserver unavailable is transient, will retry on next API call or sync
+                Err(LnVerificationError::HomeserverUnavailable) => {
+                    tracing::warn!(
+                        payment_hash = %event.payment_hash.as_str(),
+                        "Homeserver unavailable during websocket sync, will retry later"
+                    );
+                }
+                Err(e) => return Err(e),
+            }
         }
         tracing::warn!("Websocket closed");
         Ok(())
