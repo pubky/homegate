@@ -13,9 +13,8 @@ use crate::{
     EnvConfig,
     infrastructure::http::HttpServerError,
     ln_verification::{
-        LightningVerificationEntity, VerificationId, app_state::AppState,
-        error::LnVerificationError, invoice_background_syncer::InvoiceBackgroundSyncer,
-        phoenixd_api::PhoenixdAPI, service::LnVerificationService,
+        VerificationId, app_state::AppState, error::LnVerificationError, phoenixd_api::PhoenixdAPI,
+        service::LnVerificationService, types::VerificationResponse,
     },
     shared::HomeserverAdminAPI,
 };
@@ -30,25 +29,26 @@ pub async fn router(
         &config.homeserver_admin_password,
         &config.homeserver_pubky,
     );
+
     let ln_service = LnVerificationService::new(
         db.clone(),
-        phoenixd_api.clone(),
+        phoenixd_api,
         homeserver_api.clone(),
         config.lightning_invoice_price_sat,
         config.lightning_invoice_description.clone(),
         config.lightning_invoice_expiry_seconds,
     );
+    let ln_service = std::sync::Arc::new(ln_service);
 
-    let syncer = InvoiceBackgroundSyncer::new(ln_service.clone(), phoenixd_api).await;
-    let syncer_for_task = syncer.clone();
+    let service_for_task = ln_service.clone();
     tokio::task::spawn(async move {
-        if let Err(e) = syncer_for_task.run().await {
+        if let Err(e) = service_for_task.run_background_sync().await {
             tracing::error!(error = %e, "Error running invoice background syncer");
             process::exit(1); // Force a restart of the server
         }
     });
 
-    let state = AppState::new(syncer, ln_service, homeserver_api);
+    let state = AppState::new(ln_service, homeserver_api);
     Ok(Router::new()
         .route("/", post(create_verification_handler))
         .route("/{id}", get(get_verification_handler))
@@ -72,50 +72,19 @@ async fn create_verification_handler(
     Ok(Json(response))
 }
 
-/// Helper to first get verification and if not finalised then sync with phoenixd.
-/// We re-sync here to catch edge cases such as missing Phoenixd Webhooks or the Homeserver generate_signup_code() call failing upon Webhooks arrival.
-async fn get_and_sync_verification(
-    state: &AppState,
-    id: &VerificationId,
-) -> Result<LightningVerificationEntity, Response> {
-    let verification = match state.ln_service.get_verification(id).await {
-        Ok(Some(verification)) => verification,
-        Ok(None) => return Err((StatusCode::NOT_FOUND, "Not found".to_string()).into_response()),
-        Err(e) => return Err(e.into_response()),
-    };
-
-    if !verification.is_finalised() {
-        match state.syncer.sync_invoice(&verification.payment_hash).await {
-            Ok(Some(newly_finalised)) => {
-                return Ok(newly_finalised);
-            }
-            Ok(None) => {
-                return Ok(verification);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    verification_id = %id,
-                    payment_hash = %verification.payment_hash.as_str(),
-                    error = %e,
-                    "Failed to sync invoice, returning current state"
-                );
-                return Ok(verification);
-            }
-        }
-    }
-
-    Ok(verification)
-}
-
 /// Get a Lightning Network verification handler
 async fn get_verification_handler(
     State(state): State<AppState>,
     Path(id): Path<VerificationId>,
 ) -> Response {
-    let verification = match get_and_sync_verification(&state, &id).await {
-        Ok(verification) => verification,
-        Err(response) => return response,
+    let verification = match state.ln_service.get_and_sync_verification(&id).await {
+        Ok(Some(verification)) => verification,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, "Not found".to_string()).into_response();
+        }
+        Err(e) => return e.into_response(),
     };
+
     Json(GetVerificationResponse::from_entity(
         verification,
         state.homeserver_api.get_homeserver_pubky(),
@@ -128,35 +97,35 @@ async fn await_verification_handler(
     State(state): State<AppState>,
     Path(id): Path<VerificationId>,
 ) -> impl IntoResponse {
-    let mut verification = match get_and_sync_verification(&state, &id).await {
-        Ok(verification) => verification,
-        Err(response) => return response,
+    let response = match state
+        .ln_service
+        .get_and_await_verification(&id, Duration::from_secs(60))
+        .await
+    {
+        Ok(Some(response)) => response,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, "Not found".to_string()).into_response();
+        }
+        Err(e) => return e.into_response(),
     };
 
-    if !verification.is_finalised() {
-        verification = match state
-            .syncer
-            .wait_for_payment(&id, Duration::from_secs(60))
-            .await
-        {
-            Ok(Some(verification)) => verification,
-            Ok(None) => {
-                return (
-                    StatusCode::REQUEST_TIMEOUT,
-                    "Long poll timeout. Please try again.".to_string(),
-                )
-                    .into_response();
+    match response {
+        VerificationResponse::Success(verification) => {
+            if verification.is_finalised() {
+                tracing::info!("Awaited verification {}", verification.id);
             }
-            Err(e) => return e.into_response(),
-        };
-        tracing::info!("Awaited verification {}", verification.id);
-    };
-
-    Json(GetVerificationResponse::from_entity(
-        verification,
-        state.homeserver_api.get_homeserver_pubky(),
-    ))
-    .into_response()
+            Json(GetVerificationResponse::from_entity(
+                verification,
+                state.homeserver_api.get_homeserver_pubky(),
+            ))
+            .into_response()
+        }
+        VerificationResponse::TimedOut => (
+            StatusCode::REQUEST_TIMEOUT,
+            "Long poll timeout. Please try again.".to_string(),
+        )
+            .into_response(),
+    }
 }
 
 /// Get the configured Lightning invoice price handler
