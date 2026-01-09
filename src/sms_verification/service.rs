@@ -159,7 +159,7 @@ impl SmsVerificationService {
             PreludeCheckCodeResponse::Success { id, .. } => {
                 let code = match self.homeserver_admin_api.generate_signup_token().await {
                     Ok(code) => code,
-                    Err(e) => {
+                    Err(_e) => {
                         if let Err(e) = SmsVerificationRepository::mark_failed(
                             &mut executor,
                             &id,
@@ -169,7 +169,7 @@ impl SmsVerificationService {
                         {
                             tracing::error!("{}", e);
                         }
-                        return Err(e.into());
+                        return Err(SmsVerificationError::HomeserverUnavailable);
                     }
                 };
 

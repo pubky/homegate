@@ -24,6 +24,9 @@ pub enum SmsVerificationError {
     #[error("External service rate limit exceeded")]
     RateLimited { retry_after: Option<u64> },
 
+    #[error("Homeserver temporarily unavailable, please retry")]
+    HomeserverUnavailable,
+
     #[error("HTTP request failed: {0}")]
     RequestFailed(#[from] reqwest::Error),
 

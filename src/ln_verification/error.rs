@@ -8,6 +8,6 @@ pub enum LnVerificationError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
-    #[error("Homeserver API error: {0}")]
-    Homeserver(reqwest::Error),
+    #[error("Homeserver temporarily unavailable, please retry")]
+    HomeserverUnavailable,
 }

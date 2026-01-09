@@ -12,7 +12,7 @@ use infrastructure::{EnvConfig, http::HttpServer};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env file.
-    // Init tracing after  the .env file is loaded so that the logging is configured.
+    // Init tracing after the .env file is loaded so that the logging is configured.
     // If the .env loading fails, log it after tracing is actually initialized.
     let dot_env_load_result = dotenvy::dotenv();
     tracing_subscriber::fmt::init();
@@ -24,10 +24,9 @@ async fn main() -> anyhow::Result<()> {
 
     let http_server = HttpServer::start(config).await?;
 
-    tracing::info!("Homeserver HTTP listening on {}", http_server.url_string());
+    tracing::info!("Homegate HTTP listening on {}", http_server.url_string());
 
-    tracing::info!("Press Ctrl+C to stop the Homeserver");
+    tracing::info!("Press Ctrl+C to stop Homegate");
     tokio::signal::ctrl_c().await?;
-    tracing::info!("Shutting down Homeserver");
     Ok(())
 }

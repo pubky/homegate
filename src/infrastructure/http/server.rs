@@ -10,7 +10,7 @@ use crate::{
         sql::{DbError, SqlDb},
     },
     ln_verification,
-    shared::HomeserverObserver,
+    shared::HomeserverAdminAPI,
     sms_verification::http::router,
 };
 
@@ -54,7 +54,7 @@ impl HttpServer {
     }
 
     pub async fn start(config: EnvConfig) -> Result<Self, HttpServerError> {
-        HomeserverObserver::spawn_crash_on_unresponsive_homeserver(&config).await;
+        Self::err_on_homeserver_admin_api_failure(&config).await;
 
         let db = SqlDb::connect(&config.database_url)
             .await
@@ -104,6 +104,22 @@ impl HttpServer {
     pub fn shutdown(&self) {
         self.http_handle
             .graceful_shutdown(Some(Duration::from_secs(5)));
+    }
+
+    // Verify homeserver is available at startup and credentials are correct, exit process if not.
+    async fn err_on_homeserver_admin_api_failure(config: &EnvConfig) {
+        let homeserver_admin_api = HomeserverAdminAPI::new(
+            &config.homeserver_admin_api_url,
+            &config.homeserver_admin_password,
+            &config.homeserver_pubky,
+        );
+        if let Err(e) = homeserver_admin_api.verify_password().await {
+            tracing::error!(
+                "Homeserver connection failed: {:?}. Stopping server because credentials are incorrect or homeserver is unavailable.",
+                e
+            );
+            std::process::exit(1);
+        }
     }
 }
 

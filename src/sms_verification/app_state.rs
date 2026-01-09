@@ -20,7 +20,7 @@ impl AppState {
         );
         let sms_verification = SmsVerificationService::new(
             prelude_api,
-            homeserver_admin_api,
+            homeserver_admin_api.clone(),
             config.max_sms_verifications_per_week,
             config.max_sms_verifications_per_year,
         );

@@ -1,11 +1,11 @@
 mod app_state;
 mod error;
 mod http;
-mod invoice_background_syncer;
 mod payment_hash;
 mod phoenixd_api;
 mod repository;
 mod service;
+mod types;
 mod verification_id;
 pub use http::router;
 pub use repository::*;

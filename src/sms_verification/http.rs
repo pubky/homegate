@@ -81,6 +81,10 @@ impl IntoResponse for SmsVerificationError {
                 }
                 return response;
             }
+            SmsVerificationError::HomeserverUnavailable => {
+                tracing::error!("Homeserver unavailable during SMS verification");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
             SmsVerificationError::RequestFailed(ref err) => {
                 tracing::error!(error = %err, "Failed to communicate with SMS provider");
                 StatusCode::INTERNAL_SERVER_ERROR
