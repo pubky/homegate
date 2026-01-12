@@ -7,7 +7,7 @@ use crate::sms_verification::prelude_api::{
 };
 use crate::sms_verification::repository::SmsVerificationRepository;
 use crate::sms_verification::types::{
-    CreateVerificationRequest, ValidateCodeRequest, ValidateCodeResponse,
+    CreateVerificationRequest, PhoneNumber, ValidateCodeRequest, ValidateCodeResponse,
 };
 use std::net::IpAddr;
 
@@ -18,7 +18,7 @@ pub struct SmsVerificationService {
     hasher_argon2id: HasherArgon2id,
     max_verifications_per_week: u32,
     max_verifications_per_year: u32,
-    limit_whitelist: Vec<String>,
+    limit_whitelist: Vec<PhoneNumber>,
 }
 
 impl SmsVerificationService {
@@ -27,8 +27,12 @@ impl SmsVerificationService {
         homeserver_admin_api: HomeserverAdminAPI,
         max_verifications_per_week: u32,
         max_verifications_per_year: u32,
-        limit_whitelist: Vec<String>,
+        limit_whitelist: Vec<PhoneNumber>,
     ) -> Self {
+        if !limit_whitelist.is_empty() {
+            tracing::info!("SMS verification limit whitelist: {:?}", limit_whitelist);
+        }
+
         Self {
             prelude_api,
             homeserver_admin_api,
@@ -39,11 +43,16 @@ impl SmsVerificationService {
         }
     }
 
+    #[cfg(test)]
+    pub fn set_limit_whitelist(&mut self, whitelist: Vec<PhoneNumber>) {
+        self.limit_whitelist = whitelist;
+    }
+
     /// Check if a phone number has reached its limits for new verificaitons
     pub async fn check_verification_limit(
         &mut self,
         executor: &mut UnifiedExecutor<'_>,
-        phone_number: &str,
+        phone_number: &PhoneNumber,
         phone_number_hash: &str,
     ) -> Result<(), SmsVerificationError> {
         if self.limit_whitelist.iter().any(|w| w == phone_number) {
@@ -97,12 +106,8 @@ impl SmsVerificationService {
 
         let mut executor: UnifiedExecutor<'_> = db.pool().into();
 
-        self.check_verification_limit(
-            &mut executor,
-            request.phone_number.as_str(),
-            &phone_number_hash,
-        )
-        .await?;
+        self.check_verification_limit(&mut executor, &request.phone_number, &phone_number_hash)
+            .await?;
 
         let prelude_response = self
             .prelude_api

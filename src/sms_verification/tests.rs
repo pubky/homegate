@@ -30,7 +30,7 @@ fn test_phone_hasher() -> HasherArgon2id {
 }
 
 /// Helper to create service with wiremock for direct service layer testing
-async fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerificationService {
+fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerificationService {
     use crate::EnvConfig;
 
     let config = EnvConfig::for_test(
@@ -54,7 +54,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     use wiremock::{Mock, ResponseTemplate};
 
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30123456789").unwrap();
@@ -197,7 +197,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_session_lifecycle(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     // Test 1: Active session reuse
@@ -333,7 +333,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_max_verified_sessions_limits(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
     let phone = PhoneNumber::new("+30111111112").unwrap();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -536,10 +536,174 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
     }
 }
 
+/// Tests that whitelisted phone numbers bypass verification rate limits.
+/// The whitelist is configured via SMS_VERIFICATIONS_LIMIT_WHITELIST env var.
+#[sqlx::test]
+async fn test_service_whitelist_bypasses_limits(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let phone = PhoneNumber::new("+30111111113").unwrap();
+
+    // Create service and add this phone number to the whitelist
+    let mut service = create_service_with_mocked_apis(&servers);
+    service.set_limit_whitelist(vec![phone.clone()]);
+    let db = SqlDb::test(pool.clone()).await;
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Setup mocks for many successful verifications (more than weekly + annual limits combined)
+    // Weekly limit is 2, annual limit is 4, so we'll do 5 to prove whitelist bypasses both
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+        .expect(5)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_prelude_check_code(&phone, TEST_VERIFICATION_CODE, "success")
+        .expect(5)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_homeserver_signup_token("test-token")
+        .expect(5)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    // Complete 5 verifications - all should succeed due to whitelist
+    for i in 0..5 {
+        service
+            .create_verification(
+                &db,
+                CreateVerificationRequest {
+                    phone_number: phone.clone(),
+                    dispatch_id: None,
+                },
+                ip,
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                panic!(
+                    "send_code {} should succeed for whitelisted number, got: {:?}",
+                    i, e
+                )
+            });
+
+        service
+            .validate_code(
+                &db,
+                ValidateCodeRequest {
+                    phone_number: phone.clone(),
+                    code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
+                },
+            )
+            .await
+            .unwrap_or_else(|e| {
+                panic!(
+                    "verify_code {} should succeed for whitelisted number, got: {:?}",
+                    i, e
+                )
+            });
+    }
+
+    // Verify all 5 verifications are in the database as VERIFIED
+    let hashed_phone = test_phone_hasher().hash_phone_number(phone.as_str());
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM sms_verifications WHERE phone_number_hash = $1 AND status = 'VERIFIED'",
+    )
+    .bind(&hashed_phone)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+
+    assert_eq!(
+        count.0, 5,
+        "All 5 verifications should be VERIFIED for whitelisted number"
+    );
+}
+
+/// Tests that non-whitelisted phone numbers are still subject to rate limits
+/// when a whitelist is configured (whitelist doesn't disable limits globally).
+#[sqlx::test]
+async fn test_service_whitelist_does_not_affect_other_numbers(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let whitelisted_phone = PhoneNumber::new("+30111111114").unwrap();
+    let regular_phone = PhoneNumber::new("+30111111115").unwrap();
+
+    // Create service and add only whitelisted_phone to the whitelist
+    let mut service = create_service_with_mocked_apis(&servers);
+    service.set_limit_whitelist(vec![whitelisted_phone]);
+    let db = SqlDb::test(pool.clone()).await;
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Setup mocks for regular phone (2 successful verifications)
+    setup_prelude_create_verification(&regular_phone, Some(ip), "success", None)
+        .expect(2)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_prelude_check_code(&regular_phone, TEST_VERIFICATION_CODE, "success")
+        .expect(2)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_homeserver_signup_token("test-token")
+        .expect(2)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    // Complete 2 verifications for regular phone (reaching weekly limit)
+    for i in 0..2 {
+        service
+            .create_verification(
+                &db,
+                CreateVerificationRequest {
+                    phone_number: regular_phone.clone(),
+                    dispatch_id: None,
+                },
+                ip,
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("send_code {} should succeed, got: {:?}", i, e));
+
+        service
+            .validate_code(
+                &db,
+                ValidateCodeRequest {
+                    phone_number: regular_phone.clone(),
+                    code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
+                },
+            )
+            .await
+            .unwrap_or_else(|e| panic!("verify_code {} should succeed, got: {:?}", i, e));
+    }
+
+    // 3rd attempt for regular phone should fail (weekly limit)
+    let result = service
+        .create_verification(
+            &db,
+            CreateVerificationRequest {
+                phone_number: regular_phone.clone(),
+                dispatch_id: None,
+            },
+            ip,
+            None,
+        )
+        .await;
+
+    match result {
+        Err(SmsVerificationError::WeeklyLimitExceeded) => {
+            // Test passes - regular phone is still rate limited
+        }
+        other => panic!(
+            "Expected WeeklyLimitExceeded for non-whitelisted number, got: {:?}",
+            other
+        ),
+    }
+}
+
 #[sqlx::test]
 async fn test_service_input_validation_and_errors(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
@@ -601,7 +765,7 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30666666666").unwrap();
@@ -729,7 +893,7 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_success_but_homeserver_fails_marks_failed(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30888888888").unwrap();
@@ -814,7 +978,7 @@ async fn test_service_success_but_homeserver_fails_marks_failed(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30777777777").unwrap();
@@ -956,7 +1120,7 @@ async fn test_repository_mark_failed_by_phone_number(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let phone_send = PhoneNumber::new("+30666666666").unwrap();
@@ -1016,7 +1180,7 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_database_error_handling(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30777777777").unwrap();
@@ -1078,7 +1242,7 @@ async fn test_service_database_error_handling(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -1269,7 +1433,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30333333333").unwrap();
@@ -1421,7 +1585,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_blocked_phone_number(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30444444444").unwrap();
@@ -1520,7 +1684,7 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_retry_response_from_prelude(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30555555555").unwrap();
@@ -1577,7 +1741,7 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
 #[sqlx::test]
 async fn test_repository_state_mutation_protection(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers).await;
+    let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
