@@ -3,7 +3,7 @@ use axum::{
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 
 use crate::sms_verification::{
@@ -24,6 +24,7 @@ pub async fn router(
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
+        .route("/info", get(get_info_handler))
         .with_state(state))
 }
 
@@ -36,6 +37,7 @@ pub async fn router_with_db(
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
+        .route("/info", get(get_info_handler))
         .with_state(state))
 }
 
@@ -61,6 +63,13 @@ async fn validate_code_handler(
         .validate_code(&state.db, request)
         .await?;
     Ok(Json(response))
+}
+
+/// Get SMS verification info handler.
+/// Used by Franky to check if the user is in a country which allows SMS verification.
+/// IP-based geo-blocking is done at the nginx level; this endpoint confirms service availability.
+async fn get_info_handler() -> StatusCode {
+    StatusCode::OK
 }
 
 impl IntoResponse for SmsVerificationError {
@@ -298,5 +307,15 @@ mod tests {
         );
 
         // Wiremock verifies all expected calls were made
+    }
+
+    /// Tests the /info endpoint returns 200 OK.
+    #[sqlx::test]
+    async fn test_info_endpoint_returns_ok(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let (server, _pool) = create_http_test_server(pool, &servers).await;
+
+        let response = server.get("/sms_verification/info").await;
+        response.assert_status_ok();
     }
 }

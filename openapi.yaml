@@ -237,25 +237,43 @@ paths:
                 type: string
                 example: "Internal Server Error"
 
-  /ln_verification/price:
+  /sms_verification/info:
     get:
-      summary: Get Lightning Network verification price
+      summary: Get SMS verification info
+      description: |
+        Returns service availability for SMS verification.
+
+        Used by Franky to check if the user is in a country which allows SMS verification.
+        IP-based geo-blocking is done at the nginx level; this endpoint confirms service availability.
+      operationId: getSmsVerificationInfo
+      tags:
+        - SMS Verification
+      responses:
+        '200':
+          description: SMS verification is available
+
+  /ln_verification/info:
+    get:
+      summary: Get Lightning Network verification info
       description: |
         Returns the configured price in satoshis for Lightning Network verification.
         This is the amount that must be paid to complete a verification.
-      operationId: getLnVerificationPrice
+
+        Used by Franky to check if the user is in a country which allows Lightning verification.
+        IP-based geo-blocking is done at the nginx level; this endpoint confirms service availability.
+      operationId: getLnVerificationInfo
       tags:
         - Lightning Network Verification
       responses:
         '200':
-          description: Price retrieved successfully
+          description: Info retrieved successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GetPriceResponse'
+                $ref: '#/components/schemas/LnInfoResponse'
               examples:
                 success:
-                  summary: Price response
+                  summary: Info response
                   value:
                     amountSat: 1000
 
@@ -538,7 +556,7 @@ components:
           description: Unix timestamp in milliseconds when the verification was created
           example: 1704066600000
 
-    GetPriceResponse:
+    LnInfoResponse:
       type: object
       required:
         - amountSat

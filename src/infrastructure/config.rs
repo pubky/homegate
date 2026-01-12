@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::infrastructure::sql::ConnectionString;
+use crate::sms_verification::PhoneNumber;
 use url::Url;
 
 /// The environment configuration.
@@ -22,6 +23,8 @@ pub struct EnvConfig {
     pub max_sms_verifications_per_week: u32,
     #[serde(default = "default_max_sms_verifications_per_year")]
     pub max_sms_verifications_per_year: u32,
+    #[serde(default)]
+    pub sms_verifications_limit_whitelist: Vec<PhoneNumber>,
     #[serde(default = "default_lightning_verification_price_sat")]
     pub lightning_invoice_price_sat: u64,
     #[serde(default = "default_lightning_verification_expiry_seconds")]
@@ -89,6 +92,7 @@ impl EnvConfig {
             homeserver_pubky: "test-homeserver-pubky".to_string(),
             max_sms_verifications_per_week: 2,
             max_sms_verifications_per_year: 4,
+            sms_verifications_limit_whitelist: vec![],
             allow_cors: true,
             lightning_invoice_price_sat: 1000,
             lightning_invoice_expiry_seconds: 60 * 10,

@@ -53,7 +53,9 @@ pub async fn router(
         .route("/", post(create_verification_handler))
         .route("/{id}", get(get_verification_handler))
         .route("/{id}/await", get(await_verification_handler))
-        .route("/price", get(get_price_handler))
+        .route("/info", get(get_info_handler))
+        // /price kept for backwards compatibility. Remove after removed from Franky.
+        .route("/price", get(get_info_handler))
         .with_state(state))
 }
 
@@ -128,9 +130,11 @@ async fn await_verification_handler(
     }
 }
 
-/// Get the configured Lightning invoice price handler
-async fn get_price_handler(State(state): State<AppState>) -> Json<GetPriceResponse> {
-    Json(GetPriceResponse {
+/// Get Lightning verification info handler.
+/// Used by Franky to check if the user is in a country which allows Lightning verification.
+/// IP-based geo-blocking is done at the nginx level; this endpoint confirms service availability.
+async fn get_info_handler(State(state): State<AppState>) -> Json<GetInfoResponse> {
+    Json(GetInfoResponse {
         amount_sat: state.ln_service.get_price_sat(),
     })
 }
@@ -176,7 +180,7 @@ impl GetVerificationResponse {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetPriceResponse {
+pub struct GetInfoResponse {
     amount_sat: u64,
 }
 
@@ -197,5 +201,62 @@ impl IntoResponse for LnVerificationError {
             }
         };
         (status, self.to_string()).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::sql::SqlDb;
+    use crate::ln_verification::phoenixd_api::PhoenixdAPI;
+    use crate::shared::HomeserverAdminAPI;
+    use axum_test::TestServer;
+    use sqlx::PgPool;
+
+    /// Creates a test router for LN verification WITHOUT starting the background sync task.
+    /// This is suitable for testing endpoints that don't require websocket connectivity.
+    async fn create_test_router(pool: PgPool) -> Router {
+        let db = SqlDb::test(pool).await;
+        // Use placeholder URLs - these won't be called for the /info endpoint
+        let phoenixd_api = PhoenixdAPI::new(&"http://localhost:1".parse().unwrap(), "unused");
+        let homeserver_api = HomeserverAdminAPI::new(
+            &"http://localhost:1".parse().unwrap(),
+            "unused",
+            "test-homeserver-pubky",
+        );
+
+        let ln_service = crate::ln_verification::service::LnVerificationService::new(
+            db,
+            phoenixd_api,
+            homeserver_api.clone(),
+            1000, // amount_sat
+            "Test Invoice".to_string(),
+            600, // invoice_expiry_seconds
+        );
+        let ln_service = std::sync::Arc::new(ln_service);
+
+        // Note: We intentionally skip spawning the background sync task for this test
+        let state = AppState::new(ln_service, homeserver_api);
+        Router::new()
+            .route("/info", get(get_info_handler))
+            .with_state(state)
+    }
+
+    /// Tests the /info endpoint returns 200 OK with the configured price.
+    /// This endpoint is used by Franky to check if Lightning verification is available
+    /// (geo-blocking is done at nginx level).
+    #[sqlx::test]
+    async fn test_info_endpoint_returns_ok_with_price(pool: PgPool) {
+        let router = create_test_router(pool).await;
+        let server = TestServer::new(router).expect("Failed to create test server");
+
+        let response = server.get("/info").await;
+        response.assert_status_ok();
+
+        let body: serde_json::Value = response.json();
+        assert_eq!(
+            body["amountSat"], 1000,
+            "Response should include the configured price"
+        );
     }
 }
