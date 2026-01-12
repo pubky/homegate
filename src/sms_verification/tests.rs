@@ -44,7 +44,7 @@ async fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerifi
         &config.homeserver_admin_password,
         &config.homeserver_pubky,
     );
-    SmsVerificationService::new(prelude_api, homeserver_admin_api, 2, 4)
+    SmsVerificationService::new(prelude_api, homeserver_admin_api, 2, 4, vec![])
 }
 
 #[sqlx::test]

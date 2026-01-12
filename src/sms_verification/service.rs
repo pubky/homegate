@@ -18,6 +18,7 @@ pub struct SmsVerificationService {
     hasher_argon2id: HasherArgon2id,
     max_verifications_per_week: u32,
     max_verifications_per_year: u32,
+    limit_whitelist: Vec<String>,
 }
 
 impl SmsVerificationService {
@@ -26,6 +27,7 @@ impl SmsVerificationService {
         homeserver_admin_api: HomeserverAdminAPI,
         max_verifications_per_week: u32,
         max_verifications_per_year: u32,
+        limit_whitelist: Vec<String>,
     ) -> Self {
         Self {
             prelude_api,
@@ -33,6 +35,7 @@ impl SmsVerificationService {
             hasher_argon2id: HasherArgon2id::new(),
             max_verifications_per_week,
             max_verifications_per_year,
+            limit_whitelist,
         }
     }
 
@@ -40,8 +43,12 @@ impl SmsVerificationService {
     pub async fn check_verification_limit(
         &mut self,
         executor: &mut UnifiedExecutor<'_>,
+        phone_number: &str,
         phone_number_hash: &str,
     ) -> Result<(), SmsVerificationError> {
+        if self.limit_whitelist.iter().any(|w| w == phone_number) {
+            return Ok(());
+        }
         let weekly_count = SmsVerificationRepository::count_verified_sessions_in_last_days(
             executor,
             phone_number_hash,
@@ -90,8 +97,12 @@ impl SmsVerificationService {
 
         let mut executor: UnifiedExecutor<'_> = db.pool().into();
 
-        self.check_verification_limit(&mut executor, &phone_number_hash)
-            .await?;
+        self.check_verification_limit(
+            &mut executor,
+            request.phone_number.as_str(),
+            &phone_number_hash,
+        )
+        .await?;
 
         let prelude_response = self
             .prelude_api
