@@ -54,6 +54,8 @@ pub async fn router(
         .route("/{id}", get(get_verification_handler))
         .route("/{id}/await", get(await_verification_handler))
         .route("/info", get(get_info_handler))
+        // /price kept for backwards compatibility. Remove after removed from Franky.
+        .route("/price", get(get_info_handler))
         .with_state(state))
 }
 

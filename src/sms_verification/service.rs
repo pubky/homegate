@@ -48,7 +48,7 @@ impl SmsVerificationService {
         self.limit_whitelist = whitelist;
     }
 
-    /// Check if a phone number has reached its limits for new verificaitons
+    /// Check if a phone number has reached its limits for new verifications
     pub async fn check_verification_limit(
         &mut self,
         executor: &mut UnifiedExecutor<'_>,
