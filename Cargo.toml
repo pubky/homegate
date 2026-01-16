@@ -18,8 +18,9 @@ futures-util = "0.3.31"
 getrandom = "0.3.4"
 hex = "0.4"
 regex = "1.11"
-reqwest = { version = "0.12", features = ["json"] }
-reqwest-websocket = "0.5.1"
+# default-features = false to avoid OpenSSL dependency; using rustls instead
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2", "charset"] }
+reqwest-websocket = { version = "0.5.1", default-features = false }
 sea-query = { version = "0.32.6", features = [ "with-chrono", "postgres-array", "with-uuid" ]}
 sea-query-binder = { version = "0.7.0", features = [ "with-chrono", "runtime-tokio", "sqlx-postgres", "postgres-array", "with-uuid" ] }
 serde = { version = "1.0.228", features = ["derive"] }
