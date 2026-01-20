@@ -44,7 +44,7 @@ fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerification
         &config.homeserver_admin_password,
         &config.homeserver_pubky,
     );
-    SmsVerificationService::new(prelude_api, homeserver_admin_api, 2, 4, 3, vec![])
+    SmsVerificationService::new(prelude_api, homeserver_admin_api, 2, 4, 2, vec![])
 }
 
 #[sqlx::test]
@@ -1458,9 +1458,10 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         .await
         .expect("create_verification should succeed");
 
-    // Setup mock for 2 wrong code attempts
+    // Setup mock for 1 wrong code attempt (max_failed_validation_attempts is 2 in tests,
+    // so we can only do 1 wrong attempt before the correct one on attempt 2)
     setup_prelude_check_code(&phone, TEST_WRONG_CODE, "failure")
-        .expect(2)
+        .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
@@ -1496,39 +1497,7 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
         record1.finalised_at.is_none(),
         "finalised_at should remain NULL after wrong code"
     );
-
-    // Attempt 2: Wrong code
-
-    let response2 = service
-        .validate_code(
-            &db,
-            ValidateCodeRequest {
-                phone_number: phone.clone(),
-                code: Code::new(TEST_WRONG_CODE).unwrap(),
-            },
-        )
-        .await
-        .expect("send_code should succeed");
-
-    assert!(
-        matches!(response2, ValidateCodeResponse::Invalid),
-        "Wrong code should return Invalid"
-    );
-
-    // Verify status still PENDING
-    let record2 = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .expect("Should find verification");
-
-    assert_eq!(
-        record2.status,
-        VerificationStatus::Pending,
-        "Status should still be PENDING"
-    );
-    assert!(
-        record2.finalised_at.is_none(),
-        "finalised_at should remain NULL after second wrong code"
-    );
+    assert_eq!(record1.attempts, 1, "Should have 1 attempt recorded");
 
     // Finally: Correct code
     setup_prelude_check_code(&phone, TEST_VERIFICATION_CODE, "success")
@@ -2103,8 +2072,8 @@ async fn test_create_verification_session_supersession(pool: PgPool) {
     assert_eq!(count3.0, 2, "Should have 2 records (1 failed, 1 pending)");
 }
 
-/// Tests that exceeding max validation attempts marks session as failed and returns error.
-/// The default max_validation_attempts in tests is 3.
+/// Tests that exceeding max failed validation attempts marks session as failed and returns error.
+/// The default max_failed_validation_attempts in tests is 2.
 #[sqlx::test]
 async fn test_service_max_validation_attempts_exceeded(pool: PgPool) {
     let servers = WiremockServers::start().await;
@@ -2134,14 +2103,14 @@ async fn test_service_max_validation_attempts_exceeded(pool: PgPool) {
         .expect("create_verification should succeed");
 
     // Setup mock for wrong code attempts - Prelude returns "failure" for wrong codes
-    // We'll make 3 wrong attempts (the limit), then the 4th should fail with MaxValidationAttemptsExceeded
+    // We'll make 2 wrong attempts (the limit), then the 3rd should fail with MaxValidationAttemptsExceeded
     setup_prelude_check_code(&phone, TEST_WRONG_CODE, "failure")
-        .expect(3) // Only 3 calls to Prelude - 4th attempt fails before API call
+        .expect(2) // Only 2 calls to Prelude - 3rd attempt fails before API call
         .mount(&servers.prelude_server)
         .await;
 
-    // Attempts 1-3: Wrong code, should return Invalid
-    for i in 1..=3 {
+    // Attempts 1-2: Wrong code, should return Invalid
+    for i in 1..=2 {
         let response = service
             .validate_code(
                 &db,
@@ -2160,19 +2129,19 @@ async fn test_service_max_validation_attempts_exceeded(pool: PgPool) {
         );
     }
 
-    // Verify attempts counter is at 3
+    // Verify attempts counter is at 2
     let mut executor = db.pool().into();
     let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
         .await
         .expect("Should find verification");
-    assert_eq!(record.attempts, 3, "Should have 3 attempts recorded");
+    assert_eq!(record.attempts, 2, "Should have 2 attempts recorded");
     assert_eq!(
         record.status,
         VerificationStatus::Pending,
-        "Should still be PENDING after 3 attempts"
+        "Should still be PENDING after 2 attempts"
     );
 
-    // Attempt 4: Should fail with MaxValidationAttemptsExceeded (no API call made)
+    // Attempt 3: Should fail with MaxValidationAttemptsExceeded (no API call made)
     let result = service
         .validate_code(
             &db,
@@ -2188,7 +2157,7 @@ async fn test_service_max_validation_attempts_exceeded(pool: PgPool) {
             // Test passes - correct error type
         }
         other => panic!(
-            "Expected MaxValidationAttemptsExceeded error on 4th attempt, got: {:?}",
+            "Expected MaxValidationAttemptsExceeded error on 3rd attempt, got: {:?}",
             other
         ),
     }
@@ -2212,8 +2181,8 @@ async fn test_service_max_validation_attempts_exceeded(pool: PgPool) {
         "finalised_at should be set after failure"
     );
     assert_eq!(
-        record.attempts, 4,
-        "Should have 4 attempts recorded (including the failed one)"
+        record.attempts, 3,
+        "Should have 3 attempts recorded (including the failed one)"
     );
 
     // Subsequent attempts should return NoActiveVerification (session is FAILED)
@@ -2267,9 +2236,9 @@ async fn test_service_correct_code_on_last_attempt_succeeds(pool: PgPool) {
         .await
         .expect("create_verification should succeed");
 
-    // Setup mocks: 2 wrong attempts, then 1 correct on the 3rd (last allowed) attempt
+    // Setup mocks: 1 wrong attempt, then 1 correct on the 2nd (last allowed) attempt
     setup_prelude_check_code(&phone, TEST_WRONG_CODE, "failure")
-        .expect(2)
+        .expect(1)
         .mount(&servers.prelude_server)
         .await;
 
@@ -2283,27 +2252,24 @@ async fn test_service_correct_code_on_last_attempt_succeeds(pool: PgPool) {
         .mount(&servers.homeserver_server)
         .await;
 
-    // Attempts 1-2: Wrong code
-    for i in 1..=2 {
-        let response = service
-            .validate_code(
-                &db,
-                ValidateCodeRequest {
-                    phone_number: phone.clone(),
-                    code: Code::new(TEST_WRONG_CODE).unwrap(),
-                },
-            )
-            .await
-            .unwrap_or_else(|e| panic!("Attempt {} should succeed, got error: {:?}", i, e));
+    // Attempt 1: Wrong code
+    let response = service
+        .validate_code(
+            &db,
+            ValidateCodeRequest {
+                phone_number: phone.clone(),
+                code: Code::new(TEST_WRONG_CODE).unwrap(),
+            },
+        )
+        .await
+        .expect("Attempt 1 should succeed");
 
-        assert!(
-            matches!(response, ValidateCodeResponse::Invalid),
-            "Attempt {} should return Invalid",
-            i
-        );
-    }
+    assert!(
+        matches!(response, ValidateCodeResponse::Invalid),
+        "Attempt 1 should return Invalid"
+    );
 
-    // Attempt 3 (last chance): Correct code should succeed
+    // Attempt 2 (last chance): Correct code should succeed
     let response = service
         .validate_code(
             &db,
@@ -2313,7 +2279,7 @@ async fn test_service_correct_code_on_last_attempt_succeeds(pool: PgPool) {
             },
         )
         .await
-        .expect("3rd attempt with correct code should succeed");
+        .expect("2nd attempt with correct code should succeed");
 
     assert!(
         matches!(response, ValidateCodeResponse::Valid { .. }),
@@ -2330,5 +2296,5 @@ async fn test_service_correct_code_on_last_attempt_succeeds(pool: PgPool) {
         VerificationStatus::Verified,
         "Should be VERIFIED after correct code"
     );
-    assert_eq!(record.attempts, 3, "Should have 3 attempts recorded");
+    assert_eq!(record.attempts, 2, "Should have 2 attempts recorded");
 }

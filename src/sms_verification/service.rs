@@ -18,7 +18,7 @@ pub struct SmsVerificationService {
     hasher_argon2id: HasherArgon2id,
     max_verifications_per_week: u32,
     max_verifications_per_year: u32,
-    max_validation_attempts: u32,
+    max_failed_validation_attempts: u32,
     limit_whitelist: Vec<PhoneNumber>,
 }
 
@@ -28,7 +28,7 @@ impl SmsVerificationService {
         homeserver_admin_api: HomeserverAdminAPI,
         max_verifications_per_week: u32,
         max_verifications_per_year: u32,
-        max_validation_attempts: u32,
+        max_failed_validation_attempts: u32,
         limit_whitelist: Vec<PhoneNumber>,
     ) -> Self {
         if !limit_whitelist.is_empty() {
@@ -41,7 +41,7 @@ impl SmsVerificationService {
             hasher_argon2id: HasherArgon2id::new(),
             max_verifications_per_week,
             max_verifications_per_year,
-            max_validation_attempts,
+            max_failed_validation_attempts,
             limit_whitelist,
         }
     }
@@ -172,7 +172,7 @@ impl SmsVerificationService {
         let attempts =
             SmsVerificationRepository::increment_attempts(&mut executor, &phone_number_hash)
                 .await?;
-        if attempts > self.max_validation_attempts as i32 {
+        if attempts as u32 > self.max_failed_validation_attempts {
             // Mark as failed since they've exceeded the limit
             if let Err(e) = SmsVerificationRepository::mark_all_pending_verification_as_failed(
                 &mut executor,
@@ -217,7 +217,7 @@ impl SmsVerificationService {
                 })
             }
             PreludeCheckCodeResponse::Failure { .. } => {
-                // Wrong code - don't mark as failed, allow retries (up to max_validation_attempts)
+                // Wrong code - don't mark as failed, allow retries (up to max_failed_validation_attempts)
                 Ok(ValidateCodeResponse::Invalid)
             }
             PreludeCheckCodeResponse::ExpiredOrNotFound { .. } => {
