@@ -44,7 +44,7 @@ fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerification
         &config.homeserver_admin_password,
         &config.homeserver_pubky,
     );
-    SmsVerificationService::new(prelude_api, homeserver_admin_api, 2, 4, vec![])
+    SmsVerificationService::new(prelude_api, homeserver_admin_api, 2, 4, 3, vec![])
 }
 
 #[sqlx::test]
@@ -2101,4 +2101,234 @@ async fn test_create_verification_session_supersession(pool: PgPool) {
             .await
             .unwrap();
     assert_eq!(count3.0, 2, "Should have 2 records (1 failed, 1 pending)");
+}
+
+/// Tests that exceeding max validation attempts marks session as failed and returns error.
+/// The default max_validation_attempts in tests is 3.
+#[sqlx::test]
+async fn test_service_max_validation_attempts_exceeded(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let mut service = create_service_with_mocked_apis(&servers);
+    let db = SqlDb::test(pool.clone()).await;
+
+    let phone = PhoneNumber::new("+30123123123").unwrap();
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Create verification session
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    service
+        .create_verification(
+            &db,
+            CreateVerificationRequest {
+                phone_number: phone.clone(),
+                dispatch_id: None,
+            },
+            ip,
+            None,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    // Setup mock for wrong code attempts - Prelude returns "failure" for wrong codes
+    // We'll make 3 wrong attempts (the limit), then the 4th should fail with MaxValidationAttemptsExceeded
+    setup_prelude_check_code(&phone, TEST_WRONG_CODE, "failure")
+        .expect(3) // Only 3 calls to Prelude - 4th attempt fails before API call
+        .mount(&servers.prelude_server)
+        .await;
+
+    // Attempts 1-3: Wrong code, should return Invalid
+    for i in 1..=3 {
+        let response = service
+            .validate_code(
+                &db,
+                ValidateCodeRequest {
+                    phone_number: phone.clone(),
+                    code: Code::new(TEST_WRONG_CODE).unwrap(),
+                },
+            )
+            .await
+            .unwrap_or_else(|e| panic!("Attempt {} should succeed, got error: {:?}", i, e));
+
+        assert!(
+            matches!(response, ValidateCodeResponse::Invalid),
+            "Attempt {} should return Invalid",
+            i
+        );
+    }
+
+    // Verify attempts counter is at 3
+    let mut executor = db.pool().into();
+    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
+        .await
+        .expect("Should find verification");
+    assert_eq!(record.attempts, 3, "Should have 3 attempts recorded");
+    assert_eq!(
+        record.status,
+        VerificationStatus::Pending,
+        "Should still be PENDING after 3 attempts"
+    );
+
+    // Attempt 4: Should fail with MaxValidationAttemptsExceeded (no API call made)
+    let result = service
+        .validate_code(
+            &db,
+            ValidateCodeRequest {
+                phone_number: phone.clone(),
+                code: Code::new(TEST_WRONG_CODE).unwrap(),
+            },
+        )
+        .await;
+
+    match result {
+        Err(SmsVerificationError::MaxValidationAttemptsExceeded) => {
+            // Test passes - correct error type
+        }
+        other => panic!(
+            "Expected MaxValidationAttemptsExceeded error on 4th attempt, got: {:?}",
+            other
+        ),
+    }
+
+    // Verify session is now FAILED
+    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
+        .await
+        .expect("Should find verification");
+    assert_eq!(
+        record.status,
+        VerificationStatus::Failed,
+        "Should be FAILED after exceeding max attempts"
+    );
+    assert_eq!(
+        record.failure_reason,
+        Some("max_validation_attempts_exceeded".to_string()),
+        "failure_reason should indicate max attempts exceeded"
+    );
+    assert!(
+        record.finalised_at.is_some(),
+        "finalised_at should be set after failure"
+    );
+    assert_eq!(
+        record.attempts, 4,
+        "Should have 4 attempts recorded (including the failed one)"
+    );
+
+    // Subsequent attempts should return NoActiveVerification (session is FAILED)
+    let result = service
+        .validate_code(
+            &db,
+            ValidateCodeRequest {
+                phone_number: phone.clone(),
+                code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
+            },
+        )
+        .await;
+
+    match result {
+        Err(SmsVerificationError::NoActiveVerification) => {
+            // Test passes - no active session after failure
+        }
+        other => panic!(
+            "Expected NoActiveVerification after session failed, got: {:?}",
+            other
+        ),
+    }
+}
+
+/// Tests that a correct code on the last allowed attempt still succeeds.
+#[sqlx::test]
+async fn test_service_correct_code_on_last_attempt_succeeds(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let mut service = create_service_with_mocked_apis(&servers);
+    let db = SqlDb::test(pool.clone()).await;
+
+    let phone = PhoneNumber::new("+30456456456").unwrap();
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    // Create verification session
+    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    service
+        .create_verification(
+            &db,
+            CreateVerificationRequest {
+                phone_number: phone.clone(),
+                dispatch_id: None,
+            },
+            ip,
+            None,
+        )
+        .await
+        .expect("create_verification should succeed");
+
+    // Setup mocks: 2 wrong attempts, then 1 correct on the 3rd (last allowed) attempt
+    setup_prelude_check_code(&phone, TEST_WRONG_CODE, "failure")
+        .expect(2)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_prelude_check_code(&phone, TEST_VERIFICATION_CODE, "success")
+        .expect(1)
+        .mount(&servers.prelude_server)
+        .await;
+
+    setup_homeserver_signup_token("test-token-last-chance")
+        .expect(1)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    // Attempts 1-2: Wrong code
+    for i in 1..=2 {
+        let response = service
+            .validate_code(
+                &db,
+                ValidateCodeRequest {
+                    phone_number: phone.clone(),
+                    code: Code::new(TEST_WRONG_CODE).unwrap(),
+                },
+            )
+            .await
+            .unwrap_or_else(|e| panic!("Attempt {} should succeed, got error: {:?}", i, e));
+
+        assert!(
+            matches!(response, ValidateCodeResponse::Invalid),
+            "Attempt {} should return Invalid",
+            i
+        );
+    }
+
+    // Attempt 3 (last chance): Correct code should succeed
+    let response = service
+        .validate_code(
+            &db,
+            ValidateCodeRequest {
+                phone_number: phone.clone(),
+                code: Code::new(TEST_VERIFICATION_CODE).unwrap(),
+            },
+        )
+        .await
+        .expect("3rd attempt with correct code should succeed");
+
+    assert!(
+        matches!(response, ValidateCodeResponse::Valid { .. }),
+        "Correct code on last attempt should return Valid"
+    );
+
+    // Verify session is VERIFIED
+    let mut executor = db.pool().into();
+    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
+        .await
+        .expect("Should find verification");
+    assert_eq!(
+        record.status,
+        VerificationStatus::Verified,
+        "Should be VERIFIED after correct code"
+    );
+    assert_eq!(record.attempts, 3, "Should have 3 attempts recorded");
 }

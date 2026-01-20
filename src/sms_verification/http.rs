@@ -78,6 +78,7 @@ impl IntoResponse for SmsVerificationError {
             SmsVerificationError::Blocked => StatusCode::FORBIDDEN,
             SmsVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             SmsVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+            SmsVerificationError::MaxValidationAttemptsExceeded => StatusCode::TOO_MANY_REQUESTS,
             SmsVerificationError::NoActiveVerification => StatusCode::UNPROCESSABLE_ENTITY,
             SmsVerificationError::InvalidPhoneNumber => StatusCode::UNPROCESSABLE_ENTITY,
             SmsVerificationError::RateLimited { retry_after } => {

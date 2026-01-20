@@ -38,6 +38,7 @@ pub struct SmsVerificationEntity {
     pub signup_code: Option<String>,
     pub status: VerificationStatus,
     pub failure_reason: Option<String>,
+    pub attempts: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -211,6 +212,29 @@ impl SmsVerificationRepository {
         }
     }
 
+    /// Increment attempts for the active session and return the new count.
+    pub async fn increment_attempts(
+        executor: &mut UnifiedExecutor<'_>,
+        phone_number_hash: &str,
+    ) -> Result<i32, DbError> {
+        let update_statement = Query::update()
+            .table("sms_verifications")
+            .value("attempts", Expr::col("attempts").add(1))
+            .and_where(Expr::col("phone_number_hash").eq(phone_number_hash))
+            .and_where(Expr::col("status").eq(VerificationStatus::Pending.as_str()))
+            .returning(Query::returning().column("attempts"))
+            .to_owned();
+
+        let (query, values) = update_statement.build_sqlx(PostgresQueryBuilder);
+        let row = sqlx::query_with(&query, values)
+            .fetch_one(executor.get_con().await?)
+            .await
+            .map_err(DbError::from)?;
+
+        let attempts: i32 = row.try_get("attempts").map_err(DbError::from)?;
+        Ok(attempts)
+    }
+
     /// Verify an SMS by setting finalised_at, status, and signup_code
     pub async fn mark_verified(
         executor: &mut UnifiedExecutor<'_>,
@@ -317,6 +341,7 @@ impl SmsVerificationRepository {
                 "signup_code",
                 "status",
                 "failure_reason",
+                "attempts",
             ])
             .from("sms_verifications")
             .and_where(Expr::col("phone_number_hash").eq(hashed_phone.as_str()))
@@ -345,6 +370,7 @@ impl SmsVerificationRepository {
                 "signup_code",
                 "status",
                 "failure_reason",
+                "attempts",
             ])
             .from("sms_verifications")
             .and_where(Expr::col("prelude_id").eq(prelude_id))

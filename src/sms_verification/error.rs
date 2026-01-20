@@ -18,6 +18,9 @@ pub enum SmsVerificationError {
     #[error("No active verification session for phone number")]
     NoActiveVerification,
 
+    #[error("Too many incorrect code attempts. Please request a new verification code.")]
+    MaxValidationAttemptsExceeded,
+
     #[error("Invalid phone number format. Must be in E.164 format (e.g., +30123456789)")]
     InvalidPhoneNumber,
 
