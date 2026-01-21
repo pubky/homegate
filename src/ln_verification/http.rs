@@ -19,12 +19,11 @@ use crate::{
     shared::HomeserverAdminAPI,
 };
 
-
 /// Default timeout for long-polling verification requests
 /// Set to 25 seconds to be below common reverse proxy timeouts (30 seconds)
 /// This way, you don't have to deal with proxy timeouts like nginx cutting the connection
 /// before the application can respond with a timeout message.
-const DEFAULT_TIMEOUT_SECS: u64 = 25;  
+const DEFAULT_TIMEOUT_SECS: u64 = 25;
 
 pub async fn router(
     config: &EnvConfig,
@@ -106,7 +105,6 @@ async fn await_verification_handler(
     State(state): State<AppState>,
     Path(id): Path<VerificationId>,
 ) -> impl IntoResponse {
- 
     let response = match state
         .ln_service
         .get_and_await_verification(&id, Duration::from_secs(DEFAULT_TIMEOUT_SECS))
