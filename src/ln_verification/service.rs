@@ -234,7 +234,10 @@ impl LnVerificationService {
             return Ok(Some(VerificationResponse::Success(verification)));
         }
 
-        match self.wait_for_payment_with_receiver(id, timeout, receiver).await? {
+        match self
+            .wait_for_payment_with_receiver(id, timeout, receiver)
+            .await?
+        {
             Some(v) => Ok(Some(VerificationResponse::Success(v))),
             None => Ok(Some(VerificationResponse::TimedOut)),
         }
@@ -262,10 +265,10 @@ impl LnVerificationService {
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("Broadcast receiver lagged by {} messages", n);
                         // Check if our verification was in the missed messages
-                        if let Ok(Some(v)) = self.get_verification(id).await {
-                            if v.is_finalised() {
-                                break;
-                            }
+                        if let Ok(Some(v)) = self.get_verification(id).await
+                            && v.is_finalised()
+                        {
+                            break;
                         }
                         continue;
                     }
