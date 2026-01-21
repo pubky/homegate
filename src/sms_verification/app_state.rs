@@ -23,6 +23,7 @@ impl AppState {
             homeserver_admin_api.clone(),
             config.max_sms_verifications_per_week,
             config.max_sms_verifications_per_year,
+            config.max_sms_failed_validation_attempts,
             config.sms_verifications_limit_whitelist.clone(),
         );
         Self {

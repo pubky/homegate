@@ -7,6 +7,7 @@ use crate::infrastructure::sql::{
     migrations::{
         m20251201_create_sms_verifications::M20251201CreateSmsVerifications,
         m20251216_create_ln_verification::M20251216CreateLnVerification,
+        m20260120_add_validation_attempts::M20260120AddValidationAttempts,
     },
 };
 
@@ -31,6 +32,7 @@ impl<'a> Migrator<'a> {
         vec![
             Box::new(M20251201CreateSmsVerifications),
             Box::new(M20251216CreateLnVerification),
+            Box::new(M20260120AddValidationAttempts),
         ]
     }
 

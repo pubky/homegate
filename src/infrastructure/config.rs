@@ -25,6 +25,12 @@ pub struct EnvConfig {
     pub max_sms_verifications_per_year: u32,
     #[serde(default)]
     pub sms_verifications_limit_whitelist: Vec<PhoneNumber>,
+    /// Maximum number of failed code validation attempts per verification session.
+    /// After this many failed attempts, the session is marked as failed.
+    /// Prelude seems to fail silently after 5 failures regardless of how its configured.
+    /// We count attempts here to guard against this.
+    #[serde(default = "default_max_sms_failed_validation_attempts")]
+    pub max_sms_failed_validation_attempts: u32,
     #[serde(default = "default_lightning_verification_price_sat")]
     pub lightning_invoice_price_sat: u64,
     #[serde(default = "default_lightning_verification_expiry_seconds")]
@@ -47,6 +53,10 @@ fn default_max_sms_verifications_per_week() -> u32 {
 
 fn default_max_sms_verifications_per_year() -> u32 {
     4
+}
+
+fn default_max_sms_failed_validation_attempts() -> u32 {
+    5
 }
 
 fn default_lightning_verification_expiry_seconds() -> u64 {
@@ -93,6 +103,7 @@ impl EnvConfig {
             max_sms_verifications_per_week: 2,
             max_sms_verifications_per_year: 4,
             sms_verifications_limit_whitelist: vec![],
+            max_sms_failed_validation_attempts: 2,
             allow_cors: true,
             lightning_invoice_price_sat: 1000,
             lightning_invoice_expiry_seconds: 60 * 10,
