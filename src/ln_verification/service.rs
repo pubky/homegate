@@ -135,7 +135,13 @@ impl LnVerificationService {
         tx.commit().await?;
 
         tracing::info!("Verification {} finalised", verification.id);
-        let _ = self.completion_tx.send(verification.id.clone());
+        if let Err(e) = self.completion_tx.send(verification.id.clone()) {
+            tracing::warn!(
+                "Failed to broadcast verification completion for {}: {}",
+                verification.id,
+                e
+            );
+        }
 
         Ok(Some(verification))
     }
@@ -202,8 +208,9 @@ impl LnVerificationService {
     }
 
     /// Get a verification and wait for it to finalize if needed.
-    /// - First gets and syncs the verification
-    /// - If not finalized, waits up to `timeout` for payment
+    /// - Subscribes to broadcast channel FIRST to avoid race condition
+    /// - Then gets and syncs the verification
+    /// - If not finalized, waits up to `timeout` for payment using pre-subscribed receiver
     ///
     /// # Returns
     /// * `Ok(Some(VerificationResponse::Success))` - Verification finalized (already or within timeout)
@@ -215,21 +222,21 @@ impl LnVerificationService {
         id: &VerificationId,
         timeout: Duration,
     ) -> Result<Option<VerificationResponse>, LnVerificationError> {
-        let mut verification = match self.get_and_sync_verification(id).await? {
+        let receiver = self.subscribe();
+
+        let verification = match self.get_and_sync_verification(id).await? {
             Some(v) => v,
             None => return Ok(None),
         };
 
-        if !verification.is_finalised() {
-            match self.wait_for_payment(id, timeout).await? {
-                Some(v) => {
-                    verification = v;
-                    Ok(Some(VerificationResponse::Success(verification)))
-                }
-                None => Ok(Some(VerificationResponse::TimedOut)),
-            }
-        } else {
-            Ok(Some(VerificationResponse::Success(verification)))
+        if verification.is_finalised() {
+            // Already finalized
+            return Ok(Some(VerificationResponse::Success(verification)));
+        }
+
+        match self.wait_for_payment_with_receiver(id, timeout, receiver).await? {
+            Some(v) => Ok(Some(VerificationResponse::Success(v))),
+            None => Ok(Some(VerificationResponse::TimedOut)),
         }
     }
 
@@ -239,21 +246,27 @@ impl LnVerificationService {
         self.completion_tx.subscribe()
     }
 
-    /// Wait for a verification to be finalized, with timeout.
+    /// Wait for a verification to be finalized using a pre-subscribed receiver.
     /// Returns Ok(Some(verification)) if finalized within timeout, Ok(None) if timeout exceeded.
-    async fn wait_for_payment(
+    async fn wait_for_payment_with_receiver(
         &self,
         id: &VerificationId,
         timeout: Duration,
+        mut receiver: broadcast::Receiver<VerificationId>,
     ) -> Result<Option<LightningVerificationEntity>, LnVerificationError> {
         let future = async {
-            let mut receiver = self.subscribe();
             loop {
                 match receiver.recv().await {
                     Ok(finalized_id) if finalized_id == *id => break,
                     Ok(_) => continue, // Different verification ID, keep waiting
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("Broadcast receiver lagged by {} messages", n);
+                        // Check if our verification was in the missed messages
+                        if let Ok(Some(v)) = self.get_verification(id).await {
+                            if v.is_finalised() {
+                                break;
+                            }
+                        }
                         continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
