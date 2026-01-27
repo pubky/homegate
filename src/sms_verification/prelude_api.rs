@@ -149,14 +149,21 @@ pub enum PreludeBlockedReason {
     InBlockList,
     /// The phone number is not a valid line number (e.g. landline).
     InvalidPhoneLine,
+    /// The phone number is not a valid phone number (e.g. unallocated range).
+    InvalidPhoneNumber,
     /// The signature of the SDK signals is invalid.
     InvalidSignature,
     /// The phone number has made too many verification attempts.
     RepeatedAttempts,
     /// The verification attempt was deemed suspicious by the anti-fraud system.
     Suspicious,
-    /// Prelude API returned Blocked status without a reason.
+    /// Prelude API returned a blocked reason we don't recognise.
+    #[serde(other)]
     Unknown,
+}
+
+fn default_blocked_reason() -> PreludeBlockedReason {
+    PreludeBlockedReason::Unknown
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -170,6 +177,7 @@ pub enum PreludeCreateVerificationResponse {
     },
     Blocked {
         id: String,
+        #[serde(default = "default_blocked_reason")]
         reason: PreludeBlockedReason,
     },
 }
