@@ -140,8 +140,7 @@ struct PreludeCreateVerificationRequest {
     dispatch_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreludeBlockedReason {
     /// The signature of the SDK signals is expired. They should be sent within the hour following their collection.
     ExpiredSignature,
@@ -158,12 +157,60 @@ pub enum PreludeBlockedReason {
     /// The verification attempt was deemed suspicious by the anti-fraud system.
     Suspicious,
     /// Prelude API returned a blocked reason we don't recognise.
-    #[serde(other)]
-    Unknown,
+    Unknown(String),
 }
 
-fn default_blocked_reason() -> PreludeBlockedReason {
-    PreludeBlockedReason::Unknown
+impl<'de> serde::Deserialize<'de> for PreludeBlockedReason {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = Option::<String>::deserialize(deserializer)?;
+        match s.as_deref() {
+            None => Ok(PreludeBlockedReason::Unknown("absent".to_string())),
+            Some("expired_signature") => Ok(PreludeBlockedReason::ExpiredSignature),
+            Some("in_block_list") => Ok(PreludeBlockedReason::InBlockList),
+            Some("invalid_phone_line") => Ok(PreludeBlockedReason::InvalidPhoneLine),
+            Some("invalid_phone_number") => Ok(PreludeBlockedReason::InvalidPhoneNumber),
+            Some("invalid_signature") => Ok(PreludeBlockedReason::InvalidSignature),
+            Some("repeated_attempts") => Ok(PreludeBlockedReason::RepeatedAttempts),
+            Some("suspicious") => Ok(PreludeBlockedReason::Suspicious),
+            Some(other) => Ok(PreludeBlockedReason::Unknown(other.to_string())),
+        }
+    }
+}
+
+impl serde::Serialize for PreludeBlockedReason {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            PreludeBlockedReason::Unknown(raw) => serializer.serialize_str(raw),
+            other => serializer.serialize_str(&other.to_string()),
+        }
+    }
+}
+
+impl Default for PreludeBlockedReason {
+    fn default() -> Self {
+        PreludeBlockedReason::Unknown("absent".to_string())
+    }
+}
+
+impl std::fmt::Display for PreludeBlockedReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PreludeBlockedReason::ExpiredSignature => write!(f, "expired_signature"),
+            PreludeBlockedReason::InBlockList => write!(f, "in_block_list"),
+            PreludeBlockedReason::InvalidPhoneLine => write!(f, "invalid_phone_line"),
+            PreludeBlockedReason::InvalidPhoneNumber => write!(f, "invalid_phone_number"),
+            PreludeBlockedReason::InvalidSignature => write!(f, "invalid_signature"),
+            PreludeBlockedReason::RepeatedAttempts => write!(f, "repeated_attempts"),
+            PreludeBlockedReason::Suspicious => write!(f, "suspicious"),
+            PreludeBlockedReason::Unknown(s) => write!(f, "unknown({})", s),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -177,7 +224,7 @@ pub enum PreludeCreateVerificationResponse {
     },
     Blocked {
         id: String,
-        #[serde(default = "default_blocked_reason")]
+        #[serde(default)]
         reason: PreludeBlockedReason,
     },
 }
@@ -260,6 +307,18 @@ impl PreludeAPI {
 
         let verification_response = response.json::<PreludeCreateVerificationResponse>().await?;
 
+        if let PreludeCreateVerificationResponse::Blocked {
+            reason: PreludeBlockedReason::Unknown(ref raw),
+            ref id,
+        } = verification_response
+        {
+            tracing::warn!(
+                prelude_id = %id,
+                raw_reason = %raw,
+                "Prelude returned unrecognised blocked reason"
+            );
+        }
+
         Ok(verification_response)
     }
 
@@ -294,5 +353,62 @@ impl PreludeAPI {
         let check_response = response.json::<PreludeCheckCodeResponse>().await?;
 
         Ok(check_response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_blocked_with_known_reason() {
+        let json = r#"{"status":"blocked","id":"x","reason":"repeated_attempts"}"#;
+        let resp: PreludeCreateVerificationResponse = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            resp,
+            PreludeCreateVerificationResponse::Blocked {
+                reason: PreludeBlockedReason::RepeatedAttempts,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn deserialize_blocked_with_unknown_reason() {
+        let json = r#"{"status":"blocked","id":"x","reason":"brand_new_reason"}"#;
+        let resp: PreludeCreateVerificationResponse = serde_json::from_str(json).unwrap();
+        match resp {
+            PreludeCreateVerificationResponse::Blocked { reason, .. } => {
+                assert_eq!(
+                    reason,
+                    PreludeBlockedReason::Unknown("brand_new_reason".to_string())
+                );
+            }
+            other => panic!("Expected Blocked variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn deserialize_blocked_without_reason_field() {
+        let json = r#"{"status":"blocked","id":"x"}"#;
+        let resp: PreludeCreateVerificationResponse = serde_json::from_str(json).unwrap();
+        match resp {
+            PreludeCreateVerificationResponse::Blocked { reason, .. } => {
+                assert_eq!(reason, PreludeBlockedReason::Unknown("absent".to_string()));
+            }
+            other => panic!("Expected Blocked variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn deserialize_blocked_with_null_reason() {
+        let json = r#"{"status":"blocked","id":"x","reason":null}"#;
+        let resp: PreludeCreateVerificationResponse = serde_json::from_str(json).unwrap();
+        match resp {
+            PreludeCreateVerificationResponse::Blocked { reason, .. } => {
+                assert_eq!(reason, PreludeBlockedReason::Unknown("absent".to_string()));
+            }
+            other => panic!("Expected Blocked variant, got {:?}", other),
+        }
     }
 }

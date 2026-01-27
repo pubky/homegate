@@ -140,12 +140,11 @@ impl SmsVerificationService {
 
         if let PreludeCreateVerificationResponse::Blocked { id, reason } = &prelude_response {
             tracing::info!(
-                "Phone number blocked for reason: {:?}. prelude id: {}",
-                reason,
-                id
+                prelude_id = %id,
+                reason = %reason,
+                "Phone number blocked by Prelude"
             );
-            SmsVerificationRepository::mark_failed(&mut executor, id, &format!("{:?}", reason))
-                .await?;
+            SmsVerificationRepository::mark_failed(&mut executor, id, &reason.to_string()).await?;
 
             return Err(SmsVerificationError::Blocked);
         }
