@@ -1628,7 +1628,7 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
     );
     let failure_reason = failure_reason.unwrap();
     assert!(
-        failure_reason.contains("RepeatedAttempts"),
+        failure_reason.contains("repeated_attempts"),
         "failure_reason should contain the blocked reason, got: {}",
         failure_reason
     );
