@@ -69,7 +69,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
             "value": phone.as_str()
         },
         "signals": {
-            "ip_address": ip.to_string(),
+            "ip": ip.to_string(),
             "user_agent": user_agent.clone().unwrap()
         },
         "dispatch_id": dispatch_id.clone().unwrap()
