@@ -37,7 +37,7 @@ pub fn setup_prelude_create_verification(
 
     if let Some(ip) = ip_address {
         body["signals"] = json!({
-            "ip_address": ip.to_string()
+            "ip": ip.to_string()
         });
     }
 

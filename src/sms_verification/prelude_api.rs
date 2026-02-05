@@ -127,7 +127,7 @@ struct Target {
 
 #[derive(Serialize)]
 struct Signals {
-    ip_address: String,
+    ip: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     user_agent: Option<String>,
 }
@@ -284,7 +284,7 @@ impl PreludeAPI {
                 value: phone_number.to_string(),
             },
             signals: Signals {
-                ip_address: ip_address.to_string(),
+                ip: ip_address.to_string(),
                 user_agent,
             },
             dispatch_id,
