@@ -2,6 +2,8 @@
 
 A backend service to gatekeep [Pubky Homeserver](https://github.com/pubky/pubky-core/) signups.
 
+The Pubky social media app uses Homegate to gatekeep signups. Check out https://pubky.app/onboarding/human (use a private browser window if you have an active session).
+
 This service depends on
 
 - [Prelude](https://docs.prelude.so/) as a SMS service provider.
