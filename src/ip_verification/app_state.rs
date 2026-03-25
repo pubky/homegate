@@ -22,7 +22,6 @@ impl AppState {
             homeserver_admin_api,
             config.max_ip_verifications_per_week,
             config.max_ip_verifications_per_year,
-            config.ip_verification_enabled,
         );
         Self {
             db,

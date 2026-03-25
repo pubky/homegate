@@ -29,7 +29,7 @@ fn create_service(
         &config.homeserver_admin_password,
         &config.homeserver_pubky,
     );
-    IpVerificationService::new(homeserver_admin_api, max_per_week, max_per_year, true)
+    IpVerificationService::new(homeserver_admin_api, max_per_week, max_per_year)
 }
 
 #[sqlx::test]
