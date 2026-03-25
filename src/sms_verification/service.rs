@@ -100,7 +100,7 @@ impl SmsVerificationService {
         &mut self,
         db: &SqlDb,
         request: CreateVerificationRequest,
-        ip_address: IpAddr,
+        ip_address: Option<IpAddr>,
         user_agent: Option<String>,
     ) -> Result<(), SmsVerificationError> {
         let phone_number_hash = self

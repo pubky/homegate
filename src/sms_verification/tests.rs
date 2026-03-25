@@ -58,7 +58,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30123456789").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
     let user_agent = Some("Mozilla/5.0 (Test Client)".to_string());
     let dispatch_id = Some("test-dispatch-id-123".to_string());
 
@@ -69,7 +69,7 @@ async fn test_service_full_verification_flow(pool: PgPool) {
             "value": phone.as_str()
         },
         "signals": {
-            "ip": ip.to_string(),
+            "ip": ip.map(|ip| ip.to_string()).unwrap(),
             "user_agent": user_agent.clone().unwrap()
         },
         "dispatch_id": dispatch_id.clone().unwrap()
@@ -202,11 +202,11 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 
     // Test 1: Active session reuse
     let phone1 = PhoneNumber::new("+30999999999").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Setup mock - we can use "success" for both calls
     // The important thing is that the DB correctly handles session reuse
-    setup_prelude_create_verification(&phone1, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone1, ip, "success", None)
         .expect(2) // Both calls will use this mock
         .mount(&servers.prelude_server)
         .await;
@@ -263,7 +263,7 @@ async fn test_service_session_lifecycle(pool: PgPool) {
 
     // Setup mocks for full verification flow + retry after verification
     // We'll call send_code twice (once before verification, once after)
-    setup_prelude_create_verification(&phone2, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone2, ip, "success", None)
         .expect(2)
         .mount(&servers.prelude_server)
         .await;
@@ -336,10 +336,10 @@ async fn test_service_max_verified_sessions_limits(pool: PgPool) {
     let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
     let phone = PhoneNumber::new("+30111111112").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Setup mocks for successful verifications (4 complete verifications)
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone, ip, "success", None)
         .expect(4)
         .mount(&servers.prelude_server)
         .await;
@@ -547,11 +547,11 @@ async fn test_service_whitelist_bypasses_limits(pool: PgPool) {
     let mut service = create_service_with_mocked_apis(&servers);
     service.set_limit_whitelist(vec![phone.clone()]);
     let db = SqlDb::test(pool.clone()).await;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Setup mocks for many successful verifications (more than weekly + annual limits combined)
     // Weekly limit is 2, annual limit is 4, so we'll do 5 to prove whitelist bypasses both
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone, ip, "success", None)
         .expect(5)
         .mount(&servers.prelude_server)
         .await;
@@ -631,10 +631,10 @@ async fn test_service_whitelist_does_not_affect_other_numbers(pool: PgPool) {
     let mut service = create_service_with_mocked_apis(&servers);
     service.set_limit_whitelist(vec![whitelisted_phone]);
     let db = SqlDb::test(pool.clone()).await;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Setup mocks for regular phone (2 successful verifications)
-    setup_prelude_create_verification(&regular_phone, Some(ip), "success", None)
+    setup_prelude_create_verification(&regular_phone, ip, "success", None)
         .expect(2)
         .mount(&servers.prelude_server)
         .await;
@@ -705,12 +705,12 @@ async fn test_service_input_validation_and_errors(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Invalid verification code - should return Failure status
     let phone_wrong_code = PhoneNumber::new("+30987654321").unwrap();
 
-    setup_prelude_create_verification(&phone_wrong_code, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone_wrong_code, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -769,11 +769,11 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30666666666").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Step 1: Create a verification session
     // We'll call send_code twice (once here, once after marking failed), so expect(2)
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone, ip, "success", None)
         .expect(2)
         .mount(&servers.prelude_server)
         .await;
@@ -897,10 +897,10 @@ async fn test_service_success_but_homeserver_fails_marks_failed(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30888888888").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Create verification session
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -983,10 +983,10 @@ async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPo
 
     let phone = PhoneNumber::new("+30777777777").unwrap();
     let hashed_phone = test_phone_hasher().hash_phone_number(phone.as_str());
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Create verification session with prelude_id "verification-id-123"
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1125,10 +1125,10 @@ async fn test_service_verify_code_with_wrong_phone_number(pool: PgPool) {
 
     let phone_send = PhoneNumber::new("+30666666666").unwrap();
     let phone_verify = PhoneNumber::new("+30888888889").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Step 1: Send verification code to phone_send
-    setup_prelude_create_verification(&phone_send, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone_send, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1184,10 +1184,10 @@ async fn test_service_database_error_handling(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30777777777").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // First, create a session with send_code
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1245,13 +1245,13 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Scenario 1: Attempt send_code on VERIFIED state
     let phone_verified = PhoneNumber::new("+30111111111").unwrap();
 
     // Setup mocks for successful verification flow
-    setup_prelude_create_verification(&phone_verified, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone_verified, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1339,7 +1339,7 @@ async fn test_service_verify_code_on_terminal_states(pool: PgPool) {
     let phone_failed = PhoneNumber::new("+30222222222").unwrap();
 
     // Create verification
-    setup_prelude_create_verification(&phone_failed, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone_failed, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1437,10 +1437,10 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30333333333").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Create verification
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1558,12 +1558,12 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30444444444").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Mock Prelude to return "blocked" status with repeated_attempts reason
     setup_prelude_create_verification(
         &phone,
-        Some(ip),
+        ip,
         "blocked",
         Some(PreludeBlockedReason::RepeatedAttempts),
     )
@@ -1657,10 +1657,10 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30555555555").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Mock Prelude to return "retry" status (rate limit response)
-    setup_prelude_create_verification(&phone, Some(ip), "retry", None)
+    setup_prelude_create_verification(&phone, ip, "retry", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1713,12 +1713,12 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
     let mut service = create_service_with_mocked_apis(&servers);
     let db = SqlDb::test(pool.clone()).await;
 
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Scenario 1: mark_verified on already VERIFIED record
     let phone1 = PhoneNumber::new("+30666666666").unwrap();
 
-    setup_prelude_create_verification(&phone1, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone1, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -1833,7 +1833,7 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
 
     // Note: wiremock will return the same prelude_id for both phone1 and phone2,
     // but since they have different phone_numbers, they are separate records in the database
-    setup_prelude_create_verification(&phone2, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone2, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -2081,10 +2081,10 @@ async fn test_service_max_validation_attempts_exceeded(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30123123123").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Create verification session
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;
@@ -2215,10 +2215,10 @@ async fn test_service_correct_code_on_last_attempt_succeeds(pool: PgPool) {
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30456456456").unwrap();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip: Option<IpAddr> = Some("127.0.0.1".parse().unwrap());
 
     // Create verification session
-    setup_prelude_create_verification(&phone, Some(ip), "success", None)
+    setup_prelude_create_verification(&phone, ip, "success", None)
         .expect(1)
         .mount(&servers.prelude_server)
         .await;

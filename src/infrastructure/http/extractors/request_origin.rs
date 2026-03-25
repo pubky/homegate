@@ -12,7 +12,7 @@ const X_FORWARDED_FOR: &str = "x-forwarded-for";
 ///
 /// Extracts the client's IP address by checking proxy headers (X-Forwarded-For, X-Real-IP)
 /// and falling back to the direct socket address if headers are not present.
-pub struct RequestOrigin(pub IpAddr);
+pub struct RequestOrigin(pub Option<IpAddr>);
 
 fn maybe_x_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
     headers
@@ -44,8 +44,7 @@ where
 
         let ip = maybe_x_forwarded_for(&headers)
             .or_else(|| maybe_x_real_ip(&headers))
-            .or_else(|| addr.map(|a| a.ip()))
-            .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+            .or_else(|| addr.map(|a| a.ip()));
 
         Ok(RequestOrigin(ip))
     }
@@ -76,7 +75,7 @@ mod tests {
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
             .unwrap();
-        assert_eq!(result, "203.0.113.1".parse::<IpAddr>().unwrap());
+        assert_eq!(result, Some("203.0.113.1".parse::<IpAddr>().unwrap()));
     }
 
     #[tokio::test]
@@ -95,7 +94,7 @@ mod tests {
             .await
             .unwrap();
         // Should extract the first IP (original client)
-        assert_eq!(result, "203.0.113.1".parse::<IpAddr>().unwrap());
+        assert_eq!(result, Some("203.0.113.1".parse::<IpAddr>().unwrap()));
     }
 
     #[tokio::test]
@@ -109,7 +108,7 @@ mod tests {
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
             .unwrap();
-        assert_eq!(result, "203.0.113.2".parse::<IpAddr>().unwrap());
+        assert_eq!(result, Some("203.0.113.2".parse::<IpAddr>().unwrap()));
     }
 
     #[tokio::test]
@@ -125,7 +124,7 @@ mod tests {
             .await
             .unwrap();
         // X-Forwarded-For should take precedence
-        assert_eq!(result, "203.0.113.1".parse::<IpAddr>().unwrap());
+        assert_eq!(result, Some("203.0.113.1".parse::<IpAddr>().unwrap()));
     }
 
     #[tokio::test]
@@ -139,7 +138,7 @@ mod tests {
             .await
             .unwrap();
         // Should fall back to socket address
-        assert_eq!(result, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
+        assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))));
     }
 
     #[tokio::test]
@@ -155,7 +154,7 @@ mod tests {
             .await
             .unwrap();
         // Should fall back to socket address when header is empty
-        assert_eq!(result, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)));
+        assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))));
     }
 
     #[tokio::test]
@@ -174,6 +173,20 @@ mod tests {
             .await
             .unwrap();
         // Should trim whitespace
-        assert_eq!(result, "203.0.113.1".parse::<IpAddr>().unwrap());
+        assert_eq!(result, Some("203.0.113.1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn test_no_ip_available_returns_none() {
+        let headers = HeaderMap::new();
+        // Build a request without ConnectInfo
+        let mut request = Request::builder().body(()).unwrap();
+        *request.headers_mut() = headers;
+
+        let (mut parts, _) = request.into_parts();
+        let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+        assert_eq!(result, None);
     }
 }
