@@ -9,7 +9,7 @@ use crate::{
         http::HttpServerError,
         sql::{DbError, SqlDb},
     },
-    ln_verification,
+    ip_verification, ln_verification,
     shared::HomeserverAdminAPI,
     sms_verification::http::router,
 };
@@ -31,12 +31,14 @@ impl HttpServer {
     pub fn create_router(
         sms_verification_router: Router,
         ln_verification_router: Router,
+        ip_verification_router: Router,
         allow_cors: bool,
     ) -> Router {
         let router = Router::new()
             .route("/", get(root))
             .nest("/ln_verification", ln_verification_router)
-            .nest("/sms_verification", sms_verification_router);
+            .nest("/sms_verification", sms_verification_router)
+            .nest("/ip_verification", ip_verification_router);
 
         let router = if allow_cors {
             tracing::info!("Enabling CORS for any origin, method, and headers");
@@ -62,9 +64,11 @@ impl HttpServer {
 
         let sms_verification_router = router(&config, &db).await?;
         let ln_verification_router = ln_verification::router(&config, &db).await?;
+        let ip_verification_router = ip_verification::router(&config, &db).await?;
         let router = Self::create_router(
             sms_verification_router,
             ln_verification_router,
+            ip_verification_router,
             config.allow_cors,
         );
 

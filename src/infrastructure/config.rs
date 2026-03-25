@@ -41,10 +41,28 @@ pub struct EnvConfig {
     pub phoenixd_api_password: String,
     #[serde(default = "default_allow_cors")]
     pub allow_cors: bool,
+    #[serde(default = "default_ip_verification_enabled")]
+    pub ip_verification_enabled: bool,
+    #[serde(default = "default_max_ip_verifications_per_week")]
+    pub max_ip_verifications_per_week: u32,
+    #[serde(default = "default_max_ip_verifications_per_year")]
+    pub max_ip_verifications_per_year: u32,
 }
 
 fn default_allow_cors() -> bool {
     false
+}
+
+fn default_ip_verification_enabled() -> bool {
+    false
+}
+
+fn default_max_ip_verifications_per_week() -> u32 {
+    2
+}
+
+fn default_max_ip_verifications_per_year() -> u32 {
+    4
 }
 
 fn default_max_sms_verifications_per_week() -> u32 {
@@ -112,6 +130,9 @@ impl EnvConfig {
                 .expect("Default Phoenixd API URL is valid"),
             phoenixd_api_password:
                 "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef".to_string(),
+            ip_verification_enabled: false,
+            max_ip_verifications_per_week: 2,
+            max_ip_verifications_per_year: 4,
         }
     }
 }

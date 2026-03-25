@@ -33,6 +33,17 @@ We use [Prelude](https://docs.prelude.so/) for SMS verification. Keep in mind th
 
 We use [phoenixd](https://github.com/ACINQ/phoenixd) for Lightning Payment verifications.
 
+## IP Verification
+
+A low-friction alternative to SMS/LN verification. A client POSTs to `/ip_verification` and receives a signup code if their IP has not exceeded the configured weekly/annual limits.
+
+IP-based rate limiting is inherently easy to circumvent (header spoofing, rotating IPs, VPNs). See `src/ip_verification/mod.rs` for detailed security considerations.
+
+Configured via environment variables (disabled by default):
+- `IP_VERIFICATION_ENABLED` — enable the endpoint
+- `MAX_IP_VERIFICATIONS_PER_WEEK` — weekly limit per IP (default: 2)
+- `MAX_IP_VERIFICATIONS_PER_YEAR` — annual limit per IP (default: 4)
+
 ## Running Tests
 
 Tests require a PostgreSQL connection string for database integration tests:

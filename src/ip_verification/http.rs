@@ -1,0 +1,232 @@
+use axum::{
+    Json, Router,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::post,
+};
+
+use crate::{
+    EnvConfig,
+    infrastructure::http::{HttpServerError, RequestOrigin},
+};
+
+use super::app_state::AppState;
+use super::error::IpVerificationError;
+use super::types::IpVerificationResponse;
+
+pub async fn router(
+    config: &EnvConfig,
+    db: &crate::infrastructure::sql::SqlDb,
+) -> Result<Router, HttpServerError> {
+    let state = AppState::new(config, db.clone());
+    Ok(Router::new()
+        .route("/", post(root_handler))
+        .with_state(state))
+}
+
+#[cfg(test)]
+pub async fn router_with_db(
+    config: &EnvConfig,
+    db: crate::infrastructure::sql::SqlDb,
+) -> Result<Router, HttpServerError> {
+    let state = AppState::new(config, db);
+    Ok(Router::new()
+        .route("/", post(root_handler))
+        .with_state(state))
+}
+
+async fn root_handler(
+    State(state): State<AppState>,
+    RequestOrigin(maybe_ip): RequestOrigin,
+) -> Result<Json<IpVerificationResponse>, IpVerificationError> {
+    let ip_address = maybe_ip.ok_or(IpVerificationError::IpAddressRequired)?;
+    let response = state.ip_verification.verify(&state.db, ip_address).await?;
+    Ok(Json(response))
+}
+
+impl IntoResponse for IpVerificationError {
+    fn into_response(self) -> Response {
+        let status = match self {
+            IpVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+            IpVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+            IpVerificationError::IpAddressRequired => StatusCode::BAD_REQUEST,
+            IpVerificationError::ServiceDisabled => StatusCode::SERVICE_UNAVAILABLE,
+            IpVerificationError::HomeserverUnavailable => {
+                tracing::error!("Homeserver unavailable during IP verification");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+            IpVerificationError::Database(ref err) => {
+                tracing::error!(error = %err, "Database operation failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        };
+        (status, self.to_string()).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
+    use axum_test::TestServer;
+    use sqlx::PgPool;
+    use std::net::SocketAddr;
+
+    async fn create_http_test_server(
+        pool: PgPool,
+        servers: &WiremockServers,
+        enabled: bool,
+    ) -> TestServer {
+        create_http_test_server_with_limits(pool, servers, enabled, 2, 4).await
+    }
+
+    async fn create_http_test_server_with_limits(
+        pool: PgPool,
+        servers: &WiremockServers,
+        enabled: bool,
+        max_per_week: u32,
+        max_per_year: u32,
+    ) -> TestServer {
+        use crate::infrastructure::sql::SqlDb;
+
+        let mut config = EnvConfig::for_test(
+            servers.prelude_server.uri().parse().unwrap(),
+            servers.homeserver_server.uri().parse().unwrap(),
+        );
+        config.ip_verification_enabled = enabled;
+        config.max_ip_verifications_per_week = max_per_week;
+        config.max_ip_verifications_per_year = max_per_year;
+
+        let db = SqlDb::test(pool).await;
+
+        let ip_verification_router = router_with_db(&config, db)
+            .await
+            .expect("Failed to create router");
+
+        let router = Router::new().nest("/ip_verification", ip_verification_router);
+        let app = router.into_make_service_with_connect_info::<SocketAddr>();
+        TestServer::new(app).expect("Failed to create test server")
+    }
+
+    #[sqlx::test]
+    async fn test_successful_verification(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let server = create_http_test_server(pool, &servers, true).await;
+
+        setup_homeserver_signup_token("token-123")
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+
+        let response = server.post("/ip_verification").await;
+        response.assert_status_ok();
+
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["signupCode"], "token-123");
+        assert_eq!(body["homeserverPubky"], "test-homeserver-pubky");
+    }
+
+    #[sqlx::test]
+    async fn test_weekly_limit_exceeded(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let server = create_http_test_server(pool, &servers, true).await;
+
+        // max_ip_verifications_per_week is 2, so third request should fail.
+        // The homeserver is only called for requests that pass rate limits.
+        setup_homeserver_signup_token("token")
+            .expect(2)
+            .mount(&servers.homeserver_server)
+            .await;
+
+        server.post("/ip_verification").await.assert_status_ok();
+        server.post("/ip_verification").await.assert_status_ok();
+
+        let response = server.post("/ip_verification").await;
+        response.assert_status(StatusCode::TOO_MANY_REQUESTS);
+        let body = response.text();
+        assert!(
+            body.contains("weekly"),
+            "Should mention weekly limit: {body}"
+        );
+    }
+
+    #[sqlx::test]
+    async fn test_annual_limit_exceeded(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        // Set weekly limit high (10) so only the annual limit (2) triggers.
+        // The homeserver is only called for requests that pass rate limits.
+        let server = create_http_test_server_with_limits(pool, &servers, true, 10, 2).await;
+
+        setup_homeserver_signup_token("token")
+            .expect(2)
+            .mount(&servers.homeserver_server)
+            .await;
+
+        server.post("/ip_verification").await.assert_status_ok();
+        server.post("/ip_verification").await.assert_status_ok();
+
+        let response = server.post("/ip_verification").await;
+        response.assert_status(StatusCode::TOO_MANY_REQUESTS);
+        let body = response.text();
+        assert!(
+            body.contains("annual"),
+            "Should mention annual limit: {body}"
+        );
+    }
+
+    #[sqlx::test]
+    async fn test_homeserver_unavailable_returns_500(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let server = create_http_test_server(pool, &servers, true).await;
+
+        // Don't mount any homeserver mock — requests to generate_signup_token will get 404
+        let response = server.post("/ip_verification").await;
+        response.assert_status(StatusCode::INTERNAL_SERVER_ERROR);
+        let body = response.text();
+        assert!(
+            body.contains("Homeserver temporarily unavailable"),
+            "Should mention homeserver unavailable: {body}"
+        );
+    }
+
+    #[sqlx::test]
+    async fn test_service_disabled_returns_503(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let server = create_http_test_server(pool, &servers, false).await;
+
+        let response = server.post("/ip_verification").await;
+        response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[sqlx::test]
+    async fn test_missing_ip_returns_400(pool: PgPool) {
+        use crate::infrastructure::sql::SqlDb;
+
+        let servers = WiremockServers::start().await;
+        let mut config = EnvConfig::for_test(
+            servers.prelude_server.uri().parse().unwrap(),
+            servers.homeserver_server.uri().parse().unwrap(),
+        );
+        config.ip_verification_enabled = true;
+
+        let db = SqlDb::test(pool).await;
+        let ip_verification_router = router_with_db(&config, db)
+            .await
+            .expect("Failed to create router");
+
+        // Build a router WITHOUT into_make_service_with_connect_info so
+        // ConnectInfo<SocketAddr> is not available — IP will be None.
+        let router = Router::new().nest("/ip_verification", ip_verification_router);
+        let app = router.into_make_service();
+        let server = TestServer::new(app).expect("Failed to create test server");
+
+        let response = server.post("/ip_verification").await;
+        response.assert_status(StatusCode::BAD_REQUEST);
+        let body = response.text();
+        assert!(
+            body.contains("IP address"),
+            "Should mention IP address: {body}"
+        );
+    }
+}

@@ -1,4 +1,5 @@
 mod infrastructure;
+mod ip_verification;
 mod ln_verification;
 mod shared;
 mod sms_verification;
