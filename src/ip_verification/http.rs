@@ -51,7 +51,6 @@ impl IntoResponse for IpVerificationError {
             IpVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             IpVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             IpVerificationError::IpAddressRequired => StatusCode::BAD_REQUEST,
-            IpVerificationError::ServiceDisabled => StatusCode::SERVICE_UNAVAILABLE,
             IpVerificationError::HomeserverUnavailable => {
                 tracing::error!("Homeserver unavailable during IP verification");
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -73,18 +72,13 @@ mod tests {
     use sqlx::PgPool;
     use std::net::SocketAddr;
 
-    async fn create_http_test_server(
-        pool: PgPool,
-        servers: &WiremockServers,
-        enabled: bool,
-    ) -> TestServer {
-        create_http_test_server_with_limits(pool, servers, enabled, 2, 4).await
+    async fn create_http_test_server(pool: PgPool, servers: &WiremockServers) -> TestServer {
+        create_http_test_server_with_limits(pool, servers, 2, 4).await
     }
 
     async fn create_http_test_server_with_limits(
         pool: PgPool,
         servers: &WiremockServers,
-        enabled: bool,
         max_per_week: u32,
         max_per_year: u32,
     ) -> TestServer {
@@ -94,7 +88,6 @@ mod tests {
             servers.prelude_server.uri().parse().unwrap(),
             servers.homeserver_server.uri().parse().unwrap(),
         );
-        config.ip_verification_enabled = enabled;
         config.max_ip_verifications_per_week = max_per_week;
         config.max_ip_verifications_per_year = max_per_year;
 
@@ -112,7 +105,7 @@ mod tests {
     #[sqlx::test]
     async fn test_successful_verification(pool: PgPool) {
         let servers = WiremockServers::start().await;
-        let server = create_http_test_server(pool, &servers, true).await;
+        let server = create_http_test_server(pool, &servers).await;
 
         setup_homeserver_signup_token("token-123")
             .expect(1)
@@ -130,7 +123,7 @@ mod tests {
     #[sqlx::test]
     async fn test_weekly_limit_exceeded(pool: PgPool) {
         let servers = WiremockServers::start().await;
-        let server = create_http_test_server(pool, &servers, true).await;
+        let server = create_http_test_server(pool, &servers).await;
 
         // max_ip_verifications_per_week is 2, so third request should fail.
         // The homeserver is only called for requests that pass rate limits.
@@ -156,7 +149,7 @@ mod tests {
         let servers = WiremockServers::start().await;
         // Set weekly limit high (10) so only the annual limit (2) triggers.
         // The homeserver is only called for requests that pass rate limits.
-        let server = create_http_test_server_with_limits(pool, &servers, true, 10, 2).await;
+        let server = create_http_test_server_with_limits(pool, &servers, 10, 2).await;
 
         setup_homeserver_signup_token("token")
             .expect(2)
@@ -178,7 +171,7 @@ mod tests {
     #[sqlx::test]
     async fn test_homeserver_unavailable_returns_500(pool: PgPool) {
         let servers = WiremockServers::start().await;
-        let server = create_http_test_server(pool, &servers, true).await;
+        let server = create_http_test_server(pool, &servers).await;
 
         // Don't mount any homeserver mock — requests to generate_signup_token will get 404
         let response = server.post("/ip_verification").await;
@@ -191,25 +184,14 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn test_service_disabled_returns_503(pool: PgPool) {
-        let servers = WiremockServers::start().await;
-        let server = create_http_test_server(pool, &servers, false).await;
-
-        let response = server.post("/ip_verification").await;
-        response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    #[sqlx::test]
     async fn test_missing_ip_returns_400(pool: PgPool) {
         use crate::infrastructure::sql::SqlDb;
 
         let servers = WiremockServers::start().await;
-        let mut config = EnvConfig::for_test(
+        let config = EnvConfig::for_test(
             servers.prelude_server.uri().parse().unwrap(),
             servers.homeserver_server.uri().parse().unwrap(),
         );
-        config.ip_verification_enabled = true;
-
         let db = SqlDb::test(pool).await;
         let ip_verification_router = router_with_db(&config, db)
             .await

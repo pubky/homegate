@@ -14,7 +14,6 @@ pub struct IpVerificationService {
     hasher_argon2id: HasherArgon2id,
     max_verifications_per_week: u32,
     max_verifications_per_year: u32,
-    enabled: bool,
 }
 
 impl IpVerificationService {
@@ -22,14 +21,12 @@ impl IpVerificationService {
         homeserver_admin_api: HomeserverAdminAPI,
         max_verifications_per_week: u32,
         max_verifications_per_year: u32,
-        enabled: bool,
     ) -> Self {
         Self {
             homeserver_admin_api,
             hasher_argon2id: HasherArgon2id::new(),
             max_verifications_per_week,
             max_verifications_per_year,
-            enabled,
         }
     }
 
@@ -38,10 +35,6 @@ impl IpVerificationService {
         db: &SqlDb,
         ip_address: IpAddr,
     ) -> Result<IpVerificationResponse, IpVerificationError> {
-        if !self.enabled {
-            return Err(IpVerificationError::ServiceDisabled);
-        }
-
         let ip_hash = self
             .hasher_argon2id
             .hash_phone_number(&ip_address.to_string());

@@ -13,9 +13,6 @@ pub enum IpVerificationError {
     #[error("Could not determine client IP address")]
     IpAddressRequired,
 
-    #[error("IP verification is not enabled")]
-    ServiceDisabled,
-
     #[error("Homeserver temporarily unavailable, please retry")]
     HomeserverUnavailable,
 

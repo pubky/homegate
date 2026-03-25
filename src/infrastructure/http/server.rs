@@ -31,14 +31,17 @@ impl HttpServer {
     pub fn create_router(
         sms_verification_router: Router,
         ln_verification_router: Router,
-        ip_verification_router: Router,
+        ip_verification_router: Option<Router>,
         allow_cors: bool,
     ) -> Router {
-        let router = Router::new()
+        let mut router = Router::new()
             .route("/", get(root))
             .nest("/ln_verification", ln_verification_router)
-            .nest("/sms_verification", sms_verification_router)
-            .nest("/ip_verification", ip_verification_router);
+            .nest("/sms_verification", sms_verification_router);
+
+        if let Some(ip_router) = ip_verification_router {
+            router = router.nest("/ip_verification", ip_router);
+        }
 
         let router = if allow_cors {
             tracing::info!("Enabling CORS for any origin, method, and headers");
@@ -64,7 +67,11 @@ impl HttpServer {
 
         let sms_verification_router = router(&config, &db).await?;
         let ln_verification_router = ln_verification::router(&config, &db).await?;
-        let ip_verification_router = ip_verification::router(&config, &db).await?;
+        let ip_verification_router = if config.ip_verification_enabled {
+            Some(ip_verification::router(&config, &db).await?)
+        } else {
+            None
+        };
         let router = Self::create_router(
             sms_verification_router,
             ln_verification_router,
