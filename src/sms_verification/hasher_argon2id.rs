@@ -53,7 +53,7 @@ impl HasherArgon2id {
     }
 
     /// Hashes a string using Argon2id with a deterministic salt.
-    pub fn hash_phone_number(&self, preimage: &str) -> String {
+    pub fn hash(&self, preimage: &str) -> String {
         // Derive deterministic salt from pepper using Blake3
         let salt_bytes = blake3::hash(self.pepper.as_bytes());
         let salt = SaltString::encode_b64(&salt_bytes.as_bytes()[..16])
@@ -155,7 +155,7 @@ mod tests {
         );
 
         // Verify hasher is functional
-        let hash = hasher.hash_phone_number("+1234567890");
+        let hash = hasher.hash("+1234567890");
         assert!(!hash.is_empty(), "Should produce a hash");
     }
 
@@ -170,11 +170,11 @@ mod tests {
 
         // Initialize hasher - should load existing pepper
         let hasher1 = HasherArgon2id::with_pepper_path(pepper_file.clone());
-        let hash1 = hasher1.hash_phone_number("+1234567890");
+        let hash1 = hasher1.hash("+1234567890");
 
         // Initialize another hasher - should load the same pepper
         let hasher2 = HasherArgon2id::with_pepper_path(pepper_file.clone());
-        let hash2 = hasher2.hash_phone_number("+1234567890");
+        let hash2 = hasher2.hash("+1234567890");
 
         // Both hashers should produce the same hash since they use the same pepper
         assert_eq!(

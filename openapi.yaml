@@ -4,10 +4,11 @@ info:
   description: |
     #### WARNING: This OpenAPI specification is AI generated. It may not be accurate.
 
-    A backend service to gatekeep Pubky Homeserver signups. Provides two verification methods:
+    A backend service to gatekeep Pubky Homeserver signups. Provides three verification methods:
     - SMS verification via Prelude
     - Lightning Network payment verification
-    
+    - IP-based verification (optional, disabled by default)
+
     ## SMS Verification
     Uses Prelude for SMS verification. Each phone number:
     - Has a single pending verification at a time. Multiple `send_code` calls reuse the existing session.
@@ -18,7 +19,16 @@ info:
     1. Creating a verification request to get a BOLT11 invoice
     2. Paying the invoice
     3. Checking payment status via the GET endpoint or polling the `/await` endpoint to wait for payment confirmation
-  version: 0.1.0
+
+    ## IP Verification
+    A low-friction alternative to SMS/LN verification. A client POSTs to the endpoint and receives
+    a signup code if their IP has not exceeded the configured weekly/annual rate limits.
+
+    **Security note:** IP-based rate limiting is inherently weak — it relies on the reverse proxy
+    setting `X-Forwarded-For` / `X-Real-IP` authoritatively. Users behind shared IPs (NAT, VPN)
+    will collectively exhaust the limit, and rotating IPs can bypass it. This endpoint should not
+    be the sole line of defence against spam. It is disabled by default (`HG_IP_VERIFICATION_ENABLED=false`).
+  version: 0.2.0
   contact:
     name: Homegate API Support
 
@@ -251,6 +261,70 @@ paths:
       responses:
         '200':
           description: SMS verification is available
+
+  /ip_verification:
+    post:
+      summary: Create IP-based verification
+      description: |
+        Creates a new IP-based verification and returns a signup code.
+
+        The client IP is determined from the socket address, or from `X-Forwarded-For` / `X-Real-IP`
+        headers when `HG_ACCEPT_PROXY_IP_HEADERS=true`.
+
+        Rate limits apply per IP address:
+        - Weekly limit: 2 verifications per IP (default, configurable via `HG_MAX_IP_VERIFICATIONS_PER_WEEK`)
+        - Annual limit: 4 verifications per IP (default, configurable via `HG_MAX_IP_VERIFICATIONS_PER_YEAR`)
+
+        This endpoint is only available when `HG_IP_VERIFICATION_ENABLED=true`. Returns 404 otherwise.
+
+        No request body is required.
+      operationId: createIpVerification
+      tags:
+        - IP Verification
+      responses:
+        '200':
+          description: Verification successful, signup code issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IpVerificationResponse'
+              examples:
+                success:
+                  summary: Successful verification
+                  value:
+                    signupCode: "token-uuid-123"
+                    homeserverPubky: "test-homeserver-pubky"
+        '400':
+          description: Could not determine client IP address
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Could not determine client IP address"
+        '404':
+          description: IP verification is not enabled on this server
+        '429':
+          description: Rate limit exceeded
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                weeklyLimit:
+                  value: "IP address has exceeded weekly verification limit"
+                annualLimit:
+                  value: "IP address has exceeded annual verification limit"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                homeserverUnavailable:
+                  value: "Homeserver temporarily unavailable, please retry"
+                internalError:
+                  value: "Internal Server Error"
 
   /ln_verification/info:
     get:
@@ -556,6 +630,21 @@ components:
           description: Unix timestamp in milliseconds when the verification was created
           example: 1704066600000
 
+    IpVerificationResponse:
+      type: object
+      required:
+        - signupCode
+        - homeserverPubky
+      properties:
+        signupCode:
+          type: string
+          description: Signup token to use for homeserver registration
+          example: "token-uuid-123"
+        homeserverPubky:
+          type: string
+          description: Public key of the homeserver
+          example: "test-homeserver-pubky"
+
     LnInfoResponse:
       type: object
       required:
@@ -642,3 +731,5 @@ tags:
     description: SMS-based phone number verification endpoints
   - name: Lightning Network Verification
     description: Lightning Network payment-based verification endpoints
+  - name: IP Verification
+    description: IP-based verification endpoints (optional, disabled by default)

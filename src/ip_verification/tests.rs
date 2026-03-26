@@ -143,3 +143,59 @@ async fn test_annual_limit_persists_after_weekly_window(pool: PgPool) {
         "Expected AnnualLimitExceeded, got: {err:?}"
     );
 }
+
+/// Verifies the advisory lock prevents concurrent requests for the same IP
+/// from both succeeding when only one slot remains. Without the lock, both
+/// tasks would read count=0, pass the rate check, and insert — exceeding
+/// the limit.
+#[sqlx::test]
+async fn test_concurrent_requests_respect_rate_limit(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    // weekly limit = 1, so only one of the two concurrent requests should succeed
+    let service = create_service(&servers, 1, 10);
+    let db = SqlDb::test(pool.clone()).await;
+    let ip: IpAddr = "10.0.0.1".parse().unwrap();
+
+    // The homeserver mock should only be called once (the winning request).
+    // Use up to 2 to avoid the mock itself causing a misleading failure —
+    // the assertion below is what actually validates correctness.
+    setup_homeserver_signup_token("token")
+        .expect(1..=2)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    let service_a = service.clone();
+    let db_a = db.clone();
+    let service_b = service.clone();
+    let db_b = db.clone();
+
+    // Spawn two concurrent verification requests for the same IP
+    let handle_a = tokio::spawn(async move { service_a.verify(&db_a, ip).await });
+    let handle_b = tokio::spawn(async move { service_b.verify(&db_b, ip).await });
+
+    let result_a = handle_a.await.expect("task A panicked");
+    let result_b = handle_b.await.expect("task B panicked");
+
+    // Exactly one should succeed and one should fail with WeeklyLimitExceeded
+    let (successes, failures): (Vec<_>, Vec<_>) =
+        [result_a, result_b].into_iter().partition(Result::is_ok);
+
+    assert_eq!(
+        successes.len(),
+        1,
+        "Exactly one concurrent request should succeed, got {} successes",
+        successes.len()
+    );
+    assert_eq!(
+        failures.len(),
+        1,
+        "Exactly one concurrent request should be rate-limited, got {} failures",
+        failures.len()
+    );
+
+    let err = failures.into_iter().next().unwrap().unwrap_err();
+    assert!(
+        matches!(err, IpVerificationError::WeeklyLimitExceeded),
+        "Rate-limited request should get WeeklyLimitExceeded, got: {err:?}"
+    );
+}

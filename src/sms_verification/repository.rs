@@ -329,7 +329,7 @@ impl SmsVerificationRepository {
         phone_number: &PhoneNumber,
     ) -> Result<SmsVerificationEntity, DbError> {
         use crate::sms_verification::HasherArgon2id;
-        let hashed_phone = HasherArgon2id::new().hash_phone_number(phone_number.as_str());
+        let hashed_phone = HasherArgon2id::new().hash(phone_number.as_str());
 
         let statement = Query::select()
             .columns([

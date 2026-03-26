@@ -8,6 +8,9 @@ use super::error::IpVerificationError;
 use super::repository::IpVerificationRepository;
 use super::types::IpVerificationResponse;
 
+const WEEKLY_WINDOW_DAYS: i64 = 7;
+const ANNUAL_WINDOW_DAYS: i64 = 365;
+
 #[derive(Clone, Debug)]
 pub struct IpVerificationService {
     homeserver_admin_api: HomeserverAdminAPI,
@@ -35,32 +38,62 @@ impl IpVerificationService {
         db: &SqlDb,
         ip_address: IpAddr,
     ) -> Result<IpVerificationResponse, IpVerificationError> {
-        let ip_hash = self
-            .hasher_argon2id
-            .hash_phone_number(&ip_address.to_string());
+        let ip_hash = self.hasher_argon2id.hash(&ip_address.to_string());
 
         // Use a transaction with an advisory lock so the rate limit check and
         // insert are atomic, preventing concurrent requests from bypassing the
         // limit.
         let mut tx = db.pool().begin().await.map_err(DbError::from)?;
-
-        // Acquire a transaction-scoped advisory lock keyed on the IP hash.
-        // This serializes concurrent requests for the same IP while allowing
-        // different IPs to proceed in parallel. The lock is released
-        // automatically when the transaction ends.
-        let lock_key = advisory_lock_key(&ip_hash);
-        sqlx::query("SELECT pg_advisory_xact_lock($1)")
-            .bind(lock_key)
-            .execute(&mut *tx)
-            .await
-            .map_err(DbError::from)?;
+        self.acquire_advisory_lock(&mut tx, &ip_hash).await?;
 
         let mut executor: UnifiedExecutor<'_> = (&mut tx).into();
+        self.check_rate_limits(&mut executor, &ip_hash).await?;
+        drop(executor);
 
-        // Check weekly limit
-        let weekly_count =
-            IpVerificationRepository::count_verifications_in_last_days(&mut executor, &ip_hash, 7)
-                .await?;
+        let signup_code = self.generate_signup_token().await?;
+
+        let mut executor: UnifiedExecutor<'_> = (&mut tx).into();
+        IpVerificationRepository::create_verification(&mut executor, &ip_hash, &signup_code)
+            .await?;
+
+        drop(executor);
+        tx.commit().await.map_err(DbError::from)?;
+
+        Ok(IpVerificationResponse {
+            signup_code,
+            homeserver_pubky: self.homeserver_admin_api.get_homeserver_pubky(),
+        })
+    }
+
+    /// Acquire a transaction-scoped advisory lock keyed on the IP hash.
+    /// This serializes concurrent requests for the same IP while allowing
+    /// different IPs to proceed in parallel. The lock is released
+    /// automatically when the transaction ends.
+    async fn acquire_advisory_lock(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        ip_hash: &str,
+    ) -> Result<(), IpVerificationError> {
+        let lock_key = advisory_lock_key(ip_hash);
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(lock_key)
+            .execute(&mut **tx)
+            .await
+            .map_err(DbError::from)?;
+        Ok(())
+    }
+
+    async fn check_rate_limits(
+        &self,
+        executor: &mut UnifiedExecutor<'_>,
+        ip_hash: &str,
+    ) -> Result<(), IpVerificationError> {
+        let weekly_count = IpVerificationRepository::count_verifications_in_last_days(
+            executor,
+            ip_hash,
+            WEEKLY_WINDOW_DAYS,
+        )
+        .await?;
         if weekly_count >= self.max_verifications_per_week as i64 {
             tracing::warn!(
                 ip_hash = %ip_hash,
@@ -71,11 +104,10 @@ impl IpVerificationService {
             return Err(IpVerificationError::WeeklyLimitExceeded);
         }
 
-        // Check annual limit
         let annual_count = IpVerificationRepository::count_verifications_in_last_days(
-            &mut executor,
-            &ip_hash,
-            365,
+            executor,
+            ip_hash,
+            ANNUAL_WINDOW_DAYS,
         )
         .await?;
         if annual_count >= self.max_verifications_per_year as i64 {
@@ -88,32 +120,17 @@ impl IpVerificationService {
             return Err(IpVerificationError::AnnualLimitExceeded);
         }
 
-        // Drop the executor to release the borrow on tx before the network
-        // call. The advisory lock is still held on the transaction.
-        drop(executor);
+        Ok(())
+    }
 
-        // Generate signup token only after rate limits pass
-        let signup_code = self
-            .homeserver_admin_api
+    async fn generate_signup_token(&self) -> Result<String, IpVerificationError> {
+        self.homeserver_admin_api
             .generate_signup_token()
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "Failed to generate signup token");
                 IpVerificationError::HomeserverUnavailable
-            })?;
-
-        // Record the verification
-        let mut executor: UnifiedExecutor<'_> = (&mut tx).into();
-        IpVerificationRepository::create_verification(&mut executor, &ip_hash, &signup_code)
-            .await?;
-
-        drop(executor);
-        tx.commit().await.map_err(DbError::from)?;
-
-        Ok(IpVerificationResponse {
-            signup_code,
-            homeserver_pubky: self.homeserver_admin_api.get_homeserver_pubky(),
-        })
+            })
     }
 }
 
