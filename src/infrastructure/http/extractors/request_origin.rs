@@ -8,10 +8,18 @@ use std::net::{IpAddr, SocketAddr};
 const X_REAL_IP: &str = "x-real-ip";
 const X_FORWARDED_FOR: &str = "x-forwarded-for";
 
-/// Axum extractor for RequestOrigin (client IP address) with proxy header support
+/// Extension marker that enables trusting X-Forwarded-For / X-Real-IP headers.
 ///
-/// Extracts the client's IP address by checking proxy headers (X-Forwarded-For, X-Real-IP)
-/// and falling back to the direct socket address if headers are not present.
+/// When this is present in the request extensions (added via router layer),
+/// the extractor will check proxy headers before falling back to the socket
+/// address. Without it, only the socket address is used.
+#[derive(Clone, Copy, Debug)]
+pub struct AcceptProxyIpHeaders;
+
+/// Axum extractor for RequestOrigin (client IP address).
+///
+/// By default, only uses the socket address. If [`AcceptProxyIpHeaders`] is
+/// present as a request extension, also checks X-Forwarded-For and X-Real-IP.
 pub struct RequestOrigin(pub Option<IpAddr>);
 
 fn maybe_x_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
@@ -35,16 +43,19 @@ where
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let headers = HeaderMap::from_request_parts(parts, state).await?;
-
-        let addr = ConnectInfo::<SocketAddr>::from_request_parts(parts, state)
+        let socket_ip = ConnectInfo::<SocketAddr>::from_request_parts(parts, state)
             .await
             .ok()
-            .map(|ConnectInfo(addr)| addr);
+            .map(|ConnectInfo(addr)| addr.ip());
 
-        let ip = maybe_x_forwarded_for(&headers)
-            .or_else(|| maybe_x_real_ip(&headers))
-            .or_else(|| addr.map(|a| a.ip()));
+        let ip = if parts.extensions.get::<AcceptProxyIpHeaders>().is_some() {
+            let headers = HeaderMap::from_request_parts(parts, state).await?;
+            maybe_x_forwarded_for(&headers)
+                .or_else(|| maybe_x_real_ip(&headers))
+                .or(socket_ip)
+        } else {
+            socket_ip
+        };
 
         Ok(RequestOrigin(ip))
     }
@@ -56,12 +67,29 @@ mod tests {
     use axum::http::{HeaderMap, Request};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    // Helper function to create a mock request with headers and ConnectInfo
-    fn make_request(headers: HeaderMap, addr: SocketAddr) -> Request<()> {
+    fn make_request(headers: HeaderMap, addr: SocketAddr, accept_proxy: bool) -> Request<()> {
         let mut request = Request::builder().body(()).unwrap();
         *request.headers_mut() = headers;
         request.extensions_mut().insert(ConnectInfo(addr));
+        if accept_proxy {
+            request.extensions_mut().insert(AcceptProxyIpHeaders);
+        }
         request
+    }
+
+    #[tokio::test]
+    async fn test_proxy_headers_ignored_by_default() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.1".parse().unwrap());
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+
+        let request = make_request(headers, addr, false);
+        let (mut parts, _) = request.into_parts();
+        let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+        // Should use socket address, ignoring the proxy header
+        assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
     }
 
     #[tokio::test]
@@ -70,7 +98,7 @@ mod tests {
         headers.insert("x-forwarded-for", "203.0.113.1".parse().unwrap());
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
 
-        let request = make_request(headers, addr);
+        let request = make_request(headers, addr, true);
         let (mut parts, _) = request.into_parts();
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
@@ -81,14 +109,13 @@ mod tests {
     #[tokio::test]
     async fn test_ip_from_x_forwarded_for_multiple() {
         let mut headers = HeaderMap::new();
-        // Multiple IPs: client, proxy1, proxy2
         headers.insert(
             "x-forwarded-for",
             "203.0.113.1, 198.51.100.1, 192.0.2.1".parse().unwrap(),
         );
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
 
-        let request = make_request(headers, addr);
+        let request = make_request(headers, addr, true);
         let (mut parts, _) = request.into_parts();
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
@@ -103,7 +130,7 @@ mod tests {
         headers.insert("x-real-ip", "203.0.113.2".parse().unwrap());
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
 
-        let request = make_request(headers, addr);
+        let request = make_request(headers, addr, true);
         let (mut parts, _) = request.into_parts();
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
@@ -118,7 +145,7 @@ mod tests {
         headers.insert("x-real-ip", "203.0.113.2".parse().unwrap());
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
 
-        let request = make_request(headers, addr);
+        let request = make_request(headers, addr, true);
         let (mut parts, _) = request.into_parts();
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
@@ -128,11 +155,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ip_fallback_to_socket_address() {
+    async fn test_socket_fallback_when_proxy_enabled_but_no_headers() {
         let headers = HeaderMap::new();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 8080);
 
-        let request = make_request(headers, addr);
+        let request = make_request(headers, addr, true);
         let (mut parts, _) = request.into_parts();
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
@@ -142,37 +169,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_malformed_forwarded_for_header() {
-        let mut headers = HeaderMap::new();
-        // Empty value
-        headers.insert("x-forwarded-for", "".parse().unwrap());
+    async fn test_socket_address_used_without_proxy_flag() {
+        let headers = HeaderMap::new();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 8080);
 
-        let request = make_request(headers, addr);
+        let request = make_request(headers, addr, false);
         let (mut parts, _) = request.into_parts();
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
             .unwrap();
-        // Should fall back to socket address when header is empty
+        assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))));
+    }
+
+    #[tokio::test]
+    async fn test_malformed_forwarded_for_falls_back_to_socket() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "".parse().unwrap());
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 8080);
+
+        let request = make_request(headers, addr, true);
+        let (mut parts, _) = request.into_parts();
+        let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
         assert_eq!(result, Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))));
     }
 
     #[tokio::test]
     async fn test_x_forwarded_for_with_whitespace() {
         let mut headers = HeaderMap::new();
-        // IPs with extra whitespace
         headers.insert(
             "x-forwarded-for",
             "  203.0.113.1  ,  198.51.100.1  ".parse().unwrap(),
         );
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
 
-        let request = make_request(headers, addr);
+        let request = make_request(headers, addr, true);
         let (mut parts, _) = request.into_parts();
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
             .unwrap();
-        // Should trim whitespace
         assert_eq!(result, Some("203.0.113.1".parse::<IpAddr>().unwrap()));
     }
 

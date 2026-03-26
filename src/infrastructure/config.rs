@@ -43,6 +43,8 @@ pub struct EnvConfig {
     pub allow_cors: bool,
     #[serde(default = "default_ip_verification_enabled")]
     pub ip_verification_enabled: bool,
+    #[serde(default)]
+    pub accept_proxy_ip_headers: bool,
     #[serde(default = "default_max_ip_verifications_per_week")]
     pub max_ip_verifications_per_week: u32,
     #[serde(default = "default_max_ip_verifications_per_year")]
@@ -131,6 +133,7 @@ impl EnvConfig {
             phoenixd_api_password:
                 "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef".to_string(),
             ip_verification_enabled: false,
+            accept_proxy_ip_headers: false,
             max_ip_verifications_per_week: 2,
             max_ip_verifications_per_year: 4,
         }
