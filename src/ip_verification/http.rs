@@ -82,6 +82,16 @@ mod tests {
         max_per_week: u32,
         max_per_year: u32,
     ) -> TestServer {
+        create_test_server_inner(pool, servers, max_per_week, max_per_year, true).await
+    }
+
+    async fn create_test_server_inner(
+        pool: PgPool,
+        servers: &WiremockServers,
+        max_per_week: u32,
+        max_per_year: u32,
+        with_connect_info: bool,
+    ) -> TestServer {
         use crate::infrastructure::sql::SqlDb;
 
         let mut config = EnvConfig::for_test(
@@ -98,8 +108,13 @@ mod tests {
             .expect("Failed to create router");
 
         let router = Router::new().nest("/ip_verification", ip_verification_router);
-        let app = router.into_make_service_with_connect_info::<SocketAddr>();
-        TestServer::new(app).expect("Failed to create test server")
+        if with_connect_info {
+            let app = router.into_make_service_with_connect_info::<SocketAddr>();
+            TestServer::new(app).expect("Failed to create test server")
+        } else {
+            let app = router.into_make_service();
+            TestServer::new(app).expect("Failed to create test server")
+        }
     }
 
     #[sqlx::test]
@@ -185,23 +200,9 @@ mod tests {
 
     #[sqlx::test]
     async fn test_missing_ip_returns_400(pool: PgPool) {
-        use crate::infrastructure::sql::SqlDb;
-
         let servers = WiremockServers::start().await;
-        let config = EnvConfig::for_test(
-            servers.prelude_server.uri().parse().unwrap(),
-            servers.homeserver_server.uri().parse().unwrap(),
-        );
-        let db = SqlDb::test(pool).await;
-        let ip_verification_router = router_with_db(&config, db)
-            .await
-            .expect("Failed to create router");
-
-        // Build a router WITHOUT into_make_service_with_connect_info so
-        // ConnectInfo<SocketAddr> is not available — IP will be None.
-        let router = Router::new().nest("/ip_verification", ip_verification_router);
-        let app = router.into_make_service();
-        let server = TestServer::new(app).expect("Failed to create test server");
+        // Build without ConnectInfo so IP will be None
+        let server = create_test_server_inner(pool, &servers, 2, 4, false).await;
 
         let response = server.post("/ip_verification").await;
         response.assert_status(StatusCode::BAD_REQUEST);

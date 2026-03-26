@@ -95,7 +95,11 @@ impl SmsVerificationService {
         Ok(())
     }
 
-    /// Initiates a phone number verification process
+    /// Initiates a phone number verification process.
+    ///
+    /// `ip_address` and `user_agent` are optional fraud-scoring signals forwarded
+    /// to Prelude. They are not used for rate limiting (phone number is used for
+    /// that).
     pub async fn create_verification(
         &mut self,
         db: &SqlDb,
@@ -103,9 +107,7 @@ impl SmsVerificationService {
         ip_address: Option<IpAddr>,
         user_agent: Option<String>,
     ) -> Result<(), SmsVerificationError> {
-        let phone_number_hash = self
-            .hasher_argon2id
-            .hash_phone_number(request.phone_number.as_str());
+        let phone_number_hash = self.hasher_argon2id.hash(request.phone_number.as_str());
 
         let mut executor: UnifiedExecutor<'_> = db.pool().into();
 
@@ -159,9 +161,7 @@ impl SmsVerificationService {
         db: &SqlDb,
         request: ValidateCodeRequest,
     ) -> Result<ValidateCodeResponse, SmsVerificationError> {
-        let phone_number_hash = self
-            .hasher_argon2id
-            .hash_phone_number(request.phone_number.as_str());
+        let phone_number_hash = self.hasher_argon2id.hash(request.phone_number.as_str());
 
         let mut executor: UnifiedExecutor<'_> = db.pool().into();
         SmsVerificationRepository::err_if_no_active_verification(&mut executor, &phone_number_hash)
