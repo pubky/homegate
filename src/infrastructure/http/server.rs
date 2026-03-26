@@ -33,6 +33,7 @@ impl HttpServer {
         ln_verification_router: Router,
         ip_verification_router: Option<Router>,
         allow_cors: bool,
+        accept_proxy_ip_headers: bool,
     ) -> Router {
         let mut router = Router::new()
             .route("/", get(root))
@@ -41,6 +42,11 @@ impl HttpServer {
 
         if let Some(ip_router) = ip_verification_router {
             router = router.nest("/ip_verification", ip_router);
+        }
+
+        if accept_proxy_ip_headers {
+            tracing::info!("Accepting proxy IP headers (X-Forwarded-For, X-Real-IP)");
+            router = router.layer(axum::Extension(super::AcceptProxyIpHeaders));
         }
 
         let router = if allow_cors {
@@ -77,6 +83,7 @@ impl HttpServer {
             ln_verification_router,
             ip_verification_router,
             config.allow_cors,
+            config.accept_proxy_ip_headers,
         );
 
         let (http_handle, http_socket) =
