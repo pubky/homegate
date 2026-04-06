@@ -21,9 +21,6 @@ COPY . .
 # Build the project in release mode for the MUSL target
 RUN cargo build --release --bin homegate
 
-# Strip the binary to reduce size
-RUN strip target/release/homegate
-
 # ========================
 # Runtime Stage
 # ========================
