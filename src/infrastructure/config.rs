@@ -42,7 +42,7 @@ pub struct EnvConfig {
     pub lightning_invoice_description: String,
     #[serde(default = "default_ln_verification_enabled")]
     pub ln_verification_enabled: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_url")]
     pub phoenixd_api_url: Option<Url>,
     #[serde(default)]
     pub phoenixd_api_password: String,
@@ -56,6 +56,17 @@ pub struct EnvConfig {
     pub max_ip_verifications_per_week: u32,
     #[serde(default = "default_max_ip_verifications_per_year")]
     pub max_ip_verifications_per_year: u32,
+}
+
+fn deserialize_optional_url<'de, D>(deserializer: D) -> Result<Option<Url>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: String = serde::Deserialize::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(None);
+    }
+    Url::parse(&s).map(Some).map_err(serde::de::Error::custom)
 }
 
 fn default_allow_cors() -> bool {
