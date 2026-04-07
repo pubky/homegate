@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pubky_homegate
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  homegate:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HG_DATABASE_URL: postgres://postgres:postgres@postgres:5432/pubky_homegate
+      HG_HTTP_LISTEN_SOCKET: "0.0.0.0:8080"
+      HG_HOMESERVER_ADMIN_API_URL: ${HG_HOMESERVER_ADMIN_API_URL}
+      HG_HOMESERVER_ADMIN_PASSWORD: ${HG_HOMESERVER_ADMIN_PASSWORD}
+      HG_HOMESERVER_PUBKY: ${HG_HOMESERVER_PUBKY}
+      # SMS (disable if no Prelude key)
+      HG_SMS_VERIFICATION_ENABLED: ${HG_SMS_VERIFICATION_ENABLED:-false}
+      HG_PRELUDE_API_KEY: ${HG_PRELUDE_API_KEY:-}
+      # Lightning (disable if no Phoenixd)
+      HG_LN_VERIFICATION_ENABLED: ${HG_LN_VERIFICATION_ENABLED:-false}
+      HG_PHOENIXD_API_URL: ${HG_PHOENIXD_API_URL:-}
+      HG_PHOENIXD_API_PASSWORD: ${HG_PHOENIXD_API_PASSWORD:-}
+      # IP verification
+      HG_IP_VERIFICATION_ENABLED: ${HG_IP_VERIFICATION_ENABLED:-true}
+      HG_MAX_IP_VERIFICATIONS_PER_WEEK: ${HG_MAX_IP_VERIFICATIONS_PER_WEEK:-2}
+      HG_MAX_IP_VERIFICATIONS_PER_YEAR: ${HG_MAX_IP_VERIFICATIONS_PER_YEAR:-4}
+      HG_ACCEPT_PROXY_IP_HEADERS: ${HG_ACCEPT_PROXY_IP_HEADERS:-false}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - homegate-data:/root/.homegate
+
+volumes:
+  pgdata:
+  homegate-data:
