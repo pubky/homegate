@@ -29,17 +29,20 @@ pub struct HttpServer {
 
 impl HttpServer {
     pub fn create_router(
-        sms_verification_router: Router,
-        ln_verification_router: Router,
+        sms_verification_router: Option<Router>,
+        ln_verification_router: Option<Router>,
         ip_verification_router: Option<Router>,
         allow_cors: bool,
         accept_proxy_ip_headers: bool,
     ) -> Router {
-        let mut router = Router::new()
-            .route("/", get(root))
-            .nest("/ln_verification", ln_verification_router)
-            .nest("/sms_verification", sms_verification_router);
+        let mut router = Router::new().route("/", get(root));
 
+        if let Some(sms_router) = sms_verification_router {
+            router = router.nest("/sms_verification", sms_router);
+        }
+        if let Some(ln_router) = ln_verification_router {
+            router = router.nest("/ln_verification", ln_router);
+        }
         if let Some(ip_router) = ip_verification_router {
             router = router.nest("/ip_verification", ip_router);
         }
@@ -71,11 +74,25 @@ impl HttpServer {
             .await
             .map_err(DbError::from)?;
 
-        let sms_verification_router = router(&config, &db).await?;
-        let ln_verification_router = ln_verification::router(&config, &db).await?;
+        let sms_verification_router = if config.sms_verification_enabled {
+            tracing::info!("SMS verification enabled");
+            Some(router(&config, &db).await?)
+        } else {
+            tracing::info!("SMS verification disabled");
+            None
+        };
+        let ln_verification_router = if config.ln_verification_enabled {
+            tracing::info!("Lightning verification enabled");
+            Some(ln_verification::router(&config, &db).await?)
+        } else {
+            tracing::info!("Lightning verification disabled");
+            None
+        };
         let ip_verification_router = if config.ip_verification_enabled {
+            tracing::info!("IP verification enabled");
             Some(ip_verification::router(&config, &db).await?)
         } else {
+            tracing::info!("IP verification disabled");
             None
         };
         let router = Self::create_router(
