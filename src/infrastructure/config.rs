@@ -13,6 +13,9 @@ pub struct EnvConfig {
     pub database_url: ConnectionString,
     #[serde(default = "default_http_listen_socker")]
     pub http_listen_socket: SocketAddr,
+    #[serde(default = "default_sms_verification_enabled")]
+    pub sms_verification_enabled: bool,
+    #[serde(default)]
     pub prelude_api_key: String,
     #[serde(default = "default_prelude_api_url")]
     pub prelude_api_url: Url,
@@ -37,7 +40,11 @@ pub struct EnvConfig {
     pub lightning_invoice_expiry_seconds: u64,
     #[serde(default = "default_lightning_verification_description")]
     pub lightning_invoice_description: String,
-    pub phoenixd_api_url: Url,
+    #[serde(default = "default_ln_verification_enabled")]
+    pub ln_verification_enabled: bool,
+    #[serde(default)]
+    pub phoenixd_api_url: Option<Url>,
+    #[serde(default)]
     pub phoenixd_api_password: String,
     #[serde(default = "default_allow_cors")]
     pub allow_cors: bool,
@@ -53,6 +60,14 @@ pub struct EnvConfig {
 
 fn default_allow_cors() -> bool {
     false
+}
+
+fn default_sms_verification_enabled() -> bool {
+    true
+}
+
+fn default_ln_verification_enabled() -> bool {
+    true
 }
 
 fn default_ip_verification_enabled() -> bool {
@@ -115,6 +130,7 @@ impl EnvConfig {
             http_listen_socket: "127.0.0.1:0"
                 .parse()
                 .expect("Default HTTP listen socket is valid"),
+            sms_verification_enabled: true,
             prelude_api_key: "test-key".to_string(),
             prelude_api_url,
             homeserver_admin_api_url,
@@ -125,11 +141,13 @@ impl EnvConfig {
             sms_verifications_limit_whitelist: vec![],
             max_sms_failed_validation_attempts: 2,
             allow_cors: true,
+            ln_verification_enabled: true,
             lightning_invoice_price_sat: 1000,
             lightning_invoice_expiry_seconds: 60 * 10,
             lightning_invoice_description: "Verification".to_string(),
-            phoenixd_api_url: Url::parse("http://localhost:9740")
-                .expect("Default Phoenixd API URL is valid"),
+            phoenixd_api_url: Some(
+                Url::parse("http://localhost:9740").expect("Default Phoenixd API URL is valid"),
+            ),
             phoenixd_api_password:
                 "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef".to_string(),
             ip_verification_enabled: false,

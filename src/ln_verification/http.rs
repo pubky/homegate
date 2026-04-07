@@ -29,7 +29,11 @@ pub async fn router(
     config: &EnvConfig,
     db: &crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let phoenixd_api = PhoenixdAPI::new(&config.phoenixd_api_url, &config.phoenixd_api_password);
+    let phoenixd_url = config
+        .phoenixd_api_url
+        .as_ref()
+        .expect("HG_PHOENIXD_API_URL is required when Lightning verification is enabled");
+    let phoenixd_api = PhoenixdAPI::new(phoenixd_url, &config.phoenixd_api_password);
     let homeserver_api = HomeserverAdminAPI::new(
         &config.homeserver_admin_api_url,
         &config.homeserver_admin_password,
