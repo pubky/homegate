@@ -12,7 +12,11 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: &EnvConfig, db: SqlDb) -> Self {
-        let prelude_api = PreludeAPI::new(&config.prelude_api_url, &config.prelude_api_key);
+        let prelude_url = config
+            .prelude_api_url
+            .as_ref()
+            .expect("HG_PRELUDE_API_URL is required when SMS verification is enabled");
+        let prelude_api = PreludeAPI::new(prelude_url, &config.prelude_api_key);
         let homeserver_admin_api = HomeserverAdminAPI::new(
             &config.homeserver_admin_api_url,
             &config.homeserver_admin_password,

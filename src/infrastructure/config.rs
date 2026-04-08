@@ -17,8 +17,11 @@ pub struct EnvConfig {
     pub sms_verification_enabled: bool,
     #[serde(default)]
     pub prelude_api_key: String,
-    #[serde(default = "default_prelude_api_url")]
-    pub prelude_api_url: Url,
+    #[serde(
+        default = "default_prelude_api_url",
+        deserialize_with = "deserialize_optional_url"
+    )]
+    pub prelude_api_url: Option<Url>,
     pub homeserver_admin_api_url: Url,
     pub homeserver_admin_password: String,
     pub homeserver_pubky: String,
@@ -117,8 +120,8 @@ fn default_lightning_verification_price_sat() -> u64 {
     1000
 }
 
-fn default_prelude_api_url() -> Url {
-    Url::parse("https://api.prelude.dev").expect("Default Prelude API URL is valid")
+fn default_prelude_api_url() -> Option<Url> {
+    Some(Url::parse("https://api.prelude.dev").expect("Default Prelude API URL is valid"))
 }
 
 fn default_http_listen_socker() -> SocketAddr {
@@ -143,7 +146,7 @@ impl EnvConfig {
                 .expect("Default HTTP listen socket is valid"),
             sms_verification_enabled: true,
             prelude_api_key: "test-key".to_string(),
-            prelude_api_url,
+            prelude_api_url: Some(prelude_api_url),
             homeserver_admin_api_url,
             homeserver_admin_password: "test-pass".to_string(),
             homeserver_pubky: "test-homeserver-pubky".to_string(),

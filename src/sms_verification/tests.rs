@@ -38,7 +38,10 @@ fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerification
         servers.homeserver_server.uri().parse().unwrap(),
     );
 
-    let prelude_api = PreludeAPI::new(&config.prelude_api_url, &config.prelude_api_key);
+    let prelude_api = PreludeAPI::new(
+        config.prelude_api_url.as_ref().unwrap(),
+        &config.prelude_api_key,
+    );
     let homeserver_admin_api = HomeserverAdminAPI::new(
         &config.homeserver_admin_api_url,
         &config.homeserver_admin_password,
