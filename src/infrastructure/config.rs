@@ -16,6 +16,7 @@ pub struct EnvConfig {
     pub prelude_api_key: String,
     #[serde(default = "default_prelude_api_url")]
     pub prelude_api_url: Url,
+    pub homeserver_api_url: Url,
     pub homeserver_admin_api_url: Url,
     pub homeserver_admin_password: String,
     pub homeserver_pubky: String,
@@ -39,12 +40,24 @@ pub struct EnvConfig {
     pub lightning_invoice_description: String,
     pub phoenixd_api_url: Url,
     pub phoenixd_api_password: String,
+    #[serde(default = "default_max_invite_friend_per_week")]
+    pub max_invite_friend_per_week: u32,
+    #[serde(default = "default_max_invite_friend_per_year")]
+    pub max_invite_friend_per_year: u32,
     #[serde(default = "default_allow_cors")]
     pub allow_cors: bool,
 }
 
 fn default_allow_cors() -> bool {
     false
+}
+
+fn default_max_invite_friend_per_week() -> u32 {
+    2
+}
+
+fn default_max_invite_friend_per_year() -> u32 {
+    4
 }
 
 fn default_max_sms_verifications_per_week() -> u32 {
@@ -90,6 +103,7 @@ impl EnvConfig {
 
     #[cfg(test)]
     pub fn for_test(prelude_api_url: Url, homeserver_admin_api_url: Url) -> Self {
+        let homeserver_api_url = homeserver_admin_api_url.clone();
         Self {
             database_url: Default::default(),
             http_listen_socket: "127.0.0.1:0"
@@ -97,6 +111,7 @@ impl EnvConfig {
                 .expect("Default HTTP listen socket is valid"),
             prelude_api_key: "test-key".to_string(),
             prelude_api_url,
+            homeserver_api_url,
             homeserver_admin_api_url,
             homeserver_admin_password: "test-pass".to_string(),
             homeserver_pubky: "test-homeserver-pubky".to_string(),
@@ -104,6 +119,8 @@ impl EnvConfig {
             max_sms_verifications_per_year: 4,
             sms_verifications_limit_whitelist: vec![],
             max_sms_failed_validation_attempts: 2,
+            max_invite_friend_per_week: 2,
+            max_invite_friend_per_year: 4,
             allow_cors: true,
             lightning_invoice_price_sat: 1000,
             lightning_invoice_expiry_seconds: 60 * 10,
@@ -134,6 +151,10 @@ mod tests {
             (
                 String::from("PRELUDE_API_KEY"),
                 String::from("test-prelude-api-key"),
+            ),
+            (
+                String::from("HOMESERVER_API_URL"),
+                String::from("http://localhost:6287"),
             ),
             (
                 String::from("HOMESERVER_ADMIN_API_URL"),

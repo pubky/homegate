@@ -9,7 +9,7 @@ use crate::{
         http::HttpServerError,
         sql::{DbError, SqlDb},
     },
-    ln_verification,
+    invite, ln_verification,
     shared::HomeserverAdminAPI,
     sms_verification::http::router,
 };
@@ -31,10 +31,12 @@ impl HttpServer {
     pub fn create_router(
         sms_verification_router: Router,
         ln_verification_router: Router,
+        invite_router: Router,
         allow_cors: bool,
     ) -> Router {
         let router = Router::new()
             .route("/", get(root))
+            .nest("/invite", invite_router)
             .nest("/ln_verification", ln_verification_router)
             .nest("/sms_verification", sms_verification_router);
 
@@ -62,9 +64,11 @@ impl HttpServer {
 
         let sms_verification_router = router(&config, &db).await?;
         let ln_verification_router = ln_verification::router(&config, &db).await?;
+        let invite_router = invite::router(&config, &db).await?;
         let router = Self::create_router(
             sms_verification_router,
             ln_verification_router,
+            invite_router,
             config.allow_cors,
         );
 
@@ -110,6 +114,7 @@ impl HttpServer {
     async fn err_on_homeserver_admin_api_failure(config: &EnvConfig) {
         let homeserver_admin_api = HomeserverAdminAPI::new(
             &config.homeserver_admin_api_url,
+            &config.homeserver_api_url,
             &config.homeserver_admin_password,
             &config.homeserver_pubky,
         );

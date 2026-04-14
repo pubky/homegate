@@ -24,6 +24,7 @@ reqwest-websocket = { version = "0.5.1", default-features = false }
 sea-query = { version = "0.32.6", features = [ "with-chrono", "postgres-array", "with-uuid" ]}
 sea-query-binder = { version = "0.7.0", features = [ "with-chrono", "runtime-tokio", "sqlx-postgres", "postgres-array", "with-uuid" ] }
 serde = { version = "1.0.228", features = ["derive"] }
+sha2 = "0.10"
 serde_json = "1.0"
 sqlx = { version = "0.8.6", features = [ "runtime-tokio", "postgres", "chrono", "tls-rustls", "uuid" ] }
 thiserror = "2.0.12"
@@ -31,7 +32,8 @@ tokio = { version = "1.48.0", features = ["full"] }
 tower-http = { version = "0.6.2", features = ["cors", "trace"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
-url = "2.5.7"
+url = { version = "2.5.7", features = ["serde"] }
+pubky-common = "0.7.0"
 uuid = { version = "1.18.1", features = ["v4", "serde"] }
 
 [dev-dependencies]

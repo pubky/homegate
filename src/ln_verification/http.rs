@@ -32,6 +32,7 @@ pub async fn router(
     let phoenixd_api = PhoenixdAPI::new(&config.phoenixd_api_url, &config.phoenixd_api_password);
     let homeserver_api = HomeserverAdminAPI::new(
         &config.homeserver_admin_api_url,
+        &config.homeserver_api_url,
         &config.homeserver_admin_password,
         &config.homeserver_pubky,
     );
@@ -226,6 +227,7 @@ mod tests {
         // Use placeholder URLs - these won't be called for the /info endpoint
         let phoenixd_api = PhoenixdAPI::new(&"http://localhost:1".parse().unwrap(), "unused");
         let homeserver_api = HomeserverAdminAPI::new(
+            &"http://localhost:1".parse().unwrap(),
             &"http://localhost:1".parse().unwrap(),
             "unused",
             "test-homeserver-pubky",

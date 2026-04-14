@@ -88,6 +88,39 @@ pub fn setup_prelude_check_code(
         })))
 }
 
+/// Setup mock for reading a pubky file from the homeserver (GET /homegate/proof)
+pub fn setup_pubky_proof_file(proof_hash: &str) -> Mock {
+    Mock::given(method("GET"))
+        .and(path("/homegate/proof"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": proof_hash })))
+}
+
+/// Setup mock for a missing pubky proof file (GET /homegate/proof returns 404)
+pub fn setup_pubky_proof_file_not_found() -> Mock {
+    Mock::given(method("GET"))
+        .and(path("/homegate/proof"))
+        .respond_with(ResponseTemplate::new(404))
+}
+
+/// Setup mock for homeserver signup_tokens endpoint returning claimed status
+pub fn setup_signup_token_claimed(signup_code: &str, claimed: bool) -> Mock {
+    Mock::given(method("GET"))
+        .and(path(format!("/signup_tokens/{}", signup_code)))
+        .respond_with(ResponseTemplate::new(200).set_body_string(if claimed {
+            "true"
+        } else {
+            "false"
+        }))
+}
+
+/// Setup mock for homeserver generate_signup_token returning 500
+pub fn setup_homeserver_signup_token_failure() -> Mock {
+    Mock::given(method("GET"))
+        .and(path("/generate_signup_token"))
+        .and(header("X-Admin-Password", "test-pass"))
+        .respond_with(ResponseTemplate::new(500))
+}
+
 /// Setup mock for Homeserver Admin API generate_signup_token endpoint (GET /generate_signup_token)
 pub fn setup_homeserver_signup_token(token: &str) -> Mock {
     Mock::given(method("GET"))
