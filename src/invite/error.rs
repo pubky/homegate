@@ -7,11 +7,14 @@ pub enum InviteError {
     #[error("Invalid pubkey format")]
     InvalidPubkey,
 
-    #[error("Weekly invite limit exceeded")]
+    #[error("You have used all invite codes available this week.")]
     WeeklyLimitExceeded,
 
-    #[error("Annual invite limit exceeded")]
+    #[error("You have used all invite codes available this year.")]
     AnnualLimitExceeded,
+
+    #[error("You need to post more before you are eligible for an invite code.")]
+    InsufficientPosts,
 
     #[error("Proof file not found at pubky path /homegate/proof")]
     ProofNotFound,

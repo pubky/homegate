@@ -19,8 +19,9 @@ use crate::{
 pub async fn router(
     config: &EnvConfig,
     db: &crate::infrastructure::sql::SqlDb,
+    pubky: pubky::Pubky,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db.clone());
+    let state = AppState::new(config, db.clone(), pubky);
     Ok(Router::new()
         .route("/", put(invite_handler))
         .with_state(state))
@@ -30,8 +31,9 @@ pub async fn router(
 pub async fn router_with_db(
     config: &EnvConfig,
     db: crate::infrastructure::sql::SqlDb,
+    pubky: pubky::Pubky,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db);
+    let state = AppState::new(config, db, pubky);
     Ok(Router::new()
         .route("/", put(invite_handler))
         .with_state(state))
@@ -51,8 +53,9 @@ impl IntoResponse for InviteError {
             InviteError::InvalidPubkey => StatusCode::UNPROCESSABLE_ENTITY,
             InviteError::ProofNotFound => StatusCode::FORBIDDEN,
             InviteError::ProofMismatch => StatusCode::UNPROCESSABLE_ENTITY,
-            InviteError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
-            InviteError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+            InviteError::WeeklyLimitExceeded => StatusCode::UNAUTHORIZED,
+            InviteError::AnnualLimitExceeded => StatusCode::UNAUTHORIZED,
+            InviteError::InsufficientPosts => StatusCode::UNAUTHORIZED,
             InviteError::HomeserverUnavailable => {
                 tracing::error!("Homeserver unavailable during invite");
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -102,7 +105,8 @@ mod tests {
 
         let db = SqlDb::test(pool.clone()).await;
 
-        let invite_router = router_with_db(&config, db)
+        let pubky = pubky::Pubky::testnet().expect("Failed to create Pubky testnet client");
+        let invite_router = router_with_db(&config, db, pubky)
             .await
             .expect("Failed to create router");
 
@@ -293,7 +297,7 @@ mod tests {
             }))
             .await;
 
-        response.assert_status(StatusCode::TOO_MANY_REQUESTS);
+        response.assert_status(StatusCode::UNAUTHORIZED);
     }
 
     #[sqlx::test]
@@ -332,11 +336,57 @@ mod tests {
             }))
             .await;
 
-        response.assert_status(StatusCode::TOO_MANY_REQUESTS);
+        response.assert_status(StatusCode::UNAUTHORIZED);
         let body = response.text();
         assert!(
-            body.contains("Annual"),
+            body.contains("this year"),
             "Should mention annual limit: {}",
+            body
+        );
+    }
+
+    #[sqlx::test]
+    async fn http_returns_401_when_insufficient_posts(pool: PgPool) {
+        use crate::EnvConfig;
+        use crate::infrastructure::sql::SqlDb;
+
+        let servers = WiremockServers::start().await;
+        let mut config = EnvConfig::for_test(
+            servers.prelude_server.uri().parse().unwrap(),
+            servers.homeserver_server.uri().parse().unwrap(),
+        );
+        config.min_posts_for_invite = 5;
+
+        let db = SqlDb::test(pool.clone()).await;
+        let pubky = pubky::Pubky::testnet().expect("Failed to create Pubky testnet client");
+        let invite_router = router_with_db(&config, db, pubky)
+            .await
+            .expect("Failed to create router");
+        let router = Router::new().nest("/invite", invite_router);
+        let app = router.into_make_service_with_connect_info::<SocketAddr>();
+        let server = TestServer::new(app).expect("Failed to create test server");
+
+        let preimage = "test-proof";
+        let proof_hash = sha256_hex(preimage);
+
+        setup_pubky_proof_file(&proof_hash)
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+
+        let response = server
+            .put("/invite")
+            .json(&serde_json::json!({
+                "pubkey": "yg4gxe7z1r7mr6orids9fh95y7gxhdsxjqi6nngsxxtakqaxr5no",
+                "hashProofPreimage": preimage
+            }))
+            .await;
+
+        response.assert_status(StatusCode::UNAUTHORIZED);
+        let body = response.text();
+        assert!(
+            body.contains("post more"),
+            "Should mention insufficient posts: {}",
             body
         );
     }

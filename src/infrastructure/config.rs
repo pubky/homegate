@@ -44,6 +44,8 @@ pub struct EnvConfig {
     pub max_invite_friend_per_week: u32,
     #[serde(default = "default_max_invite_friend_per_year")]
     pub max_invite_friend_per_year: u32,
+    #[serde(default = "default_min_posts_for_invite")]
+    pub min_posts_for_invite: u16,
     #[serde(default = "default_allow_cors")]
     pub allow_cors: bool,
 }
@@ -58,6 +60,10 @@ fn default_max_invite_friend_per_week() -> u32 {
 
 fn default_max_invite_friend_per_year() -> u32 {
     4
+}
+
+fn default_min_posts_for_invite() -> u16 {
+    5
 }
 
 fn default_max_sms_verifications_per_week() -> u32 {
@@ -121,6 +127,7 @@ impl EnvConfig {
             max_sms_failed_validation_attempts: 2,
             max_invite_friend_per_week: 2,
             max_invite_friend_per_year: 4,
+            min_posts_for_invite: 0,
             allow_cors: true,
             lightning_invoice_price_sat: 1000,
             lightning_invoice_expiry_seconds: 60 * 10,

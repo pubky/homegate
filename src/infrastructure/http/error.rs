@@ -9,4 +9,7 @@ pub enum HttpServerError {
 
     #[error("HTTP server failed to bind or start: {0}")]
     ServerStart(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Other(String),
 }

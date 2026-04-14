@@ -3,12 +3,16 @@ use crate::invite::error::InviteError;
 use crate::invite::repository::InviteRepository;
 use crate::invite::types::{InviteRequest, InviteResponse};
 use crate::shared::HomeserverAdminAPI;
+use pubky::Pubky;
 use pubky_common::crypto::PublicKey;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 /// The pubky path where the proof hash is expected to be stored.
-const PROOF_PATH: &str = "homegate/proof";
+const PROOF_PATH: &str = "pub/pubky.app/homegate/proof";
+
+/// The pubky path to the user's posts directory.
+const POSTS_PATH: &str = "pub/pubky.app/posts/";
 
 /// Shape of the JSON returned by the homeserver when reading a pubky file.
 #[derive(Deserialize)]
@@ -19,20 +23,26 @@ struct PubkyFileResponse {
 #[derive(Clone, Debug)]
 pub struct InviteService {
     homeserver_admin_api: HomeserverAdminAPI,
+    pubky: Pubky,
     max_per_week: u32,
     max_per_year: u32,
+    min_posts: u16,
 }
 
 impl InviteService {
     pub fn new(
         homeserver_admin_api: HomeserverAdminAPI,
+        pubky: Pubky,
         max_per_week: u32,
         max_per_year: u32,
+        min_posts: u16,
     ) -> Self {
         Self {
             homeserver_admin_api,
+            pubky,
             max_per_week,
             max_per_year,
+            min_posts,
         }
     }
 
@@ -43,7 +53,7 @@ impl InviteService {
     ) -> Result<InviteResponse, InviteError> {
         // 1. Validate pubkey
         let public_key =
-            PublicKey::try_from(request.pubkey.as_str()).map_err(|_| InviteError::InvalidPubkey)?;
+            PublicKey::try_from(request.pubky.as_str()).map_err(|_| InviteError::InvalidPubkey)?;
         let pubkey_z32 = public_key.z32();
 
         // 2. Verify proof: hash the preimage and compare with the file at /pub/homegate/proof
@@ -73,7 +83,43 @@ impl InviteService {
             }
         }
 
-        // 4. Check weekly limit
+        // 4. Check minimum post count via pubky SDK
+        if self.min_posts > 0 {
+            let posts = match self
+                .pubky
+                .public_storage()
+                .list(format!("pubky:{}/{}", pubkey_z32, POSTS_PATH))
+                .map_err(|e| {
+                    tracing::error!("Pubky list build failed: {:?}", e);
+                    InviteError::HomeserverUnavailable
+                })?
+                .limit(self.min_posts)
+                .shallow(true)
+                .send()
+                .await
+            {
+                Ok(posts) => posts,
+                Err(e) if e.to_string().contains("404") => {
+                    // No posts directory means zero posts
+                    vec![]
+                }
+                Err(e) => {
+                    tracing::error!("Pubky list posts failed: {:?}", e);
+                    return Err(InviteError::HomeserverUnavailable);
+                }
+            };
+            if (posts.len() as u16) < self.min_posts {
+                tracing::warn!(
+                    pubkey = %pubkey_z32,
+                    post_count = posts.len(),
+                    min_posts = self.min_posts,
+                    "Insufficient posts for invite"
+                );
+                return Err(InviteError::InsufficientPosts);
+            }
+        }
+
+        // 5. Check weekly limit
         let weekly_count =
             InviteRepository::count_claimed_in_last_days(&mut executor, &pubkey_z32, 7).await?;
         if weekly_count >= self.max_per_week as i64 {
@@ -86,7 +132,7 @@ impl InviteService {
             return Err(InviteError::WeeklyLimitExceeded);
         }
 
-        // 5. Check annual limit
+        // 6. Check annual limit
         let annual_count =
             InviteRepository::count_claimed_in_last_days(&mut executor, &pubkey_z32, 365).await?;
         if annual_count >= self.max_per_year as i64 {
@@ -99,7 +145,7 @@ impl InviteService {
             return Err(InviteError::AnnualLimitExceeded);
         }
 
-        // 6. Generate signup token from homeserver
+        // 7. Generate signup token from homeserver
         let signup_code = match self.homeserver_admin_api.generate_signup_token().await {
             Ok(code) => code,
             Err(_e) => {
@@ -119,14 +165,14 @@ impl InviteService {
             }
         };
 
-        // 7. Insert unclaimed record
+        // 8. Insert unclaimed record
         InviteRepository::insert_unclaimed(&mut executor, &pubkey_z32, &proof_hash, &signup_code)
             .await?;
 
         drop(executor);
         tx.commit().await?;
 
-        // 8. Return response
+        // 9. Return response
         Ok(InviteResponse { signup_code })
     }
 
@@ -139,7 +185,10 @@ impl InviteService {
             .homeserver_admin_api
             .get_pubky_file(pubkey_z32, PROOF_PATH)
             .await
-            .map_err(|_e| InviteError::HomeserverUnavailable)?;
+            .map_err(|e| {
+                tracing::error!("Proof fetch failed: {:?}", e);
+                InviteError::HomeserverUnavailable
+            })?;
 
         let raw = file_content.ok_or(InviteError::ProofNotFound)?;
 

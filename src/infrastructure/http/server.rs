@@ -64,7 +64,8 @@ impl HttpServer {
 
         let sms_verification_router = router(&config, &db).await?;
         let ln_verification_router = ln_verification::router(&config, &db).await?;
-        let invite_router = invite::router(&config, &db).await?;
+        let pubky = pubky::Pubky::new().map_err(|e| HttpServerError::Other(e.to_string()))?;
+        let invite_router = invite::router(&config, &db, pubky).await?;
         let router = Self::create_router(
             sms_verification_router,
             ln_verification_router,

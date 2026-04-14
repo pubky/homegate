@@ -41,7 +41,8 @@ impl InviteRepository {
         Ok(count)
     }
 
-    /// Find the most recent unclaimed signup code for a pubkey
+    /// Find the most recent unclaimed signup code for a pubkey.
+    /// Uses `FOR UPDATE` to lock the row and prevent concurrent token generation.
     pub async fn find_unclaimed_signup_code(
         executor: &mut UnifiedExecutor<'_>,
         pubkey: &str,
@@ -56,6 +57,7 @@ impl InviteRepository {
             .to_owned();
 
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
+        let query = format!("{} FOR UPDATE", query);
         let row = sqlx::query_with(&query, values)
             .fetch_optional(executor.get_con().await?)
             .await

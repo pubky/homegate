@@ -77,10 +77,18 @@ impl HomeserverAdminAPI {
             .public_base_url
             .join(&format!("signup_tokens/{}", signup_code))
             .expect("Failed to join URL path");
+        tracing::debug!("Checking signup token claimed status at: {}", url);
         let response = self.http_client.get(url).send().await?;
+        let status = response.status();
         let body = response.error_for_status()?.text().await?;
-        // The homeserver returns "true" or "false" for whether the token has been claimed
-        Ok(body.trim() == "true")
+        tracing::debug!(
+            "Signup token claimed response: status={}, body={:?}",
+            status,
+            body
+        );
+        // The homeserver returns JSON: {"status":"used"|"unused", ...}
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        Ok(parsed["status"] == "used")
     }
 
     /// Verifies the admin password by making a GET request to the /info endpoint.

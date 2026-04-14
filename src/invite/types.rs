@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InviteRequest {
-    pub pubkey: String,
+    pub pubky: String,
     pub hash_proof_preimage: String,
 }
 

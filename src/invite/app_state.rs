@@ -3,6 +3,7 @@ use crate::{
     invite::service::InviteService,
     shared::HomeserverAdminAPI,
 };
+use pubky::Pubky;
 
 #[derive(Clone, Debug)]
 pub struct AppState {
@@ -11,7 +12,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: &EnvConfig, db: SqlDb) -> Self {
+    pub fn new(config: &EnvConfig, db: SqlDb, pubky: Pubky) -> Self {
         let homeserver_admin_api = HomeserverAdminAPI::new(
             &config.homeserver_admin_api_url,
             &config.homeserver_api_url,
@@ -20,8 +21,10 @@ impl AppState {
         );
         let invite = InviteService::new(
             homeserver_admin_api,
+            pubky,
             config.max_invite_friend_per_week,
             config.max_invite_friend_per_year,
+            config.min_posts_for_invite,
         );
         Self { db, invite }
     }
