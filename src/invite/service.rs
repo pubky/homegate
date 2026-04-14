@@ -7,6 +7,7 @@ use pubky::Pubky;
 use pubky_common::crypto::PublicKey;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tracing::{debug, error, warn};
 
 /// The pubky path where the proof hash is expected to be stored.
 const PROOF_PATH: &str = "pub/pubky.app/homegate/proof";
@@ -59,6 +60,7 @@ impl InviteService {
         // 2. Verify proof: hash the preimage and compare with the file at /pub/homegate/proof
         let proof_hash = hex::encode(Sha256::digest(request.hash_proof_preimage.as_bytes()));
         self.verify_proof(&pubkey_z32, &proof_hash).await?;
+        debug!(pubkey = %pubkey_z32, "Proof verified successfully");
 
         let mut tx = db.pool().begin().await?;
         let mut executor = UnifiedExecutor::from_tx(&mut tx);
@@ -76,9 +78,11 @@ impl InviteService {
 
             if claimed {
                 // Mark as claimed locally and continue to generate a new token
+                debug!(pubkey = %pubkey_z32, signup_code = %signup_code, "Existing token was claimed, generating new one");
                 InviteRepository::mark_claimed(&mut executor, &signup_code).await?;
             } else {
                 // No DB changes needed, rollback is fine
+                debug!(pubkey = %pubkey_z32, signup_code = %signup_code, "Returning existing unclaimed token");
                 return Ok(InviteResponse { signup_code });
             }
         }
@@ -90,7 +94,7 @@ impl InviteService {
                 .public_storage()
                 .list(format!("pubky:{}/{}", pubkey_z32, POSTS_PATH))
                 .map_err(|e| {
-                    tracing::error!("Pubky list build failed: {:?}", e);
+                    error!("Pubky list build failed: {:?}", e);
                     InviteError::HomeserverUnavailable
                 })?
                 .limit(self.min_posts)
@@ -104,12 +108,12 @@ impl InviteService {
                     vec![]
                 }
                 Err(e) => {
-                    tracing::error!("Pubky list posts failed: {:?}", e);
+                    error!("Pubky list posts failed: {:?}", e);
                     return Err(InviteError::HomeserverUnavailable);
                 }
             };
             if (posts.len() as u16) < self.min_posts {
-                tracing::warn!(
+                warn!(
                     pubkey = %pubkey_z32,
                     post_count = posts.len(),
                     min_posts = self.min_posts,
@@ -123,7 +127,7 @@ impl InviteService {
         let weekly_count =
             InviteRepository::count_claimed_in_last_days(&mut executor, &pubkey_z32, 7).await?;
         if weekly_count >= self.max_per_week as i64 {
-            tracing::warn!(
+            warn!(
                 pubkey = %pubkey_z32,
                 weekly_count = weekly_count,
                 weekly_limit = self.max_per_week,
@@ -136,7 +140,7 @@ impl InviteService {
         let annual_count =
             InviteRepository::count_claimed_in_last_days(&mut executor, &pubkey_z32, 365).await?;
         if annual_count >= self.max_per_year as i64 {
-            tracing::warn!(
+            warn!(
                 pubkey = %pubkey_z32,
                 annual_count = annual_count,
                 annual_limit = self.max_per_year,
@@ -157,7 +161,7 @@ impl InviteService {
                 )
                 .await
                 {
-                    tracing::error!("{}", e);
+                    error!("{}", e);
                 }
                 drop(executor);
                 tx.commit().await?;
@@ -168,6 +172,7 @@ impl InviteService {
         // 8. Insert unclaimed record
         InviteRepository::insert_unclaimed(&mut executor, &pubkey_z32, &proof_hash, &signup_code)
             .await?;
+        debug!(pubkey = %pubkey_z32, signup_code = %signup_code, "Stored new unclaimed invite token");
 
         drop(executor);
         tx.commit().await?;
@@ -181,12 +186,13 @@ impl InviteService {
     ///
     /// The homeserver returns the file content as JSON: `{ "value": "<hex>" }`.
     async fn verify_proof(&self, pubkey_z32: &str, expected_hash: &str) -> Result<(), InviteError> {
+        debug!(pubkey = %pubkey_z32, "Fetching proof from homeserver");
         let file_content = self
             .homeserver_admin_api
             .get_pubky_file(pubkey_z32, PROOF_PATH)
             .await
             .map_err(|e| {
-                tracing::error!("Proof fetch failed: {:?}", e);
+                error!("Proof fetch failed: {:?}", e);
                 InviteError::HomeserverUnavailable
             })?;
 
@@ -197,8 +203,10 @@ impl InviteService {
         let stored_hash = parsed.value.trim();
 
         if stored_hash != expected_hash {
-            tracing::warn!(
+            warn!(
                 pubkey = %pubkey_z32,
+                stored_hash = %stored_hash,
+                expected_hash = %expected_hash,
                 "Proof hash mismatch"
             );
             return Err(InviteError::ProofMismatch);
