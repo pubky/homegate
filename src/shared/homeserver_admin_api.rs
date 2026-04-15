@@ -56,16 +56,41 @@ impl HomeserverAdminAPI {
             .join(path)
             .expect("Failed to join URL path");
         let host = format!("_pubky.{}", pubkey_z32);
+        tracing::debug!(
+            pubkey = %pubkey_z32,
+            path = %path,
+            url = %url,
+            host = %host,
+            "Fetching pubky file from homeserver"
+        );
         let response = self
             .http_client
             .get(url)
             .header("Host", host)
             .send()
             .await?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
+        let status = response.status();
+        tracing::debug!(
+            pubkey = %pubkey_z32,
+            path = %path,
+            status = %status,
+            "Pubky file fetch completed"
+        );
+        if status == reqwest::StatusCode::NOT_FOUND {
+            tracing::warn!(
+                pubkey = %pubkey_z32,
+                path = %path,
+                "Pubky file not found"
+            );
             return Ok(None);
         }
         let text = response.error_for_status()?.text().await?;
+        tracing::debug!(
+            pubkey = %pubkey_z32,
+            path = %path,
+            body_preview = %text.chars().take(200).collect::<String>(),
+            "Pubky file fetch response body preview"
+        );
         Ok(Some(text))
     }
 
