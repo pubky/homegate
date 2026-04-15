@@ -51,6 +51,7 @@ impl IntoResponse for InviteError {
     fn into_response(self) -> Response {
         let status = match self {
             InviteError::InvalidPubkey => StatusCode::UNPROCESSABLE_ENTITY,
+            InviteError::InvalidPreimage => StatusCode::UNPROCESSABLE_ENTITY,
             InviteError::ProofNotFound => StatusCode::FORBIDDEN,
             InviteError::ProofMismatch => StatusCode::UNPROCESSABLE_ENTITY,
             InviteError::WeeklyLimitExceeded => StatusCode::UNAUTHORIZED,
@@ -86,9 +87,10 @@ mod tests {
     use sqlx::PgPool;
     use std::net::SocketAddr;
 
-    /// Compute the SHA-256 hash of a preimage (hex-encoded), matching the service logic.
-    fn sha256_hex(preimage: &str) -> String {
-        hex::encode(Sha256::digest(preimage.as_bytes()))
+    /// Compute the SHA-256 hash of a hex-encoded preimage, matching the service logic.
+    fn sha256_hex(preimage_hex: &str) -> String {
+        let bytes = hex::decode(preimage_hex).expect("test preimage must be valid hex");
+        hex::encode(Sha256::digest(&bytes))
     }
 
     async fn create_http_test_server(
@@ -122,7 +124,7 @@ mod tests {
         let servers = WiremockServers::start().await;
         let (server, _pool) = create_http_test_server(pool, &servers).await;
 
-        let preimage = "test-proof";
+        let preimage = "deadbeef";
         let proof_hash = sha256_hex(preimage);
 
         // Mock the proof file and signup token
@@ -157,7 +159,7 @@ mod tests {
             .put("/invite")
             .json(&serde_json::json!({
                 "pubkey": "not-a-valid-pubkey",
-                "hashProofPreimage": "test-proof"
+                "hashProofPreimage": "deadbeef"
             }))
             .await;
 
@@ -178,7 +180,7 @@ mod tests {
             .put("/invite")
             .json(&serde_json::json!({
                 "pubkey": "yg4gxe7z1r7mr6orids9fh95y7gxhdsxjqi6nngsxxtakqaxr5no",
-                "hashProofPreimage": "test-proof"
+                "hashProofPreimage": "deadbeef"
             }))
             .await;
 
@@ -202,7 +204,7 @@ mod tests {
             .put("/invite")
             .json(&serde_json::json!({
                 "pubkey": "yg4gxe7z1r7mr6orids9fh95y7gxhdsxjqi6nngsxxtakqaxr5no",
-                "hashProofPreimage": "test-proof"
+                "hashProofPreimage": "deadbeef"
             }))
             .await;
 
@@ -220,7 +222,7 @@ mod tests {
         let (server, _pool) = create_http_test_server(pool.clone(), &servers).await;
 
         let pubkey = "yg4gxe7z1r7mr6orids9fh95y7gxhdsxjqi6nngsxxtakqaxr5no";
-        let preimage = "proof-preimage";
+        let preimage = "cafebabe";
         let proof_hash = sha256_hex(preimage);
 
         setup_pubky_proof_file(&proof_hash)
@@ -268,7 +270,7 @@ mod tests {
         let (server, _pool) = create_http_test_server(pool.clone(), &servers).await;
 
         let pubkey = "yg4gxe7z1r7mr6orids9fh95y7gxhdsxjqi6nngsxxtakqaxr5no";
-        let preimage = "proof-preimage";
+        let preimage = "cafebabe";
         let proof_hash = sha256_hex(preimage);
 
         setup_pubky_proof_file(&proof_hash)
@@ -306,7 +308,7 @@ mod tests {
         let (server, _pool) = create_http_test_server(pool.clone(), &servers).await;
 
         let pubkey = "yg4gxe7z1r7mr6orids9fh95y7gxhdsxjqi6nngsxxtakqaxr5no";
-        let preimage = "proof-preimage";
+        let preimage = "cafebabe";
         let proof_hash = sha256_hex(preimage);
 
         setup_pubky_proof_file(&proof_hash)
@@ -366,7 +368,7 @@ mod tests {
         let app = router.into_make_service_with_connect_info::<SocketAddr>();
         let server = TestServer::new(app).expect("Failed to create test server");
 
-        let preimage = "test-proof";
+        let preimage = "deadbeef";
         let proof_hash = sha256_hex(preimage);
 
         setup_pubky_proof_file(&proof_hash)
@@ -397,7 +399,7 @@ mod tests {
         let (server, _pool) = create_http_test_server(pool.clone(), &servers).await;
 
         let pubkey = "yg4gxe7z1r7mr6orids9fh95y7gxhdsxjqi6nngsxxtakqaxr5no";
-        let preimage = "proof-preimage";
+        let preimage = "cafebabe";
         let proof_hash = sha256_hex(preimage);
 
         setup_pubky_proof_file(&proof_hash)
@@ -454,7 +456,7 @@ mod tests {
         let (server, _pool) = create_http_test_server(pool.clone(), &servers).await;
 
         let pubkey = "yg4gxe7z1r7mr6orids9fh95y7gxhdsxjqi6nngsxxtakqaxr5no";
-        let preimage = "proof-preimage";
+        let preimage = "cafebabe";
         let proof_hash = sha256_hex(preimage);
 
         setup_pubky_proof_file(&proof_hash)
@@ -498,7 +500,7 @@ mod tests {
             .put("/invite")
             .json(&serde_json::json!({
                 "pubkey": "yg4gxe7z1r7mr6orids9fh95y7gxhdsxjqi6nngsxxtakqaxr5no",
-                "hashProofPreimage": "test-proof"
+                "hashProofPreimage": "deadbeef"
             }))
             .await;
 

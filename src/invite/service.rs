@@ -58,7 +58,9 @@ impl InviteService {
         let pubkey_z32 = public_key.z32();
 
         // 2. Verify proof: hash the preimage and compare with the file at /pub/homegate/proof
-        let proof_hash = hex::encode(Sha256::digest(request.hash_proof_preimage.as_bytes()));
+        let preimage_bytes =
+            hex::decode(&request.hash_proof_preimage).map_err(|_| InviteError::InvalidPreimage)?;
+        let proof_hash = hex::encode(Sha256::digest(&preimage_bytes));
         self.verify_proof(&pubkey_z32, &proof_hash).await?;
         debug!(pubkey = %pubkey_z32, "Proof verified successfully");
 

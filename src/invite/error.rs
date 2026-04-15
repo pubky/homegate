@@ -7,6 +7,9 @@ pub enum InviteError {
     #[error("Invalid pubkey format")]
     InvalidPubkey,
 
+    #[error("Invalid hex encoding in hashProofPreimage")]
+    InvalidPreimage,
+
     #[error("You have used all invite codes available this week.")]
     WeeklyLimitExceeded,
 
