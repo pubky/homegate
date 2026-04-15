@@ -66,7 +66,7 @@ impl HomeserverAdminAPI {
         let response = self
             .http_client
             .get(url)
-            .header("Host", host)
+            .header("Pubky-Host", host)
             .send()
             .await?;
         let status = response.status();
