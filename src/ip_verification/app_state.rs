@@ -20,14 +20,7 @@ impl AppState {
             &homeserver.admin_password,
             &homeserver.pubky,
         );
-        let ip_verification = IpVerificationService::new(
-            db,
-            homeserver_admin_api,
-            ip.max_verifications_per_week,
-            ip.max_verifications_per_year,
-            ip.signup_quota.clone(),
-            ip.limit_whitelist.clone(),
-        );
+        let ip_verification = IpVerificationService::new(db, homeserver_admin_api, ip);
         Self { ip_verification }
     }
 }

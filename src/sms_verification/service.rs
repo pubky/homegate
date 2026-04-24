@@ -11,6 +11,9 @@ use crate::sms_verification::types::{
 };
 use std::net::IpAddr;
 
+const WEEKLY_WINDOW_DAYS: i64 = 7;
+const ANNUAL_WINDOW_DAYS: i64 = 365;
+
 #[derive(Clone, Debug)]
 pub struct SmsVerificationService {
     prelude_api: PreludeAPI,
@@ -64,7 +67,7 @@ impl SmsVerificationService {
         let weekly_count = SmsVerificationRepository::count_verified_sessions_in_last_days(
             executor,
             phone_number_hash,
-            7,
+            WEEKLY_WINDOW_DAYS,
         )
         .await?;
         if weekly_count >= self.max_verifications_per_week as i64 {
@@ -80,7 +83,7 @@ impl SmsVerificationService {
         let annual_count = SmsVerificationRepository::count_verified_sessions_in_last_days(
             executor,
             phone_number_hash,
-            365,
+            ANNUAL_WINDOW_DAYS,
         )
         .await?;
         if annual_count >= self.max_verifications_per_year as i64 {

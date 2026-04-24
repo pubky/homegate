@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use crate::infrastructure::config::SignupQuotaConfig;
+use crate::infrastructure::config::{IpVerificationConfig, SignupQuotaConfig};
 use crate::infrastructure::sql::{DbError, SqlDb, UnifiedExecutor};
 use crate::shared::HomeserverAdminAPI;
 use crate::sms_verification::HasherArgon2id;
@@ -27,23 +27,23 @@ impl IpVerificationService {
     pub fn new(
         db: SqlDb,
         homeserver_admin_api: HomeserverAdminAPI,
-        max_verifications_per_week: u32,
-        max_verifications_per_year: u32,
-        signup_quota: Option<SignupQuotaConfig>,
-        limit_whitelist: Vec<IpAddr>,
+        config: &IpVerificationConfig,
     ) -> Self {
-        if !limit_whitelist.is_empty() {
-            tracing::info!("IP verification limit whitelist: {:?}", limit_whitelist);
+        if !config.limit_whitelist.is_empty() {
+            tracing::info!(
+                "IP verification limit whitelist: {:?}",
+                config.limit_whitelist
+            );
         }
 
         Self {
             db,
             homeserver_admin_api,
             hasher_argon2id: HasherArgon2id::new(),
-            max_verifications_per_week,
-            max_verifications_per_year,
-            signup_quota,
-            limit_whitelist,
+            max_verifications_per_week: config.max_verifications_per_week,
+            max_verifications_per_year: config.max_verifications_per_year,
+            signup_quota: config.signup_quota.clone(),
+            limit_whitelist: config.limit_whitelist.clone(),
         }
     }
 

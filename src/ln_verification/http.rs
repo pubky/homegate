@@ -30,7 +30,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 25;
 pub async fn router(
     homeserver: &HomeserverConfig,
     ln: &LnVerificationConfig,
-    db: &crate::infrastructure::sql::SqlDb,
+    db: crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
     let phoenixd_api = PhoenixdAPI::new(&ln.phoenixd_api_url, &ln.phoenixd_api_password);
     let homeserver_api = HomeserverAdminAPI::new(
@@ -40,7 +40,7 @@ pub async fn router(
     );
 
     let ln_service = LnVerificationService::new(
-        db.clone(),
+        db,
         phoenixd_api,
         homeserver_api.clone(),
         ln.invoice_price_sat,

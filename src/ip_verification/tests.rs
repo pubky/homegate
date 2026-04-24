@@ -4,7 +4,10 @@
 //! and mocked external APIs (Homeserver). For HTTP-specific concerns (status codes, headers,
 //! JSON parsing), add tests to `http.rs` instead.
 
-use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
+use crate::e2e::{
+    WiremockServers, setup_homeserver_signup_token, setup_homeserver_signup_token_with_quota,
+};
+use crate::infrastructure::config::{IpVerificationConfig, SignupQuotaConfig};
 use crate::infrastructure::sql::SqlDb;
 use crate::ip_verification::error::IpVerificationError;
 use crate::ip_verification::service::IpVerificationService;
@@ -18,19 +21,28 @@ fn create_service(
     max_per_week: u32,
     max_per_year: u32,
 ) -> IpVerificationService {
+    create_service_with_quota(servers, db, max_per_week, max_per_year, None)
+}
+
+fn create_service_with_quota(
+    servers: &WiremockServers,
+    db: SqlDb,
+    max_per_week: u32,
+    max_per_year: u32,
+    signup_quota: Option<SignupQuotaConfig>,
+) -> IpVerificationService {
     let homeserver_admin_api = HomeserverAdminAPI::new(
         &servers.homeserver_server.uri().parse().unwrap(),
         "test-pass",
         "test-homeserver-pubky",
     );
-    IpVerificationService::new(
-        db,
-        homeserver_admin_api,
-        max_per_week,
-        max_per_year,
-        None,
-        vec![],
-    )
+    let config = IpVerificationConfig {
+        max_verifications_per_week: max_per_week,
+        max_verifications_per_year: max_per_year,
+        signup_quota,
+        limit_whitelist: vec![],
+    };
+    IpVerificationService::new(db, homeserver_admin_api, &config)
 }
 
 #[sqlx::test]
@@ -78,6 +90,45 @@ async fn test_weekly_window_ages_out(pool: PgPool) {
         .verify(ip)
         .await
         .expect("3rd should succeed after aging");
+}
+
+/// Tests that the annual window ages out after 365 days, allowing new verifications.
+#[sqlx::test]
+async fn test_annual_window_ages_out(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let db = SqlDb::test(pool.clone()).await;
+    // weekly=10 (high), annual=1 — so only the annual limit matters
+    let service = create_service(&servers, db, 10, 1);
+    let ip: IpAddr = "10.0.0.1".parse().unwrap();
+
+    // Allow 2 verifications total (1 now + 1 after aging)
+    setup_homeserver_signup_token("token")
+        .expect(2)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    service.verify(ip).await.expect("1st should succeed");
+
+    // Should fail — annual limit hit
+    let err = service.verify(ip).await.unwrap_err();
+    assert!(
+        matches!(err, IpVerificationError::AnnualLimitExceeded),
+        "Expected AnnualLimitExceeded, got: {err:?}"
+    );
+
+    // Age the record to 366 days ago (outside the 365-day window)
+    let past = chrono::Utc::now().naive_utc() - chrono::Duration::days(366);
+    sqlx::query("UPDATE ip_verifications SET created_at = $1")
+        .bind(past)
+        .execute(&pool)
+        .await
+        .expect("Failed to age verification");
+
+    // Now the annual window is clear — should succeed again
+    service
+        .verify(ip)
+        .await
+        .expect("Should succeed after annual window ages out");
 }
 
 #[sqlx::test]
@@ -260,4 +311,28 @@ async fn test_whitelist_does_not_affect_other_ips(pool: PgPool) {
         matches!(err, IpVerificationError::WeeklyLimitExceeded),
         "Non-whitelisted IP should be rate-limited, got: {err:?}"
     );
+}
+
+/// Tests that when signup_quota is configured, the service uses the POST endpoint
+/// (generate_signup_token_with_quota) instead of the GET endpoint.
+#[sqlx::test]
+async fn test_signup_quota_uses_post_endpoint(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let db = SqlDb::test(pool.clone()).await;
+    let quota = SignupQuotaConfig {
+        storage_quota_mb: Some(64),
+        rate_read: Some("1mb/s".to_string()),
+        rate_write: Some("1mb/s".to_string()),
+    };
+    let service = create_service_with_quota(&servers, db, 2, 10, Some(quota));
+    let ip: IpAddr = "10.0.0.1".parse().unwrap();
+
+    // Only mount the POST mock — if the service incorrectly uses GET, this will fail
+    setup_homeserver_signup_token_with_quota("quota-token-123")
+        .expect(1)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    let response = service.verify(ip).await.expect("Should succeed with quota");
+    assert_eq!(response.signup_code, "quota-token-123");
 }

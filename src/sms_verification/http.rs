@@ -21,20 +21,6 @@ use crate::{
 pub async fn router(
     homeserver: &HomeserverConfig,
     sms: &SmsVerificationConfig,
-    db: &crate::infrastructure::sql::SqlDb,
-) -> Result<Router, HttpServerError> {
-    let state = AppState::new(homeserver, sms, db.clone());
-    Ok(Router::new()
-        .route("/send_code", post(send_code_handler))
-        .route("/validate_code", post(validate_code_handler))
-        .route("/info", get(get_info_handler))
-        .with_state(state))
-}
-
-#[cfg(test)]
-pub async fn router_with_db(
-    homeserver: &HomeserverConfig,
-    sms: &SmsVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
     let state = AppState::new(homeserver, sms, db);
@@ -133,18 +119,15 @@ mod tests {
     ) -> (TestServer, PgPool) {
         use crate::infrastructure::sql::SqlDb;
 
-        let homeserver = HomeserverConfig {
-            admin_api_url: servers.homeserver_server.uri().parse().unwrap(),
-            admin_password: "test-pass".to_string(),
-            pubky: "test-homeserver-pubky".to_string(),
-        };
+        let homeserver =
+            HomeserverConfig::for_test(servers.homeserver_server.uri().parse().unwrap());
         let sms = SmsVerificationConfig::for_test(servers.prelude_server.uri().parse().unwrap());
 
         // Create SqlDb from the pool with migrations
         let db = SqlDb::test(pool.clone()).await;
 
         // We need to create AppState with the wiremock config and test pool
-        let sms_verification_router = router_with_db(&homeserver, &sms, db)
+        let sms_verification_router = router(&homeserver, &sms, db)
             .await
             .expect("Failed to create router");
 

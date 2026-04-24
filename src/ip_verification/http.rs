@@ -18,18 +18,6 @@ use super::types::IpVerificationResponse;
 pub async fn router(
     homeserver: &HomeserverConfig,
     ip: &IpVerificationConfig,
-    db: &crate::infrastructure::sql::SqlDb,
-) -> Result<Router, HttpServerError> {
-    let state = AppState::new(homeserver, ip, db.clone());
-    Ok(Router::new()
-        .route("/", post(root_handler))
-        .with_state(state))
-}
-
-#[cfg(test)]
-pub async fn router_with_db(
-    homeserver: &HomeserverConfig,
-    ip: &IpVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
     let state = AppState::new(homeserver, ip, db);
@@ -97,11 +85,8 @@ mod tests {
     ) -> TestServer {
         use crate::infrastructure::sql::SqlDb;
 
-        let homeserver = HomeserverConfig {
-            admin_api_url: servers.homeserver_server.uri().parse().unwrap(),
-            admin_password: "test-pass".to_string(),
-            pubky: "test-homeserver-pubky".to_string(),
-        };
+        let homeserver =
+            HomeserverConfig::for_test(servers.homeserver_server.uri().parse().unwrap());
         let ip_config = IpVerificationConfig {
             max_verifications_per_week: max_per_week,
             max_verifications_per_year: max_per_year,
@@ -111,7 +96,7 @@ mod tests {
 
         let db = SqlDb::test(pool).await;
 
-        let ip_verification_router = router_with_db(&homeserver, &ip_config, db)
+        let ip_verification_router = router(&homeserver, &ip_config, db)
             .await
             .expect("Failed to create router");
 

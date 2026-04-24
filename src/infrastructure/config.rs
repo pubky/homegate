@@ -142,6 +142,17 @@ impl AppConfig {
 }
 
 #[cfg(test)]
+impl HomeserverConfig {
+    pub fn for_test(admin_api_url: Url) -> Self {
+        Self {
+            admin_api_url,
+            admin_password: "test-pass".to_string(),
+            pubky: "test-homeserver-pubky".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
 impl SmsVerificationConfig {
     pub fn for_test(prelude_api_url: Url) -> Self {
         Self {

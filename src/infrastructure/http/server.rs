@@ -35,21 +35,21 @@ impl HttpServer {
             tracing::info!("SMS verification enabled");
             app = app.nest(
                 "/sms_verification",
-                router(&config.homeserver, sms, db).await?,
+                router(&config.homeserver, sms, db.clone()).await?,
             );
         }
         if let Some(ln) = &config.ln_verification {
             tracing::info!("Lightning verification enabled");
             app = app.nest(
                 "/ln_verification",
-                ln_verification::router(&config.homeserver, ln, db).await?,
+                ln_verification::router(&config.homeserver, ln, db.clone()).await?,
             );
         }
         if let Some(ip) = &config.ip_verification {
             tracing::info!("IP verification enabled");
             app = app.nest(
                 "/ip_verification",
-                ip_verification::router(&config.homeserver, ip, db).await?,
+                ip_verification::router(&config.homeserver, ip, db.clone()).await?,
             );
         }
 
