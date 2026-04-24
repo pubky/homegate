@@ -20,6 +20,7 @@ pub struct IpVerificationService {
     max_verifications_per_week: u32,
     max_verifications_per_year: u32,
     signup_quota: Option<SignupQuotaConfig>,
+    limit_whitelist: Vec<IpAddr>,
 }
 
 impl IpVerificationService {
@@ -29,7 +30,12 @@ impl IpVerificationService {
         max_verifications_per_week: u32,
         max_verifications_per_year: u32,
         signup_quota: Option<SignupQuotaConfig>,
+        limit_whitelist: Vec<IpAddr>,
     ) -> Self {
+        if !limit_whitelist.is_empty() {
+            tracing::info!("IP verification limit whitelist: {:?}", limit_whitelist);
+        }
+
         Self {
             db,
             homeserver_admin_api,
@@ -37,13 +43,20 @@ impl IpVerificationService {
             max_verifications_per_week,
             max_verifications_per_year,
             signup_quota,
+            limit_whitelist,
         }
+    }
+
+    #[cfg(test)]
+    pub fn set_limit_whitelist(&mut self, whitelist: Vec<IpAddr>) {
+        self.limit_whitelist = whitelist;
     }
 
     pub async fn verify(
         &self,
         ip_address: IpAddr,
     ) -> Result<IpVerificationResponse, IpVerificationError> {
+        let is_whitelisted = self.limit_whitelist.contains(&ip_address);
         let ip_hash = self.hasher_argon2id.hash(&ip_address.to_string());
 
         // Use a transaction with an advisory lock so the rate limit check and
@@ -53,7 +66,9 @@ impl IpVerificationService {
         self.acquire_advisory_lock(&mut tx, &ip_hash).await?;
 
         let mut executor: UnifiedExecutor<'_> = (&mut tx).into();
-        self.check_rate_limits(&mut executor, &ip_hash).await?;
+        if !is_whitelisted {
+            self.check_rate_limits(&mut executor, &ip_hash).await?;
+        }
         drop(executor);
 
         let signup_code = self.generate_signup_token().await?;

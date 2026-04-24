@@ -106,6 +106,7 @@ mod tests {
             max_verifications_per_week: max_per_week,
             max_verifications_per_year: max_per_year,
             signup_quota: None,
+            limit_whitelist: vec![],
         };
 
         let db = SqlDb::test(pool).await;

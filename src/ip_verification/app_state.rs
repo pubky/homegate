@@ -26,6 +26,7 @@ impl AppState {
             ip.max_verifications_per_week,
             ip.max_verifications_per_year,
             ip.signup_quota.clone(),
+            ip.limit_whitelist.clone(),
         );
         Self { ip_verification }
     }

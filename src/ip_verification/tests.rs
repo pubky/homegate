@@ -23,7 +23,14 @@ fn create_service(
         "test-pass",
         "test-homeserver-pubky",
     );
-    IpVerificationService::new(db, homeserver_admin_api, max_per_week, max_per_year, None)
+    IpVerificationService::new(
+        db,
+        homeserver_admin_api,
+        max_per_week,
+        max_per_year,
+        None,
+        vec![],
+    )
 }
 
 #[sqlx::test]
@@ -204,5 +211,53 @@ async fn test_ipv6_rate_limiting(pool: PgPool) {
     assert!(
         matches!(err, IpVerificationError::WeeklyLimitExceeded),
         "IPv6 should be rate-limited, got: {err:?}"
+    );
+}
+
+/// Tests that whitelisted IPs bypass verification rate limits.
+#[sqlx::test]
+async fn test_whitelist_bypasses_limits(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let db = SqlDb::test(pool.clone()).await;
+    let mut service = create_service(&servers, db, 1, 2);
+    let ip: IpAddr = "10.0.0.50".parse().unwrap();
+
+    service.set_limit_whitelist(vec![ip]);
+
+    // Allow 5 verifications — well beyond both weekly (1) and annual (2) limits
+    setup_homeserver_signup_token("token")
+        .expect(5)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    for i in 1..=5 {
+        service.verify(ip).await.unwrap_or_else(|e| {
+            panic!("Verification {i} should succeed for whitelisted IP, got: {e:?}")
+        });
+    }
+}
+
+/// Tests that non-whitelisted IPs are still rate-limited when a whitelist is configured.
+#[sqlx::test]
+async fn test_whitelist_does_not_affect_other_ips(pool: PgPool) {
+    let servers = WiremockServers::start().await;
+    let db = SqlDb::test(pool.clone()).await;
+    let mut service = create_service(&servers, db, 1, 10);
+    let whitelisted_ip: IpAddr = "10.0.0.50".parse().unwrap();
+    let other_ip: IpAddr = "10.0.0.51".parse().unwrap();
+
+    service.set_limit_whitelist(vec![whitelisted_ip]);
+
+    setup_homeserver_signup_token("token")
+        .expect(1)
+        .mount(&servers.homeserver_server)
+        .await;
+
+    service.verify(other_ip).await.expect("1st should succeed");
+
+    let err = service.verify(other_ip).await.unwrap_err();
+    assert!(
+        matches!(err, IpVerificationError::WeeklyLimitExceeded),
+        "Non-whitelisted IP should be rate-limited, got: {err:?}"
     );
 }
