@@ -23,7 +23,7 @@ fn create_service(
         "test-pass",
         "test-homeserver-pubky",
     );
-    IpVerificationService::new(db, homeserver_admin_api, max_per_week, max_per_year)
+    IpVerificationService::new(db, homeserver_admin_api, max_per_week, max_per_year, None)
 }
 
 #[sqlx::test]

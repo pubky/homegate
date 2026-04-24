@@ -1,5 +1,6 @@
 use std::net::IpAddr;
 
+use crate::infrastructure::config::SignupQuotaConfig;
 use crate::infrastructure::sql::{DbError, SqlDb, UnifiedExecutor};
 use crate::shared::HomeserverAdminAPI;
 use crate::sms_verification::HasherArgon2id;
@@ -18,6 +19,7 @@ pub struct IpVerificationService {
     hasher_argon2id: HasherArgon2id,
     max_verifications_per_week: u32,
     max_verifications_per_year: u32,
+    signup_quota: Option<SignupQuotaConfig>,
 }
 
 impl IpVerificationService {
@@ -26,6 +28,7 @@ impl IpVerificationService {
         homeserver_admin_api: HomeserverAdminAPI,
         max_verifications_per_week: u32,
         max_verifications_per_year: u32,
+        signup_quota: Option<SignupQuotaConfig>,
     ) -> Self {
         Self {
             db,
@@ -33,6 +36,7 @@ impl IpVerificationService {
             hasher_argon2id: HasherArgon2id::new(),
             max_verifications_per_week,
             max_verifications_per_year,
+            signup_quota,
         }
     }
 
@@ -126,13 +130,18 @@ impl IpVerificationService {
     }
 
     async fn generate_signup_token(&self) -> Result<String, IpVerificationError> {
-        self.homeserver_admin_api
-            .generate_signup_token()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Failed to generate signup token");
-                IpVerificationError::HomeserverUnavailable
-            })
+        let result = match &self.signup_quota {
+            Some(quota) => {
+                self.homeserver_admin_api
+                    .generate_signup_token_with_quota(quota)
+                    .await
+            }
+            None => self.homeserver_admin_api.generate_signup_token().await,
+        };
+        result.map_err(|e| {
+            tracing::error!(error = %e, "Failed to generate signup token");
+            IpVerificationError::HomeserverUnavailable
+        })
     }
 }
 

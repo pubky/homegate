@@ -25,6 +25,7 @@ impl AppState {
             homeserver_admin_api,
             ip.max_verifications_per_week,
             ip.max_verifications_per_year,
+            ip.signup_quota.clone(),
         );
         Self { ip_verification }
     }

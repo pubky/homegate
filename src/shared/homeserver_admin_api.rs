@@ -1,3 +1,4 @@
+use crate::infrastructure::config::SignupQuotaConfig;
 use url::Url;
 
 #[derive(Clone, Debug)]
@@ -18,7 +19,7 @@ impl HomeserverAdminAPI {
         }
     }
 
-    /// Generates a signup token by calling the homeserver admin API
+    /// Generates a signup token with homeserver system defaults (GET).
     pub async fn generate_signup_token(&self) -> Result<String, reqwest::Error> {
         let url = self
             .base_url
@@ -28,6 +29,25 @@ impl HomeserverAdminAPI {
             .http_client
             .get(url)
             .header("X-Admin-Password", &self.admin_password)
+            .send()
+            .await?;
+        response.error_for_status()?.text().await
+    }
+
+    /// Generates a signup token with explicit quota limits (POST).
+    pub async fn generate_signup_token_with_quota(
+        &self,
+        quota: &SignupQuotaConfig,
+    ) -> Result<String, reqwest::Error> {
+        let url = self
+            .base_url
+            .join("generate_signup_token")
+            .expect("Failed to join URL path");
+        let response = self
+            .http_client
+            .post(url)
+            .header("X-Admin-Password", &self.admin_password)
+            .json(quota)
             .send()
             .await?;
         response.error_for_status()?.text().await
