@@ -17,17 +17,10 @@ fn create_service(
     max_per_week: u32,
     max_per_year: u32,
 ) -> IpVerificationService {
-    use crate::EnvConfig;
-
-    let config = EnvConfig::for_test(
-        servers.prelude_server.uri().parse().unwrap(),
-        servers.homeserver_server.uri().parse().unwrap(),
-    );
-
     let homeserver_admin_api = HomeserverAdminAPI::new(
-        &config.homeserver_admin_api_url,
-        &config.homeserver_admin_password,
-        &config.homeserver_pubky,
+        &servers.homeserver_server.uri().parse().unwrap(),
+        "test-pass",
+        "test-homeserver-pubky",
     );
     IpVerificationService::new(homeserver_admin_api, max_per_week, max_per_year)
 }

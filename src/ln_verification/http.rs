@@ -10,8 +10,10 @@ use axum::{
 };
 
 use crate::{
-    EnvConfig,
-    infrastructure::http::HttpServerError,
+    infrastructure::{
+        config::{HomeserverConfig, LnVerificationConfig},
+        http::HttpServerError,
+    },
     ln_verification::{
         VerificationId, app_state::AppState, error::LnVerificationError, phoenixd_api::PhoenixdAPI,
         service::LnVerificationService, types::VerificationResponse,
@@ -26,27 +28,24 @@ use crate::{
 const DEFAULT_TIMEOUT_SECS: u64 = 25;
 
 pub async fn router(
-    config: &EnvConfig,
+    homeserver: &HomeserverConfig,
+    ln: &LnVerificationConfig,
     db: &crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let phoenixd_url = config
-        .phoenixd_api_url
-        .as_ref()
-        .expect("HG_PHOENIXD_API_URL is required when Lightning verification is enabled");
-    let phoenixd_api = PhoenixdAPI::new(phoenixd_url, &config.phoenixd_api_password);
+    let phoenixd_api = PhoenixdAPI::new(&ln.phoenixd_api_url, &ln.phoenixd_api_password);
     let homeserver_api = HomeserverAdminAPI::new(
-        &config.homeserver_admin_api_url,
-        &config.homeserver_admin_password,
-        &config.homeserver_pubky,
+        &homeserver.admin_api_url,
+        &homeserver.admin_password,
+        &homeserver.pubky,
     );
 
     let ln_service = LnVerificationService::new(
         db.clone(),
         phoenixd_api,
         homeserver_api.clone(),
-        config.lightning_invoice_price_sat,
-        config.lightning_invoice_description.clone(),
-        config.lightning_invoice_expiry_seconds,
+        ln.invoice_price_sat,
+        ln.invoice_description.clone(),
+        ln.invoice_expiry_seconds,
     );
     let ln_service = std::sync::Arc::new(ln_service);
 

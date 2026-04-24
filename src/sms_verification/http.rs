@@ -11,16 +11,19 @@ use crate::sms_verification::{
     types::{CreateVerificationRequest, ValidateCodeRequest, ValidateCodeResponse},
 };
 use crate::{
-    EnvConfig,
-    infrastructure::http::{HttpServerError, RequestOrigin, UserAgent},
+    infrastructure::{
+        config::{HomeserverConfig, SmsVerificationConfig},
+        http::{HttpServerError, RequestOrigin, UserAgent},
+    },
     sms_verification::app_state::AppState,
 };
 
 pub async fn router(
-    config: &EnvConfig,
+    homeserver: &HomeserverConfig,
+    sms: &SmsVerificationConfig,
     db: &crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db.clone());
+    let state = AppState::new(homeserver, sms, db.clone());
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
@@ -30,10 +33,11 @@ pub async fn router(
 
 #[cfg(test)]
 pub async fn router_with_db(
-    config: &EnvConfig,
+    homeserver: &HomeserverConfig,
+    sms: &SmsVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db);
+    let state = AppState::new(homeserver, sms, db);
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
@@ -116,6 +120,7 @@ mod tests {
         WiremockServers, setup_homeserver_signup_token, setup_prelude_check_code,
         setup_prelude_create_verification,
     };
+    use crate::infrastructure::config::{HomeserverConfig, SmsVerificationConfig};
     use crate::sms_verification::PhoneNumber;
     use axum_test::TestServer;
     use sqlx::PgPool;
@@ -126,19 +131,20 @@ mod tests {
         pool: PgPool,
         servers: &WiremockServers,
     ) -> (TestServer, PgPool) {
-        use crate::EnvConfig;
         use crate::infrastructure::sql::SqlDb;
 
-        let config = EnvConfig::for_test(
-            servers.prelude_server.uri().parse().unwrap(),
-            servers.homeserver_server.uri().parse().unwrap(),
-        );
+        let homeserver = HomeserverConfig {
+            admin_api_url: servers.homeserver_server.uri().parse().unwrap(),
+            admin_password: "test-pass".to_string(),
+            pubky: "test-homeserver-pubky".to_string(),
+        };
+        let sms = SmsVerificationConfig::for_test(servers.prelude_server.uri().parse().unwrap());
 
         // Create SqlDb from the pool with migrations
         let db = SqlDb::test(pool.clone()).await;
 
         // We need to create AppState with the wiremock config and test pool
-        let sms_verification_router = router_with_db(&config, db)
+        let sms_verification_router = router_with_db(&homeserver, &sms, db)
             .await
             .expect("Failed to create router");
 

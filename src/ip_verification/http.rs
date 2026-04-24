@@ -6,9 +6,9 @@ use axum::{
     routing::post,
 };
 
-use crate::{
-    EnvConfig,
-    infrastructure::http::{HttpServerError, RequestOrigin},
+use crate::infrastructure::{
+    config::{HomeserverConfig, IpVerificationConfig},
+    http::{HttpServerError, RequestOrigin},
 };
 
 use super::app_state::AppState;
@@ -16,10 +16,11 @@ use super::error::IpVerificationError;
 use super::types::IpVerificationResponse;
 
 pub async fn router(
-    config: &EnvConfig,
+    homeserver: &HomeserverConfig,
+    ip: &IpVerificationConfig,
     db: &crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db.clone());
+    let state = AppState::new(homeserver, ip, db.clone());
     Ok(Router::new()
         .route("/", post(root_handler))
         .with_state(state))
@@ -27,10 +28,11 @@ pub async fn router(
 
 #[cfg(test)]
 pub async fn router_with_db(
-    config: &EnvConfig,
+    homeserver: &HomeserverConfig,
+    ip: &IpVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(config, db);
+    let state = AppState::new(homeserver, ip, db);
     Ok(Router::new()
         .route("/", post(root_handler))
         .with_state(state))
@@ -68,6 +70,7 @@ impl IntoResponse for IpVerificationError {
 mod tests {
     use super::*;
     use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
+    use crate::infrastructure::config::{HomeserverConfig, IpVerificationConfig};
     use axum_test::TestServer;
     use sqlx::PgPool;
     use std::net::SocketAddr;
@@ -94,16 +97,19 @@ mod tests {
     ) -> TestServer {
         use crate::infrastructure::sql::SqlDb;
 
-        let mut config = EnvConfig::for_test(
-            servers.prelude_server.uri().parse().unwrap(),
-            servers.homeserver_server.uri().parse().unwrap(),
-        );
-        config.max_ip_verifications_per_week = max_per_week;
-        config.max_ip_verifications_per_year = max_per_year;
+        let homeserver = HomeserverConfig {
+            admin_api_url: servers.homeserver_server.uri().parse().unwrap(),
+            admin_password: "test-pass".to_string(),
+            pubky: "test-homeserver-pubky".to_string(),
+        };
+        let ip_config = IpVerificationConfig {
+            max_verifications_per_week: max_per_week,
+            max_verifications_per_year: max_per_year,
+        };
 
         let db = SqlDb::test(pool).await;
 
-        let ip_verification_router = router_with_db(&config, db)
+        let ip_verification_router = router_with_db(&homeserver, &ip_config, db)
             .await
             .expect("Failed to create router");
 

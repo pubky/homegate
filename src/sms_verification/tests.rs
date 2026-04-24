@@ -31,18 +31,15 @@ fn test_phone_hasher() -> HasherArgon2id {
 
 /// Helper to create service with wiremock for direct service layer testing
 fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerificationService {
-    use crate::EnvConfig;
+    use crate::infrastructure::config::SmsVerificationConfig;
 
-    let config = EnvConfig::for_test(
-        servers.prelude_server.uri().parse().unwrap(),
-        servers.homeserver_server.uri().parse().unwrap(),
-    );
+    let sms = SmsVerificationConfig::for_test(servers.prelude_server.uri().parse().unwrap());
 
-    let prelude_api = PreludeAPI::new(&config.prelude_api_url, &config.prelude_api_key);
+    let prelude_api = PreludeAPI::new(&sms.prelude_api_url, &sms.prelude_api_key);
     let homeserver_admin_api = HomeserverAdminAPI::new(
-        &config.homeserver_admin_api_url,
-        &config.homeserver_admin_password,
-        &config.homeserver_pubky,
+        &servers.homeserver_server.uri().parse().unwrap(),
+        "test-pass",
+        "test-homeserver-pubky",
     );
     SmsVerificationService::new(prelude_api, homeserver_admin_api, 2, 4, 2, vec![])
 }

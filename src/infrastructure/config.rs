@@ -4,82 +4,76 @@ use crate::infrastructure::sql::ConnectionString;
 use crate::sms_verification::PhoneNumber;
 use url::Url;
 
-/// The environment configuration.
-/// This is the configuration that is loaded from the environment variables.
-/// TODO: Use config.toml instead. Env is a bit limited eg for grouping config items into structs
 #[derive(Debug, Clone, serde::Deserialize)]
-pub struct EnvConfig {
+pub struct AppConfig {
     #[serde(default)]
     pub database_url: ConnectionString,
-    #[serde(default = "default_http_listen_socker")]
+    #[serde(default = "default_http_listen_socket")]
     pub http_listen_socket: SocketAddr,
-    #[serde(default = "default_sms_verification_enabled")]
-    pub sms_verification_enabled: bool,
     #[serde(default)]
+    pub allow_cors: bool,
+    #[serde(default)]
+    pub accept_proxy_ip_headers: bool,
+    pub homeserver: HomeserverConfig,
+    pub sms_verification: Option<SmsVerificationConfig>,
+    pub ln_verification: Option<LnVerificationConfig>,
+    pub ip_verification: Option<IpVerificationConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct HomeserverConfig {
+    pub admin_api_url: Url,
+    pub admin_password: String,
+    pub pubky: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SmsVerificationConfig {
     pub prelude_api_key: String,
     #[serde(default = "default_prelude_api_url")]
     pub prelude_api_url: Url,
-    pub homeserver_admin_api_url: Url,
-    pub homeserver_admin_password: String,
-    pub homeserver_pubky: String,
     #[serde(default = "default_max_sms_verifications_per_week")]
-    pub max_sms_verifications_per_week: u32,
+    pub max_verifications_per_week: u32,
     #[serde(default = "default_max_sms_verifications_per_year")]
-    pub max_sms_verifications_per_year: u32,
-    #[serde(default)]
-    pub sms_verifications_limit_whitelist: Vec<PhoneNumber>,
+    pub max_verifications_per_year: u32,
     /// Maximum number of failed code validation attempts per verification session.
     /// After this many failed attempts, the session is marked as failed.
     /// Prelude seems to fail silently after 5 failures regardless of how its configured.
     /// We count attempts here to guard against this.
     #[serde(default = "default_max_sms_failed_validation_attempts")]
-    pub max_sms_failed_validation_attempts: u32,
-    #[serde(default = "default_lightning_verification_price_sat")]
-    pub lightning_invoice_price_sat: u64,
-    #[serde(default = "default_lightning_verification_expiry_seconds")]
-    pub lightning_invoice_expiry_seconds: u64,
-    #[serde(default = "default_lightning_verification_description")]
-    pub lightning_invoice_description: String,
-    #[serde(default = "default_ln_verification_enabled")]
-    pub ln_verification_enabled: bool,
+    pub max_failed_validation_attempts: u32,
     #[serde(default)]
-    pub phoenixd_api_url: Option<Url>,
-    #[serde(default)]
+    pub limit_whitelist: Vec<PhoneNumber>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct LnVerificationConfig {
+    pub phoenixd_api_url: Url,
     pub phoenixd_api_password: String,
-    #[serde(default = "default_allow_cors")]
-    pub allow_cors: bool,
-    #[serde(default = "default_ip_verification_enabled")]
-    pub ip_verification_enabled: bool,
-    #[serde(default)]
-    pub accept_proxy_ip_headers: bool,
+    #[serde(default = "default_lightning_invoice_price_sat")]
+    pub invoice_price_sat: u64,
+    #[serde(default = "default_lightning_invoice_expiry_seconds")]
+    pub invoice_expiry_seconds: u64,
+    #[serde(default = "default_lightning_invoice_description")]
+    pub invoice_description: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct IpVerificationConfig {
     #[serde(default = "default_max_ip_verifications_per_week")]
-    pub max_ip_verifications_per_week: u32,
+    pub max_verifications_per_week: u32,
     #[serde(default = "default_max_ip_verifications_per_year")]
-    pub max_ip_verifications_per_year: u32,
+    pub max_verifications_per_year: u32,
 }
 
-fn default_allow_cors() -> bool {
-    false
+fn default_http_listen_socket() -> SocketAddr {
+    "0.0.0.0:8080"
+        .parse()
+        .expect("Default HTTP listen socket is valid")
 }
 
-fn default_sms_verification_enabled() -> bool {
-    true
-}
-
-fn default_ln_verification_enabled() -> bool {
-    true
-}
-
-fn default_ip_verification_enabled() -> bool {
-    false
-}
-
-fn default_max_ip_verifications_per_week() -> u32 {
-    2
-}
-
-fn default_max_ip_verifications_per_year() -> u32 {
-    4
+fn default_prelude_api_url() -> Url {
+    Url::parse("https://api.prelude.dev").expect("Default Prelude API URL is valid")
 }
 
 fn default_max_sms_verifications_per_week() -> u32 {
@@ -94,133 +88,146 @@ fn default_max_sms_failed_validation_attempts() -> u32 {
     5
 }
 
-fn default_lightning_verification_expiry_seconds() -> u64 {
-    60 * 10
-}
-
-fn default_lightning_verification_description() -> String {
-    "Pubky Homegate Verification".to_string()
-}
-
-fn default_lightning_verification_price_sat() -> u64 {
+fn default_lightning_invoice_price_sat() -> u64 {
     1000
 }
 
-fn default_prelude_api_url() -> Url {
-    Url::parse("https://api.prelude.dev").expect("Default Prelude API URL is valid")
+fn default_lightning_invoice_expiry_seconds() -> u64 {
+    60 * 10
 }
 
-fn default_http_listen_socker() -> SocketAddr {
-    "0.0.0.0:8080"
-        .parse()
-        .expect("Default HTTP listen socket is valid")
+fn default_lightning_invoice_description() -> String {
+    "Pubky Homegate Verification".to_string()
 }
 
-impl EnvConfig {
-    /// Load the environment configuration from the environment variables.
-    /// The environment variables are prefixed with "HG_".
-    pub fn load() -> Result<EnvConfig, envy::Error> {
-        envy::prefixed("HG_").from_env::<EnvConfig>()
+fn default_max_ip_verifications_per_week() -> u32 {
+    2
+}
+
+fn default_max_ip_verifications_per_year() -> u32 {
+    4
+}
+
+impl AppConfig {
+    /// Load configuration from a TOML file.
+    /// Path is read from `HG_CONFIG_PATH` env var, defaulting to `config.toml`.
+    pub fn load() -> anyhow::Result<AppConfig> {
+        let path = std::env::var("HG_CONFIG_PATH").unwrap_or_else(|_| "config.toml".to_string());
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", path, e))?;
+        let config: AppConfig = toml::from_str(&contents)
+            .map_err(|e| anyhow::anyhow!("Failed to parse '{}': {}", path, e))?;
+        Ok(config)
     }
+}
 
-    #[cfg(test)]
-    pub fn for_test(prelude_api_url: Url, homeserver_admin_api_url: Url) -> Self {
+#[cfg(test)]
+impl SmsVerificationConfig {
+    pub fn for_test(prelude_api_url: Url) -> Self {
         Self {
-            database_url: Default::default(),
-            http_listen_socket: "127.0.0.1:0"
-                .parse()
-                .expect("Default HTTP listen socket is valid"),
-            sms_verification_enabled: true,
             prelude_api_key: "test-key".to_string(),
             prelude_api_url,
-            homeserver_admin_api_url,
-            homeserver_admin_password: "test-pass".to_string(),
-            homeserver_pubky: "test-homeserver-pubky".to_string(),
-            max_sms_verifications_per_week: 2,
-            max_sms_verifications_per_year: 4,
-            sms_verifications_limit_whitelist: vec![],
-            max_sms_failed_validation_attempts: 2,
-            allow_cors: true,
-            ln_verification_enabled: true,
-            lightning_invoice_price_sat: 1000,
-            lightning_invoice_expiry_seconds: 60 * 10,
-            lightning_invoice_description: "Verification".to_string(),
-            phoenixd_api_url: Some(
-                Url::parse("http://localhost:9740").expect("Default Phoenixd API URL is valid"),
-            ),
-            phoenixd_api_password:
-                "a1fabd1a106e7283a1e5b6e4f0dd58a67905cde51297465c7bf3658317d14eef".to_string(),
-            ip_verification_enabled: false,
-            accept_proxy_ip_headers: false,
-            max_ip_verifications_per_week: 2,
-            max_ip_verifications_per_year: 4,
+            max_verifications_per_week: 2,
+            max_verifications_per_year: 4,
+            max_failed_validation_attempts: 2,
+            limit_whitelist: vec![],
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::EnvConfig;
+    use super::*;
 
     #[test]
-    fn test_load_config() {
-        let config = envy::from_iter::<_, EnvConfig>([
-            (
-                String::from("DATABASE_URL"),
-                String::from("postgres://localhost:5432/pubky_homegate"),
-            ),
-            (
-                String::from("HTTP_LISTEN_SOCKET"),
-                String::from("127.0.0.1:5000"),
-            ),
-            (
-                String::from("PRELUDE_API_KEY"),
-                String::from("test-prelude-api-key"),
-            ),
-            (
-                String::from("HOMESERVER_ADMIN_API_URL"),
-                String::from("http://localhost:6288"),
-            ),
-            (
-                String::from("HOMESERVER_ADMIN_PASSWORD"),
-                String::from("test-admin-password"),
-            ),
-            (
-                String::from("HOMESERVER_PUBKY"),
-                String::from("test-homeserver-pubky"),
-            ),
-            (
-                String::from("lightning_invoice_price_sat"),
-                String::from("1000"),
-            ),
-            (
-                String::from("lightning_invoice_expiry_seconds"),
-                String::from("600"),
-            ),
-            (
-                String::from("lightning_invoice_description"),
-                String::from("Verification"),
-            ),
-            (
-                String::from("PHOENIXD_API_URL"),
-                String::from("http://localhost:9740"),
-            ),
-            (
-                String::from("PHOENIXD_API_PASSWORD"),
-                String::from("test-password"),
-            ),
-        ])
-        .expect("Failed to load config");
+    fn test_load_config_all_routes() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+http_listen_socket = "127.0.0.1:5000"
 
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+pubky = "test-homeserver-pubky"
+
+[sms_verification]
+prelude_api_key = "test-prelude-api-key"
+
+[ln_verification]
+phoenixd_api_url = "http://localhost:9740"
+phoenixd_api_password = "test-password"
+
+[ip_verification]
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
         assert_eq!(
             config.database_url.as_str(),
             "postgres://localhost:5432/pubky_homegate"
         );
-        assert_eq!(config.prelude_api_key, "test-prelude-api-key");
-        assert_eq!(
-            config.homeserver_admin_api_url.as_str(),
-            "http://localhost:6288/"
+        assert_eq!(config.homeserver.admin_password, "test-admin-password");
+        assert!(config.sms_verification.is_some());
+        assert!(config.ln_verification.is_some());
+        assert!(config.ip_verification.is_some());
+    }
+
+    #[test]
+    fn test_ln_verification_requires_phoenixd_url() {
+        let toml = r#"
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+pubky = "test-homeserver-pubky"
+
+[ln_verification]
+phoenixd_api_password = "test-password"
+"#;
+        let err = toml::from_str::<AppConfig>(toml).unwrap_err();
+        assert!(
+            err.to_string().contains("phoenixd_api_url"),
+            "Should require phoenixd_api_url, got: {err}"
         );
-        assert_eq!(config.homeserver_admin_password, "test-admin-password");
+    }
+
+    #[test]
+    fn test_sms_verification_requires_prelude_api_key() {
+        let toml = r#"
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+pubky = "test-homeserver-pubky"
+
+[sms_verification]
+"#;
+        let err = toml::from_str::<AppConfig>(toml).unwrap_err();
+        assert!(
+            err.to_string().contains("prelude_api_key"),
+            "Should require prelude_api_key, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_homeserver_config_is_required() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+"#;
+        let err = toml::from_str::<AppConfig>(toml).unwrap_err();
+        assert!(
+            err.to_string().contains("homeserver"),
+            "Should require homeserver section, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_load_config_no_optional_routes() {
+        let toml = r#"
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+pubky = "test-homeserver-pubky"
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
+        assert!(config.sms_verification.is_none());
+        assert!(config.ln_verification.is_none());
+        assert!(config.ip_verification.is_none());
     }
 }

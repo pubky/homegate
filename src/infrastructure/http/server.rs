@@ -4,8 +4,8 @@ use std::{
 };
 
 use crate::{
-    EnvConfig,
     infrastructure::{
+        config::AppConfig,
         http::HttpServerError,
         sql::{DbError, SqlDb},
     },
@@ -28,80 +28,59 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    pub fn create_router(
-        sms_verification_router: Option<Router>,
-        ln_verification_router: Option<Router>,
-        ip_verification_router: Option<Router>,
-        allow_cors: bool,
-        accept_proxy_ip_headers: bool,
-    ) -> Router {
-        let mut router = Router::new().route("/", get(root));
+    pub async fn create_router(config: &AppConfig, db: &SqlDb) -> Result<Router, HttpServerError> {
+        let mut app = Router::new().route("/", get(root));
 
-        if let Some(sms_router) = sms_verification_router {
-            router = router.nest("/sms_verification", sms_router);
+        if let Some(sms) = &config.sms_verification {
+            tracing::info!("SMS verification enabled");
+            app = app.nest(
+                "/sms_verification",
+                router(&config.homeserver, sms, db).await?,
+            );
         }
-        if let Some(ln_router) = ln_verification_router {
-            router = router.nest("/ln_verification", ln_router);
+        if let Some(ln) = &config.ln_verification {
+            tracing::info!("Lightning verification enabled");
+            app = app.nest(
+                "/ln_verification",
+                ln_verification::router(&config.homeserver, ln, db).await?,
+            );
         }
-        if let Some(ip_router) = ip_verification_router {
-            router = router.nest("/ip_verification", ip_router);
+        if let Some(ip) = &config.ip_verification {
+            tracing::info!("IP verification enabled");
+            app = app.nest(
+                "/ip_verification",
+                ip_verification::router(&config.homeserver, ip, db).await?,
+            );
         }
 
-        if accept_proxy_ip_headers {
+        if config.accept_proxy_ip_headers {
             tracing::info!("Accepting proxy IP headers (X-Forwarded-For, X-Real-IP)");
-            router = router.layer(axum::Extension(super::AcceptProxyIpHeaders));
+            app = app.layer(axum::Extension(super::AcceptProxyIpHeaders));
         }
 
-        let router = if allow_cors {
+        let app = if config.allow_cors {
             tracing::info!("Enabling CORS for any origin, method, and headers");
-            router.layer(
+            app.layer(
                 CorsLayer::new()
                     .allow_origin(Any)
                     .allow_methods(Any)
                     .allow_headers(Any),
             )
         } else {
-            router
+            app
         };
 
-        router.layer(TraceLayer::new_for_http())
+        Ok(app.layer(TraceLayer::new_for_http()))
     }
 
-    pub async fn start(config: EnvConfig) -> Result<Self, HttpServerError> {
+    pub async fn start(config: AppConfig) -> Result<Self, HttpServerError> {
         Self::err_on_homeserver_admin_api_failure(&config).await;
 
         let db = SqlDb::connect(&config.database_url)
             .await
             .map_err(DbError::from)?;
 
-        let sms_verification_router = if config.sms_verification_enabled {
-            tracing::info!("SMS verification enabled");
-            Some(router(&config, &db).await?)
-        } else {
-            tracing::info!("SMS verification disabled");
-            None
-        };
-        let ln_verification_router = if config.ln_verification_enabled {
-            tracing::info!("Lightning verification enabled");
-            Some(ln_verification::router(&config, &db).await?)
-        } else {
-            tracing::info!("Lightning verification disabled");
-            None
-        };
-        let ip_verification_router = if config.ip_verification_enabled {
-            tracing::info!("IP verification enabled");
-            Some(ip_verification::router(&config, &db).await?)
-        } else {
-            tracing::info!("IP verification disabled");
-            None
-        };
-        let router = Self::create_router(
-            sms_verification_router,
-            ln_verification_router,
-            ip_verification_router,
-            config.allow_cors,
-            config.accept_proxy_ip_headers,
-        );
+        let router = Self::create_router(&config, &db).await?;
 
         let (http_handle, http_socket) =
             Self::start_http_server(config.http_listen_socket, router).await?;
@@ -142,11 +121,11 @@ impl HttpServer {
     }
 
     // Verify homeserver is available at startup and credentials are correct, exit process if not.
-    async fn err_on_homeserver_admin_api_failure(config: &EnvConfig) {
+    async fn err_on_homeserver_admin_api_failure(config: &AppConfig) {
         let homeserver_admin_api = HomeserverAdminAPI::new(
-            &config.homeserver_admin_api_url,
-            &config.homeserver_admin_password,
-            &config.homeserver_pubky,
+            &config.homeserver.admin_api_url,
+            &config.homeserver.admin_password,
+            &config.homeserver.pubky,
         );
         if let Err(e) = homeserver_admin_api.verify_password().await {
             tracing::error!(

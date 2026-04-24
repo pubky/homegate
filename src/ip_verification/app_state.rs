@@ -1,5 +1,8 @@
 use crate::{
-    infrastructure::{config::EnvConfig, sql::SqlDb},
+    infrastructure::{
+        config::{HomeserverConfig, IpVerificationConfig},
+        sql::SqlDb,
+    },
     shared::HomeserverAdminAPI,
 };
 
@@ -12,16 +15,16 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: &EnvConfig, db: SqlDb) -> Self {
+    pub fn new(homeserver: &HomeserverConfig, ip: &IpVerificationConfig, db: SqlDb) -> Self {
         let homeserver_admin_api = HomeserverAdminAPI::new(
-            &config.homeserver_admin_api_url,
-            &config.homeserver_admin_password,
-            &config.homeserver_pubky,
+            &homeserver.admin_api_url,
+            &homeserver.admin_password,
+            &homeserver.pubky,
         );
         let ip_verification = IpVerificationService::new(
             homeserver_admin_api,
-            config.max_ip_verifications_per_week,
-            config.max_ip_verifications_per_year,
+            ip.max_verifications_per_week,
+            ip.max_verifications_per_year,
         );
         Self {
             db,
