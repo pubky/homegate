@@ -9,17 +9,28 @@ This service depends on
 - [Prelude](https://docs.prelude.so/) as a SMS service provider.
 - [PhoenixD](https://github.com/ACINQ/phoenixd) As a Lightning Payment provider.
 
+# Configuration
+
+Homegate is configured via a TOML file. Copy `config.toml.example` to `config.toml` and fill in the required values. Set the `HG_CONFIG_PATH` environment variable to use a different path (defaults to `config.toml` in the working directory).
+
+The `database_url` field must point to an existing PostgreSQL database, e.g.:
+
+```toml
+database_url = "postgres://postgres:postgres@localhost:5432/pubky_homegate"
+```
+
+Verification routes are **optional** — include an `[sms_verification]`, `[ln_verification]`, or `[ip_verification]` section to enable each one. Omitting a section disables that route entirely.
+
+See `config.toml.example` for the full list of options and defaults.
+
 # Usage
 
-See `.env.example` for a description of which values you need to put in a `.env` file.
-
-Then: 
 ```
 cargo run
 ```
 
-### **Warning** 
-This code generates a secret which is written to local disk at `/.homegate/pepper.txt`. 
+### **Warning**
+This code generates a secret which is written to local disk at `/.homegate/pepper.txt`.
 
 If this value is lost then you lose the ability to match phone numbers which have been already verified to phone numbers of new verification requests - this is turn means that the verification limits will not be enforced.
 
@@ -37,12 +48,15 @@ We use [phoenixd](https://github.com/ACINQ/phoenixd) for Lightning Payment verif
 
 A low-friction alternative to SMS/LN verification. A client POSTs to `/ip_verification` and receives a signup code if their IP has not exceeded the configured weekly/annual limits.
 
-IP-based rate limiting is inherently easy to circumvent (header spoofing, rotating IPs, VPNs). See `src/ip_verification/mod.rs` for detailed security considerations.
+IP-based rate limiting is inherently easy to circumvent (rotating IPs, VPNs). See `src/ip_verification/mod.rs` for detailed security considerations.
 
-Configured via environment variables (disabled by default):
-- `IP_VERIFICATION_ENABLED` — enable the endpoint
-- `MAX_IP_VERIFICATIONS_PER_WEEK` — weekly limit per IP (default: 2)
-- `MAX_IP_VERIFICATIONS_PER_YEAR` — annual limit per IP (default: 4)
+Enabled by adding an `[ip_verification]` section to `config.toml`:
+
+```toml
+[ip_verification]
+max_verifications_per_week = 2   # default
+max_verifications_per_year = 4   # default
+```
 
 ## Running Tests
 
@@ -58,6 +72,6 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/pubky_homegate?pubky-te
 
 ### Test Structure
 
-- **Unit Tests**: IP extraction logic (`src/http_server/routes/sms_verification.rs`)
-- **Service Tests**: Business logic and database operations (`src/sms_verification/tests.rs`)
+- **Unit Tests**: IP extraction logic (`src/infrastructure/http/extractors/request_origin.rs`)
+- **Service Tests**: Business logic and database operations (`src/sms_verification/tests.rs`, `src/ip_verification/tests.rs`)
 - **E2E Tests**: Full HTTP integration tests (`src/e2e/`)

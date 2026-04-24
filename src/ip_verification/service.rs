@@ -13,6 +13,7 @@ const ANNUAL_WINDOW_DAYS: i64 = 365;
 
 #[derive(Clone, Debug)]
 pub struct IpVerificationService {
+    db: SqlDb,
     homeserver_admin_api: HomeserverAdminAPI,
     hasher_argon2id: HasherArgon2id,
     max_verifications_per_week: u32,
@@ -21,11 +22,13 @@ pub struct IpVerificationService {
 
 impl IpVerificationService {
     pub fn new(
+        db: SqlDb,
         homeserver_admin_api: HomeserverAdminAPI,
         max_verifications_per_week: u32,
         max_verifications_per_year: u32,
     ) -> Self {
         Self {
+            db,
             homeserver_admin_api,
             hasher_argon2id: HasherArgon2id::new(),
             max_verifications_per_week,
@@ -35,7 +38,6 @@ impl IpVerificationService {
 
     pub async fn verify(
         &self,
-        db: &SqlDb,
         ip_address: IpAddr,
     ) -> Result<IpVerificationResponse, IpVerificationError> {
         let ip_hash = self.hasher_argon2id.hash(&ip_address.to_string());
@@ -43,7 +45,7 @@ impl IpVerificationService {
         // Use a transaction with an advisory lock so the rate limit check and
         // insert are atomic, preventing concurrent requests from bypassing the
         // limit.
-        let mut tx = db.pool().begin().await.map_err(DbError::from)?;
+        let mut tx = self.db.pool().begin().await.map_err(DbError::from)?;
         self.acquire_advisory_lock(&mut tx, &ip_hash).await?;
 
         let mut executor: UnifiedExecutor<'_> = (&mut tx).into();

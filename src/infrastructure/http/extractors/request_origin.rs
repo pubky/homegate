@@ -22,11 +22,17 @@ pub struct AcceptProxyIpHeaders;
 /// present as a request extension, also checks X-Forwarded-For and X-Real-IP.
 pub struct RequestOrigin(pub Option<IpAddr>);
 
+/// Extract the client IP from X-Forwarded-For using the **rightmost** valid IP.
+///
+/// The rightmost entry is the one added by the closest trusted proxy and is
+/// the hardest for a client to spoof. If the proxy appends `$remote_addr`,
+/// the rightmost IP is the true client address regardless of what the
+/// client put in the header.
 fn maybe_x_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
     headers
         .get(X_FORWARDED_FOR)
         .and_then(|hv| hv.to_str().ok())
-        .and_then(|s| s.split(',').find_map(|s| s.trim().parse::<IpAddr>().ok()))
+        .and_then(|s| s.rsplit(',').find_map(|s| s.trim().parse::<IpAddr>().ok()))
 }
 
 fn maybe_x_real_ip(headers: &HeaderMap) -> Option<IpAddr> {
@@ -120,8 +126,8 @@ mod tests {
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
             .unwrap();
-        // Should extract the first IP (original client)
-        assert_eq!(result, Some("203.0.113.1".parse::<IpAddr>().unwrap()));
+        // Should extract the rightmost IP (closest trusted proxy entry)
+        assert_eq!(result, Some("192.0.2.1".parse::<IpAddr>().unwrap()));
     }
 
     #[tokio::test]
@@ -209,7 +215,8 @@ mod tests {
         let RequestOrigin(result) = RequestOrigin::from_request_parts(&mut parts, &())
             .await
             .unwrap();
-        assert_eq!(result, Some("203.0.113.1".parse::<IpAddr>().unwrap()));
+        // Rightmost IP after trimming whitespace
+        assert_eq!(result, Some("198.51.100.1".parse::<IpAddr>().unwrap()));
     }
 
     #[tokio::test]

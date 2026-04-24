@@ -27,7 +27,8 @@ info:
     **Security note:** IP-based rate limiting is inherently weak — it relies on the reverse proxy
     setting `X-Forwarded-For` / `X-Real-IP` authoritatively. Users behind shared IPs (NAT, VPN)
     will collectively exhaust the limit, and rotating IPs can bypass it. This endpoint should not
-    be the sole line of defence against spam. It is disabled by default (`HG_IP_VERIFICATION_ENABLED=false`).
+    be the sole line of defence against spam. It is disabled by default (omit the `[ip_verification]`
+    section from `config.toml`).
   version: 0.2.0
   contact:
     name: Homegate API Support
@@ -65,8 +66,8 @@ paths:
         The phone number must be in E.164 format (e.g., +30123456789).
         
         Rate limits apply:
-        - Weekly limit: 2 verifications per phone number (default, configurable via `HG_MAX_SMS_VERIFICATIONS_PER_WEEK`)
-        - Annual limit: 4 verifications per phone number (default, configurable via `HG_MAX_SMS_VERIFICATIONS_PER_YEAR`)
+        - Weekly limit: 2 verifications per phone number (default, configurable via `max_verifications_per_week` in `[sms_verification]`)
+        - Annual limit: 4 verifications per phone number (default, configurable via `max_verifications_per_year` in `[sms_verification]`)
       operationId: sendSmsCode
       tags:
         - SMS Verification
@@ -269,13 +270,13 @@ paths:
         Creates a new IP-based verification and returns a signup code.
 
         The client IP is determined from the socket address, or from `X-Forwarded-For` / `X-Real-IP`
-        headers when `HG_ACCEPT_PROXY_IP_HEADERS=true`.
+        headers when `accept_proxy_ip_headers = true` in `config.toml`.
 
         Rate limits apply per IP address:
-        - Weekly limit: 2 verifications per IP (default, configurable via `HG_MAX_IP_VERIFICATIONS_PER_WEEK`)
-        - Annual limit: 4 verifications per IP (default, configurable via `HG_MAX_IP_VERIFICATIONS_PER_YEAR`)
+        - Weekly limit: 2 verifications per IP (default, configurable via `max_verifications_per_week` in `[ip_verification]`)
+        - Annual limit: 4 verifications per IP (default, configurable via `max_verifications_per_year` in `[ip_verification]`)
 
-        This endpoint is only available when `HG_IP_VERIFICATION_ENABLED=true`. Returns 404 otherwise.
+        This endpoint is only available when an `[ip_verification]` section is present in `config.toml`. Returns 404 otherwise.
 
         No request body is required.
       operationId: createIpVerification

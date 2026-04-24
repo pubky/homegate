@@ -43,7 +43,7 @@ async fn root_handler(
     RequestOrigin(maybe_ip): RequestOrigin,
 ) -> Result<Json<IpVerificationResponse>, IpVerificationError> {
     let ip_address = maybe_ip.ok_or(IpVerificationError::IpAddressRequired)?;
-    let response = state.ip_verification.verify(&state.db, ip_address).await?;
+    let response = state.ip_verification.verify(ip_address).await?;
     Ok(Json(response))
 }
 

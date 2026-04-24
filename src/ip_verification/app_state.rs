@@ -10,7 +10,6 @@ use super::service::IpVerificationService;
 
 #[derive(Clone, Debug)]
 pub struct AppState {
-    pub db: SqlDb,
     pub ip_verification: IpVerificationService,
 }
 
@@ -22,13 +21,11 @@ impl AppState {
             &homeserver.pubky,
         );
         let ip_verification = IpVerificationService::new(
+            db,
             homeserver_admin_api,
             ip.max_verifications_per_week,
             ip.max_verifications_per_year,
         );
-        Self {
-            db,
-            ip_verification,
-        }
+        Self { ip_verification }
     }
 }

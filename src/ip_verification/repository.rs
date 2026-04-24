@@ -9,7 +9,7 @@ pub struct IpVerificationRepository;
 
 impl IpVerificationRepository {
     /// Count verifications for an IP hash since a given timestamp.
-    pub async fn count_verifications_since(
+    async fn count_verifications_since(
         executor: &mut UnifiedExecutor<'_>,
         ip_address_hash: &str,
         since: NaiveDateTime,
