@@ -11,7 +11,7 @@ This service depends on
 
 # Configuration
 
-Homegate is configured via a TOML file. Copy `config.toml.example` to `config.toml` and fill in the required values. Set the `HG_CONFIG_PATH` environment variable to use a different path (defaults to `config.toml` in the working directory).
+Homegate is configured via a TOML file. Copy `config.toml.example` to `~/.homegate/config.toml` and fill in the required values. Set the `HG_CONFIG_PATH` environment variable to use a different path (defaults to `~/.homegate/config.toml`).
 
 The `database_url` field must point to an existing PostgreSQL database, e.g.:
 

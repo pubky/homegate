@@ -1,7 +1,7 @@
 # Homegate Configuration
 #
-# Copy this file to config.toml and fill in the required values.
-# Set HG_CONFIG_PATH env var to use a different path (default: config.toml).
+# Copy this file to ~/.homegate/config.toml and fill in the required values.
+# Set HG_CONFIG_PATH env var to use a different path (default: ~/.homegate/config.toml).
 
 database_url = "postgres://postgres:postgres@localhost:5432/pubky_homegate"
 http_listen_socket = "0.0.0.0:8080"
