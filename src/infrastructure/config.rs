@@ -25,7 +25,6 @@ pub struct AppConfig {
 pub struct HomeserverConfig {
     pub admin_api_url: Url,
     pub admin_password: String,
-    pub pubky: String,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -145,17 +144,6 @@ impl AppConfig {
 }
 
 #[cfg(test)]
-impl HomeserverConfig {
-    pub fn for_test(admin_api_url: Url) -> Self {
-        Self {
-            admin_api_url,
-            admin_password: "test-pass".to_string(),
-            pubky: "test-homeserver-pubky".to_string(),
-        }
-    }
-}
-
-#[cfg(test)]
 impl SmsVerificationConfig {
     pub fn for_test(prelude_api_url: Url) -> Self {
         Self {
@@ -182,7 +170,6 @@ http_listen_socket = "127.0.0.1:5000"
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
-pubky = "test-homeserver-pubky"
 
 [sms_verification]
 prelude_api_key = "test-prelude-api-key"
@@ -212,7 +199,6 @@ database_url = "postgres://localhost:5432/pubky_homegate"
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
-pubky = "test-homeserver-pubky"
 
 [ln_verification]
 phoenixd_api_password = "test-password"
@@ -232,7 +218,6 @@ database_url = "postgres://localhost:5432/pubky_homegate"
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
-pubky = "test-homeserver-pubky"
 
 [sms_verification]
 "#;
@@ -249,7 +234,6 @@ pubky = "test-homeserver-pubky"
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
-pubky = "test-homeserver-pubky"
 "#;
         let err = toml::from_str::<AppConfig>(toml).unwrap_err();
         assert!(
@@ -278,7 +262,6 @@ database_url = "postgres://localhost:5432/pubky_homegate"
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
-pubky = "test-homeserver-pubky"
 "#;
         let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
         assert!(config.sms_verification.is_none());
@@ -294,7 +277,6 @@ database_url = "postgres://localhost:5432/pubky_homegate"
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
-pubky = "test-homeserver-pubky"
 
 [ip_verification]
 
@@ -321,7 +303,6 @@ database_url = "postgres://localhost:5432/pubky_homegate"
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
-pubky = "test-homeserver-pubky"
 
 [ip_verification]
 limit_whitelist = ["192.168.1.1", "10.0.0.1", "2001:db8::1"]
@@ -349,7 +330,6 @@ database_url = "postgres://localhost:5432/pubky_homegate"
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
-pubky = "test-homeserver-pubky"
 
 [ip_verification]
 "#;

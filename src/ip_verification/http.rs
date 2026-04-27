@@ -7,20 +7,21 @@ use axum::{
 };
 
 use crate::infrastructure::{
-    config::{HomeserverConfig, IpVerificationConfig},
+    config::IpVerificationConfig,
     http::{HttpServerError, RequestOrigin},
 };
+use crate::shared::HomeserverAdminAPI;
 
 use super::app_state::AppState;
 use super::error::IpVerificationError;
 use super::types::IpVerificationResponse;
 
 pub async fn router(
-    homeserver: &HomeserverConfig,
+    homeserver_api: &HomeserverAdminAPI,
     ip: &IpVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(homeserver, ip, db);
+    let state = AppState::new(homeserver_api, ip, db);
     Ok(Router::new()
         .route("/", post(root_handler))
         .with_state(state))
@@ -58,7 +59,8 @@ impl IntoResponse for IpVerificationError {
 mod tests {
     use super::*;
     use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
-    use crate::infrastructure::config::{HomeserverConfig, IpVerificationConfig};
+    use crate::infrastructure::config::IpVerificationConfig;
+    use crate::shared::HomeserverAdminAPI;
     use axum_test::TestServer;
     use sqlx::PgPool;
     use std::net::SocketAddr;
@@ -85,8 +87,11 @@ mod tests {
     ) -> TestServer {
         use crate::infrastructure::sql::SqlDb;
 
-        let homeserver =
-            HomeserverConfig::for_test(servers.homeserver_server.uri().parse().unwrap());
+        let homeserver_api = HomeserverAdminAPI::new(
+            &servers.homeserver_server.uri().parse().unwrap(),
+            "test-pass",
+            "test-homeserver-pubky",
+        );
         let ip_config = IpVerificationConfig {
             max_verifications_per_week: max_per_week,
             max_verifications_per_year: max_per_year,
@@ -96,7 +101,7 @@ mod tests {
 
         let db = SqlDb::test(pool).await;
 
-        let ip_verification_router = router(&homeserver, &ip_config, db)
+        let ip_verification_router = router(&homeserver_api, &ip_config, db)
             .await
             .expect("Failed to create router");
 

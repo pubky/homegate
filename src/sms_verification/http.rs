@@ -12,18 +12,19 @@ use crate::sms_verification::{
 };
 use crate::{
     infrastructure::{
-        config::{HomeserverConfig, SmsVerificationConfig},
+        config::SmsVerificationConfig,
         http::{HttpServerError, RequestOrigin, UserAgent},
     },
+    shared::HomeserverAdminAPI,
     sms_verification::app_state::AppState,
 };
 
 pub async fn router(
-    homeserver: &HomeserverConfig,
+    homeserver_api: &HomeserverAdminAPI,
     sms: &SmsVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(homeserver, sms, db);
+    let state = AppState::new(homeserver_api, sms, db);
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
@@ -106,7 +107,8 @@ mod tests {
         WiremockServers, setup_homeserver_signup_token, setup_prelude_check_code,
         setup_prelude_create_verification,
     };
-    use crate::infrastructure::config::{HomeserverConfig, SmsVerificationConfig};
+    use crate::infrastructure::config::SmsVerificationConfig;
+    use crate::shared::HomeserverAdminAPI;
     use crate::sms_verification::PhoneNumber;
     use axum_test::TestServer;
     use sqlx::PgPool;
@@ -119,15 +121,16 @@ mod tests {
     ) -> (TestServer, PgPool) {
         use crate::infrastructure::sql::SqlDb;
 
-        let homeserver =
-            HomeserverConfig::for_test(servers.homeserver_server.uri().parse().unwrap());
+        let homeserver_api = HomeserverAdminAPI::new(
+            &servers.homeserver_server.uri().parse().unwrap(),
+            "test-pass",
+            "test-homeserver-pubky",
+        );
         let sms = SmsVerificationConfig::for_test(servers.prelude_server.uri().parse().unwrap());
 
-        // Create SqlDb from the pool with migrations
         let db = SqlDb::test(pool.clone()).await;
 
-        // We need to create AppState with the wiremock config and test pool
-        let sms_verification_router = router(&homeserver, &sms, db)
+        let sms_verification_router = router(&homeserver_api, &sms, db)
             .await
             .expect("Failed to create router");
 

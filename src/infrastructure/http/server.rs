@@ -28,28 +28,32 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    pub async fn create_router(config: &AppConfig, db: &SqlDb) -> Result<Router, HttpServerError> {
+    pub async fn create_router(
+        config: &AppConfig,
+        db: &SqlDb,
+        homeserver_api: &HomeserverAdminAPI,
+    ) -> Result<Router, HttpServerError> {
         let mut app = Router::new().route("/", get(root));
 
         if let Some(sms) = &config.sms_verification {
             tracing::info!("SMS verification enabled");
             app = app.nest(
                 "/sms_verification",
-                router(&config.homeserver, sms, db.clone()).await?,
+                router(homeserver_api, sms, db.clone()).await?,
             );
         }
         if let Some(ln) = &config.ln_verification {
             tracing::info!("Lightning verification enabled");
             app = app.nest(
                 "/ln_verification",
-                ln_verification::router(&config.homeserver, ln, db.clone()).await?,
+                ln_verification::router(homeserver_api, ln, db.clone()).await?,
             );
         }
         if let Some(ip) = &config.ip_verification {
             tracing::info!("IP verification enabled");
             app = app.nest(
                 "/ip_verification",
-                ip_verification::router(&config.homeserver, ip, db.clone()).await?,
+                ip_verification::router(homeserver_api, ip, db.clone()).await?,
             );
         }
 
@@ -74,13 +78,13 @@ impl HttpServer {
     }
 
     pub async fn start(config: AppConfig) -> Result<Self, HttpServerError> {
-        Self::err_on_homeserver_admin_api_failure(&config).await;
+        let homeserver_api = Self::connect_to_homeserver(&config).await;
 
         let db = SqlDb::connect(&config.database_url)
             .await
             .map_err(DbError::from)?;
 
-        let router = Self::create_router(&config, &db).await?;
+        let router = Self::create_router(&config, &db, &homeserver_api).await?;
 
         let (http_handle, http_socket) =
             Self::start_http_server(config.http_listen_socket, router).await?;
@@ -120,20 +124,21 @@ impl HttpServer {
             .graceful_shutdown(Some(Duration::from_secs(5)));
     }
 
-    // Verify homeserver is available at startup and credentials are correct, exit process if not.
-    async fn err_on_homeserver_admin_api_failure(config: &AppConfig) {
-        let homeserver_admin_api = HomeserverAdminAPI::new(
+    /// Connect to the homeserver admin API, verify credentials, and fetch
+    /// the homeserver's public key from /info. Exits the process on failure.
+    async fn connect_to_homeserver(config: &AppConfig) -> HomeserverAdminAPI {
+        let mut api = HomeserverAdminAPI::from_config(
             &config.homeserver.admin_api_url,
             &config.homeserver.admin_password,
-            &config.homeserver.pubky,
         );
-        if let Err(e) = homeserver_admin_api.verify_password().await {
+        if let Err(e) = api.fetch_info().await {
             tracing::error!(
                 "Homeserver connection failed: {:?}. Stopping server because credentials are incorrect or homeserver is unavailable.",
                 e
             );
             std::process::exit(1);
         }
+        api
     }
 }
 

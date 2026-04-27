@@ -10,10 +10,7 @@ use axum::{
 };
 
 use crate::{
-    infrastructure::{
-        config::{HomeserverConfig, LnVerificationConfig},
-        http::HttpServerError,
-    },
+    infrastructure::{config::LnVerificationConfig, http::HttpServerError},
     ln_verification::{
         VerificationId, app_state::AppState, error::LnVerificationError, phoenixd_api::PhoenixdAPI,
         service::LnVerificationService, types::VerificationResponse,
@@ -28,16 +25,11 @@ use crate::{
 const DEFAULT_TIMEOUT_SECS: u64 = 25;
 
 pub async fn router(
-    homeserver: &HomeserverConfig,
+    homeserver_api: &HomeserverAdminAPI,
     ln: &LnVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
     let phoenixd_api = PhoenixdAPI::new(&ln.phoenixd_api_url, &ln.phoenixd_api_password);
-    let homeserver_api = HomeserverAdminAPI::new(
-        &homeserver.admin_api_url,
-        &homeserver.admin_password,
-        &homeserver.pubky,
-    );
 
     let ln_service = LnVerificationService::new(
         db,
@@ -57,7 +49,7 @@ pub async fn router(
         }
     });
 
-    let state = AppState::new(ln_service, homeserver_api);
+    let state = AppState::new(ln_service, homeserver_api.clone());
     Ok(Router::new()
         .route("/", post(create_verification_handler))
         .route("/{id}", get(get_verification_handler))
@@ -245,7 +237,7 @@ mod tests {
         let ln_service = std::sync::Arc::new(ln_service);
 
         // Note: We intentionally skip spawning the background sync task for this test
-        let state = AppState::new(ln_service, homeserver_api);
+        let state = AppState::new(ln_service, homeserver_api.clone());
         Router::new()
             .route("/info", get(get_info_handler))
             .with_state(state)
