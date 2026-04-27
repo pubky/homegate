@@ -71,7 +71,11 @@ pub struct SignupQuotaConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_read: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_read_burst: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_write: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_write_burst: Option<u32>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -361,7 +365,9 @@ pubky = "test-homeserver-pubky"
         let quota = SignupQuotaConfig {
             storage_quota_mb: Some(500),
             rate_read: Some("10mb/s".to_string()),
+            rate_read_burst: None,
             rate_write: None,
+            rate_write_burst: None,
         };
         let json = serde_json::to_value(&quota).unwrap();
         assert_eq!(json["storage_quota_mb"], 500);

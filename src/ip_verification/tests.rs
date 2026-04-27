@@ -322,7 +322,9 @@ async fn test_signup_quota_uses_post_endpoint(pool: PgPool) {
     let quota = SignupQuotaConfig {
         storage_quota_mb: Some(64),
         rate_read: Some("1mb/s".to_string()),
+        rate_read_burst: None,
         rate_write: Some("1mb/s".to_string()),
+        rate_write_burst: None,
     };
     let service = create_service_with_quota(&servers, db, 2, 10, Some(quota));
     let ip: IpAddr = "10.0.0.1".parse().unwrap();
