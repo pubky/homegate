@@ -71,6 +71,10 @@ impl IpVerificationService {
         }
         drop(executor);
 
+        // The homeserver HTTP call happens while holding the advisory lock for
+        // this IP.
+        // Keeping the call inside the transaction means we never record a
+        // verification without a valid signup code.
         let signup_code = self.generate_signup_token().await?;
 
         let mut executor: UnifiedExecutor<'_> = (&mut tx).into();

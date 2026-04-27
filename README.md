@@ -60,7 +60,7 @@ max_verifications_per_year = 4   # default
 
 ## Running Tests
 
-Tests require a PostgreSQL connection string for database integration tests:
+Tests use the `DATABASE_URL` env var (a `sqlx::test` convention) to provision test database pools. This is separate from the `database_url` field in `config.toml` which is only used at runtime, tests never load `config.toml`.
 
 ```bash
 # Run all tests

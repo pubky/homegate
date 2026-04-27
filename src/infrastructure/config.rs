@@ -8,7 +8,6 @@ use url::Url;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct AppConfig {
-    #[serde(default)]
     pub database_url: ConnectionString,
     #[serde(default = "default_http_listen_socket")]
     pub http_listen_socket: SocketAddr,
@@ -204,6 +203,8 @@ phoenixd_api_password = "test-password"
     #[test]
     fn test_ln_verification_requires_phoenixd_url() {
         let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
@@ -222,6 +223,8 @@ phoenixd_api_password = "test-password"
     #[test]
     fn test_sms_verification_requires_prelude_api_key() {
         let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
@@ -233,6 +236,21 @@ pubky = "test-homeserver-pubky"
         assert!(
             err.to_string().contains("prelude_api_key"),
             "Should require prelude_api_key, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_database_url_is_required() {
+        let toml = r#"
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+pubky = "test-homeserver-pubky"
+"#;
+        let err = toml::from_str::<AppConfig>(toml).unwrap_err();
+        assert!(
+            err.to_string().contains("database_url"),
+            "Should require database_url, got: {err}"
         );
     }
 
@@ -251,6 +269,8 @@ database_url = "postgres://localhost:5432/pubky_homegate"
     #[test]
     fn test_load_config_no_optional_routes() {
         let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
@@ -265,6 +285,8 @@ pubky = "test-homeserver-pubky"
     #[test]
     fn test_ip_verification_with_signup_quota() {
         let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
@@ -290,6 +312,8 @@ rate_write = "5mb/s"
     #[test]
     fn test_ip_verification_with_limit_whitelist() {
         let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
@@ -316,6 +340,8 @@ limit_whitelist = ["192.168.1.1", "10.0.0.1", "2001:db8::1"]
     #[test]
     fn test_ip_verification_without_signup_quota() {
         let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "test-admin-password"
