@@ -15,10 +15,23 @@ pub struct AppConfig {
     pub allow_cors: bool,
     #[serde(default)]
     pub accept_proxy_ip_headers: bool,
+    pub logging: Option<LoggingConfig>,
     pub homeserver: HomeserverConfig,
     pub sms_verification: Option<SmsVerificationConfig>,
     pub ln_verification: Option<LnVerificationConfig>,
     pub ip_verification: Option<IpVerificationConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct LoggingConfig {
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    #[serde(default)]
+    pub module_levels: Vec<String>,
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -256,6 +269,56 @@ database_url = "postgres://localhost:5432/pubky_homegate"
             err.to_string().contains("homeserver"),
             "Should require homeserver section, got: {err}"
         );
+    }
+
+    #[test]
+    fn test_logging_config() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[logging]
+level = "debug"
+module_levels = ["hyper=warn", "tower_http=info"]
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
+        let logging = config.logging.expect("logging should be present");
+        assert_eq!(logging.level, "debug");
+        assert_eq!(logging.module_levels.len(), 2);
+        assert_eq!(logging.module_levels[0], "hyper=warn");
+    }
+
+    #[test]
+    fn test_logging_config_defaults() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[logging]
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
+        let logging = config.logging.expect("logging should be present");
+        assert_eq!(logging.level, "info");
+        assert!(logging.module_levels.is_empty());
+    }
+
+    #[test]
+    fn test_logging_config_optional() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
+        assert!(config.logging.is_none());
     }
 
     #[test]

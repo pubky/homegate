@@ -12,9 +12,9 @@ use infrastructure::{AppConfig, http::HttpServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
-
     let config = AppConfig::load().context("Failed to load config")?;
+
+    infrastructure::tracing::init_tracing(config.logging.as_ref());
 
     let http_server = HttpServer::start(config).await?;
 
