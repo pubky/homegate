@@ -95,3 +95,12 @@ pub fn setup_homeserver_signup_token(token: &str) -> Mock {
         .and(header("X-Admin-Password", "test-pass"))
         .respond_with(ResponseTemplate::new(200).set_body_string(token))
 }
+
+/// Setup mock for Homeserver Admin API generate_signup_token with quota (POST /generate_signup_token)
+pub fn setup_homeserver_signup_token_with_quota(token: &str) -> Mock {
+    Mock::given(method("POST"))
+        .and(path("/generate_signup_token"))
+        .and(header("X-Admin-Password", "test-pass"))
+        .and(header("Content-Type", "application/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(token))
+}

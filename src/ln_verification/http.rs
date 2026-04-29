@@ -10,8 +10,7 @@ use axum::{
 };
 
 use crate::{
-    EnvConfig,
-    infrastructure::http::HttpServerError,
+    infrastructure::{config::LnVerificationConfig, http::HttpServerError},
     ln_verification::{
         VerificationId, app_state::AppState, error::LnVerificationError, phoenixd_api::PhoenixdAPI,
         service::LnVerificationService, types::VerificationResponse,
@@ -26,23 +25,19 @@ use crate::{
 const DEFAULT_TIMEOUT_SECS: u64 = 25;
 
 pub async fn router(
-    config: &EnvConfig,
-    db: &crate::infrastructure::sql::SqlDb,
+    homeserver_api: &HomeserverAdminAPI,
+    ln: &LnVerificationConfig,
+    db: crate::infrastructure::sql::SqlDb,
 ) -> Result<Router, HttpServerError> {
-    let phoenixd_api = PhoenixdAPI::new(&config.phoenixd_api_url, &config.phoenixd_api_password);
-    let homeserver_api = HomeserverAdminAPI::new(
-        &config.homeserver_admin_api_url,
-        &config.homeserver_admin_password,
-        &config.homeserver_pubky,
-    );
+    let phoenixd_api = PhoenixdAPI::new(&ln.phoenixd_api_url, &ln.phoenixd_api_password);
 
     let ln_service = LnVerificationService::new(
-        db.clone(),
+        db,
         phoenixd_api,
         homeserver_api.clone(),
-        config.lightning_invoice_price_sat,
-        config.lightning_invoice_description.clone(),
-        config.lightning_invoice_expiry_seconds,
+        ln.invoice_price_sat,
+        ln.invoice_description.clone(),
+        ln.invoice_expiry_seconds,
     );
     let ln_service = std::sync::Arc::new(ln_service);
 
@@ -54,7 +49,7 @@ pub async fn router(
         }
     });
 
-    let state = AppState::new(ln_service, homeserver_api);
+    let state = AppState::new(ln_service, homeserver_api.clone());
     Ok(Router::new()
         .route("/", post(create_verification_handler))
         .route("/{id}", get(get_verification_handler))
@@ -242,7 +237,7 @@ mod tests {
         let ln_service = std::sync::Arc::new(ln_service);
 
         // Note: We intentionally skip spawning the background sync task for this test
-        let state = AppState::new(ln_service, homeserver_api);
+        let state = AppState::new(ln_service, homeserver_api.clone());
         Router::new()
             .route("/info", get(get_info_handler))
             .with_state(state)

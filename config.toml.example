@@ -1,0 +1,45 @@
+# Homegate Configuration
+#
+# Copy this file to ~/.homegate/config.toml and fill in the required values.
+# Set HG_CONFIG_PATH env var to use a different path (default: ~/.homegate/config.toml).
+
+database_url = "postgres://postgres:postgres@localhost:5432/pubky_homegate"
+http_listen_socket = "0.0.0.0:8080"
+# allow_cors = false
+# accept_proxy_ip_headers = false
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "admin"
+
+# Uncomment sections below to enable verification routes.
+# Omitting a section disables that route entirely.
+
+# [sms_verification]
+# prelude_api_key = "your-prelude-api-key"
+# prelude_api_url = "https://api.prelude.dev"     # optional, this is the default
+# max_verifications_per_week = 2                   # optional
+# max_verifications_per_year = 4                   # optional
+# max_failed_validation_attempts = 5               # optional
+# limit_whitelist = []                             # optional
+
+# [ln_verification]
+# phoenixd_api_url = "http://localhost:9740"
+# phoenixd_api_password = "your-phoenixd-password"
+# invoice_price_sat = 1000                         # optional
+# invoice_expiry_seconds = 600                     # optional
+# invoice_description = "Pubky Homegate Verification"  # optional
+
+# [ip_verification]
+# max_verifications_per_week = 2                   # optional
+# max_verifications_per_year = 4                   # optional
+# limit_whitelist = []                             # optional
+# # Quota limits applied to signup codes (optional).
+# # When set, signup tokens are created with these limits via the homeserver POST endpoint.
+# # When omitted, homeserver system defaults apply.
+# [ip_verification.signup_quota]
+# storage_quota_mb = 64
+# rate_read = "1mb/s"
+# rate_read_burst = 10
+# rate_write = "1mb/s"
+# rate_write_burst = 10

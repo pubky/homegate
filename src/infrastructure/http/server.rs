@@ -4,12 +4,12 @@ use std::{
 };
 
 use crate::{
-    EnvConfig,
     infrastructure::{
+        config::AppConfig,
         http::HttpServerError,
         sql::{DbError, SqlDb},
     },
-    ln_verification,
+    ip_verification, ln_verification,
     shared::HomeserverAdminAPI,
     sms_verification::http::router,
 };
@@ -28,45 +28,63 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    pub fn create_router(
-        sms_verification_router: Router,
-        ln_verification_router: Router,
-        allow_cors: bool,
-    ) -> Router {
-        let router = Router::new()
-            .route("/", get(root))
-            .nest("/ln_verification", ln_verification_router)
-            .nest("/sms_verification", sms_verification_router);
+    pub async fn create_router(
+        config: &AppConfig,
+        db: &SqlDb,
+        homeserver_api: &HomeserverAdminAPI,
+    ) -> Result<Router, HttpServerError> {
+        let mut app = Router::new().route("/", get(root));
 
-        let router = if allow_cors {
+        if let Some(sms) = &config.sms_verification {
+            tracing::info!("SMS verification enabled");
+            app = app.nest(
+                "/sms_verification",
+                router(homeserver_api, sms, db.clone()).await?,
+            );
+        }
+        if let Some(ln) = &config.ln_verification {
+            tracing::info!("Lightning verification enabled");
+            app = app.nest(
+                "/ln_verification",
+                ln_verification::router(homeserver_api, ln, db.clone()).await?,
+            );
+        }
+        if let Some(ip) = &config.ip_verification {
+            tracing::info!("IP verification enabled");
+            app = app.nest(
+                "/ip_verification",
+                ip_verification::router(homeserver_api, ip, db.clone()).await?,
+            );
+        }
+
+        if config.accept_proxy_ip_headers {
+            tracing::info!("Accepting proxy IP headers (X-Forwarded-For, X-Real-IP)");
+            app = app.layer(axum::Extension(super::AcceptProxyIpHeaders));
+        }
+
+        let app = if config.allow_cors {
             tracing::info!("Enabling CORS for any origin, method, and headers");
-            router.layer(
+            app.layer(
                 CorsLayer::new()
                     .allow_origin(Any)
                     .allow_methods(Any)
                     .allow_headers(Any),
             )
         } else {
-            router
+            app
         };
 
-        router.layer(TraceLayer::new_for_http())
+        Ok(app.layer(TraceLayer::new_for_http()))
     }
 
-    pub async fn start(config: EnvConfig) -> Result<Self, HttpServerError> {
-        Self::err_on_homeserver_admin_api_failure(&config).await;
+    pub async fn start(config: AppConfig) -> Result<Self, HttpServerError> {
+        let homeserver_api = Self::connect_to_homeserver(&config).await;
 
         let db = SqlDb::connect(&config.database_url)
             .await
             .map_err(DbError::from)?;
 
-        let sms_verification_router = router(&config, &db).await?;
-        let ln_verification_router = ln_verification::router(&config, &db).await?;
-        let router = Self::create_router(
-            sms_verification_router,
-            ln_verification_router,
-            config.allow_cors,
-        );
+        let router = Self::create_router(&config, &db, &homeserver_api).await?;
 
         let (http_handle, http_socket) =
             Self::start_http_server(config.http_listen_socket, router).await?;
@@ -106,20 +124,21 @@ impl HttpServer {
             .graceful_shutdown(Some(Duration::from_secs(5)));
     }
 
-    // Verify homeserver is available at startup and credentials are correct, exit process if not.
-    async fn err_on_homeserver_admin_api_failure(config: &EnvConfig) {
-        let homeserver_admin_api = HomeserverAdminAPI::new(
-            &config.homeserver_admin_api_url,
-            &config.homeserver_admin_password,
-            &config.homeserver_pubky,
+    /// Connect to the homeserver admin API, verify credentials, and fetch
+    /// the homeserver's public key from /info. Exits the process on failure.
+    async fn connect_to_homeserver(config: &AppConfig) -> HomeserverAdminAPI {
+        let mut api = HomeserverAdminAPI::from_config(
+            &config.homeserver.admin_api_url,
+            &config.homeserver.admin_password,
         );
-        if let Err(e) = homeserver_admin_api.verify_password().await {
+        if let Err(e) = api.fetch_info().await {
             tracing::error!(
                 "Homeserver connection failed: {:?}. Stopping server because credentials are incorrect or homeserver is unavailable.",
                 e
             );
             std::process::exit(1);
         }
+        api
     }
 }
 

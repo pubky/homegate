@@ -127,7 +127,8 @@ struct Target {
 
 #[derive(Serialize)]
 struct Signals {
-    ip: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     user_agent: Option<String>,
 }
@@ -274,7 +275,7 @@ impl PreludeAPI {
     pub async fn create_verification(
         &self,
         phone_number: &PhoneNumber,
-        ip_address: IpAddr,
+        ip_address: Option<IpAddr>,
         user_agent: Option<String>,
         dispatch_id: Option<String>,
     ) -> Result<PreludeCreateVerificationResponse, PreludeError> {
@@ -284,7 +285,7 @@ impl PreludeAPI {
                 value: phone_number.to_string(),
             },
             signals: Signals {
-                ip: ip_address.to_string(),
+                ip: ip_address.map(|ip| ip.to_string()),
                 user_agent,
             },
             dispatch_id,

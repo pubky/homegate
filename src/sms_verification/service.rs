@@ -11,6 +11,9 @@ use crate::sms_verification::types::{
 };
 use std::net::IpAddr;
 
+const WEEKLY_WINDOW_DAYS: i64 = 7;
+const ANNUAL_WINDOW_DAYS: i64 = 365;
+
 #[derive(Clone, Debug)]
 pub struct SmsVerificationService {
     prelude_api: PreludeAPI,
@@ -64,7 +67,7 @@ impl SmsVerificationService {
         let weekly_count = SmsVerificationRepository::count_verified_sessions_in_last_days(
             executor,
             phone_number_hash,
-            7,
+            WEEKLY_WINDOW_DAYS,
         )
         .await?;
         if weekly_count >= self.max_verifications_per_week as i64 {
@@ -80,7 +83,7 @@ impl SmsVerificationService {
         let annual_count = SmsVerificationRepository::count_verified_sessions_in_last_days(
             executor,
             phone_number_hash,
-            365,
+            ANNUAL_WINDOW_DAYS,
         )
         .await?;
         if annual_count >= self.max_verifications_per_year as i64 {
@@ -95,17 +98,19 @@ impl SmsVerificationService {
         Ok(())
     }
 
-    /// Initiates a phone number verification process
+    /// Initiates a phone number verification process.
+    ///
+    /// `ip_address` and `user_agent` are optional fraud-scoring signals forwarded
+    /// to Prelude. They are not used for rate limiting (phone number is used for
+    /// that).
     pub async fn create_verification(
         &mut self,
         db: &SqlDb,
         request: CreateVerificationRequest,
-        ip_address: IpAddr,
+        ip_address: Option<IpAddr>,
         user_agent: Option<String>,
     ) -> Result<(), SmsVerificationError> {
-        let phone_number_hash = self
-            .hasher_argon2id
-            .hash_phone_number(request.phone_number.as_str());
+        let phone_number_hash = self.hasher_argon2id.hash(request.phone_number.as_str());
 
         let mut executor: UnifiedExecutor<'_> = db.pool().into();
 
@@ -159,9 +164,7 @@ impl SmsVerificationService {
         db: &SqlDb,
         request: ValidateCodeRequest,
     ) -> Result<ValidateCodeResponse, SmsVerificationError> {
-        let phone_number_hash = self
-            .hasher_argon2id
-            .hash_phone_number(request.phone_number.as_str());
+        let phone_number_hash = self.hasher_argon2id.hash(request.phone_number.as_str());
 
         let mut executor: UnifiedExecutor<'_> = db.pool().into();
         SmsVerificationRepository::err_if_no_active_verification(&mut executor, &phone_number_hash)
