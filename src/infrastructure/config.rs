@@ -4,6 +4,8 @@ use std::net::IpAddr;
 
 use crate::infrastructure::sql::ConnectionString;
 use crate::sms_verification::PhoneNumber;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::filter::Directive;
 use url::Url;
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -26,31 +28,42 @@ pub struct AppConfig {
 pub struct LoggingConfig {
     #[serde(
         default = "default_log_level",
-        deserialize_with = "deserialize_log_level"
+        deserialize_with = "deserialize_level_filter"
     )]
-    pub level: String,
-    #[serde(default)]
-    pub module_levels: Vec<String>,
+    pub level: LevelFilter,
+    #[serde(default, deserialize_with = "deserialize_directives")]
+    pub module_levels: Vec<Directive>,
 }
 
-fn default_log_level() -> String {
-    "info".to_string()
+fn default_log_level() -> LevelFilter {
+    LevelFilter::INFO
 }
 
-fn deserialize_log_level<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn deserialize_level_filter<'de, D>(deserializer: D) -> Result<LevelFilter, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let s: String = serde::Deserialize::deserialize(deserializer)?;
-    const VALID_LEVELS: &[&str] = &["trace", "debug", "info", "warn", "error", "off"];
-    if !VALID_LEVELS.contains(&s.to_lowercase().as_str()) {
-        return Err(serde::de::Error::custom(format!(
-            "invalid log level '{}', expected one of: {}",
-            s,
-            VALID_LEVELS.join(", ")
-        )));
-    }
-    Ok(s)
+    s.parse().map_err(|_| {
+        serde::de::Error::custom(format!(
+            "invalid log level '{s}', expected one of: trace, debug, info, warn, error, off"
+        ))
+    })
+}
+
+fn deserialize_directives<'de, D>(deserializer: D) -> Result<Vec<Directive>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let strings: Vec<String> = serde::Deserialize::deserialize(deserializer)?;
+    strings
+        .into_iter()
+        .map(|s| {
+            s.parse().map_err(|e| {
+                serde::de::Error::custom(format!("invalid module_levels directive '{s}': {e}"))
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -162,10 +175,30 @@ fn default_max_ip_verifications_per_year() -> u32 {
     4
 }
 
+const CONFIG_EXAMPLE: &str = include_str!("../../config.toml.example");
+
 impl AppConfig {
     /// Load configuration from a TOML file within the given data directory.
+    ///
+    /// If no config file exists, copies `config.toml.example` into the data
+    /// directory and returns an error asking the user to edit it.
     pub fn load(data_dir: &super::DataDir) -> anyhow::Result<AppConfig> {
         let path = data_dir.config_file_path();
+
+        if !path.exists() {
+            std::fs::write(&path, CONFIG_EXAMPLE).map_err(|e| {
+                anyhow::anyhow!(
+                    "No config file found and failed to create template at '{}': {}",
+                    path.display(),
+                    e
+                )
+            })?;
+            anyhow::bail!(
+                "No config file found. A template has been created at '{}' — please edit it and restart.",
+                path.display()
+            );
+        }
+
         let contents = std::fs::read_to_string(&path).map_err(|e| {
             anyhow::anyhow!("Failed to read config file '{}': {}", path.display(), e)
         })?;
@@ -301,9 +334,9 @@ module_levels = ["hyper=warn", "tower_http=info"]
 "#;
         let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
         let logging = config.logging.expect("logging should be present");
-        assert_eq!(logging.level, "debug");
+        assert_eq!(logging.level, LevelFilter::DEBUG);
         assert_eq!(logging.module_levels.len(), 2);
-        assert_eq!(logging.module_levels[0], "hyper=warn");
+        assert_eq!(logging.module_levels[0].to_string(), "hyper=warn");
     }
 
     #[test]
@@ -319,7 +352,7 @@ admin_password = "test-admin-password"
 "#;
         let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
         let logging = config.logging.expect("logging should be present");
-        assert_eq!(logging.level, "info");
+        assert_eq!(logging.level, LevelFilter::INFO);
         assert!(logging.module_levels.is_empty());
     }
 

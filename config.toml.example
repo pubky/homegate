@@ -1,7 +1,4 @@
 # Homegate Configuration
-#
-# Copy this file to ~/.homegate/config.toml and fill in the required values.
-# Use --data-dir to specify a different data directory (default: ~/.homegate/).
 
 database_url = "postgres://postgres:postgres@localhost:5432/pubky_homegate"
 http_listen_socket = "0.0.0.0:8080"
@@ -11,6 +8,10 @@ http_listen_socket = "0.0.0.0:8080"
 [homeserver]
 admin_api_url = "http://localhost:6288"
 admin_password = "admin"
+
+# [logging]
+# level = "info"                                    # trace, debug, info, warn, error, off
+# module_levels = ["hyper=warn", "tower_http=info"]  # optional per-module overrides
 
 # Uncomment sections below to enable verification routes.
 # Omitting a section disables that route entirely.
