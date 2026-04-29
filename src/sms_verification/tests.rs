@@ -10,9 +10,9 @@ use crate::e2e::{
     setup_prelude_create_verification,
 };
 use crate::infrastructure::sql::{DbError, SqlDb};
+use crate::shared::HasherArgon2id;
 use crate::shared::HomeserverAdminAPI;
 use crate::sms_verification::error::SmsVerificationError;
-use crate::sms_verification::hasher_argon2id::HasherArgon2id;
 use crate::sms_verification::prelude_api::{PreludeAPI, PreludeBlockedReason};
 use crate::sms_verification::repository::{SmsVerificationRepository, VerificationStatus};
 use crate::sms_verification::service::SmsVerificationService;
@@ -24,9 +24,15 @@ use std::net::IpAddr;
 
 const TEST_VERIFICATION_CODE: &str = "123456";
 const TEST_WRONG_CODE: &str = "111111";
+
+static TEST_HASHER: std::sync::LazyLock<HasherArgon2id> = std::sync::LazyLock::new(|| {
+    let dir = tempfile::tempdir().unwrap();
+    HasherArgon2id::new(dir.path().join("pepper.txt"))
+});
+
 // TODO replace with faster hasher
 fn test_phone_hasher() -> HasherArgon2id {
-    HasherArgon2id::new()
+    TEST_HASHER.clone()
 }
 
 /// Helper to create service with wiremock for direct service layer testing
@@ -41,7 +47,15 @@ fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerification
         "test-pass",
         "test-homeserver-pubky",
     );
-    SmsVerificationService::new(prelude_api, homeserver_admin_api, 2, 4, 2, vec![])
+    SmsVerificationService::new(
+        prelude_api,
+        homeserver_admin_api,
+        2,
+        4,
+        2,
+        vec![],
+        test_phone_hasher(),
+    )
 }
 
 #[sqlx::test]
@@ -111,9 +125,10 @@ async fn test_service_full_verification_flow(pool: PgPool) {
 
     // Step 1.5: Check database after initiation
     let mut executor = db.pool().into();
-    let after_init = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .expect("Should find verification after init");
+    let after_init =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .expect("Should find verification after init");
 
     let hashed_phone = test_phone_hasher().hash(phone.as_str());
     assert_eq!(
@@ -826,9 +841,10 @@ async fn test_service_expired_or_not_found_marks_failed(pool: PgPool) {
 
     // Step 5: Verify database state
     let mut executor = db.pool().into();
-    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .expect("Should find verification record");
+    let record =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .expect("Should find verification record");
 
     assert_eq!(
         record.status,
@@ -947,9 +963,10 @@ async fn test_service_success_but_homeserver_fails_marks_failed(pool: PgPool) {
 
     // Verify session marked FAILED (not stuck in PENDING)
     let mut executor = db.pool().into();
-    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .unwrap();
+    let record =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .unwrap();
     assert_eq!(record.status, VerificationStatus::Failed);
     assert_eq!(
         record.failure_reason,
@@ -1003,9 +1020,10 @@ async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPo
 
     // Verify initial PENDING status
     let mut executor = db.pool().into();
-    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .unwrap();
+    let record =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .unwrap();
     assert_eq!(record.status, VerificationStatus::Pending);
     assert_eq!(record.prelude_id, "verification-id-123");
 
@@ -1052,9 +1070,10 @@ async fn test_service_expired_or_not_found_with_mismatched_prelude_id(pool: PgPo
     ));
 
     // Verify session marked FAILED despite prelude_id mismatch
-    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .unwrap();
+    let record =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .unwrap();
     assert_eq!(record.status, VerificationStatus::Failed);
     assert_eq!(
         record.failure_reason,
@@ -1082,9 +1101,10 @@ async fn test_repository_mark_failed_by_phone_number(pool: PgPool) {
         .await
         .unwrap();
 
-    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .unwrap();
+    let record =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .unwrap();
     assert_eq!(record.status, VerificationStatus::Pending);
 
     // Mark failed by phone number
@@ -1097,9 +1117,10 @@ async fn test_repository_mark_failed_by_phone_number(pool: PgPool) {
     .unwrap();
 
     // Verify updated state
-    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .unwrap();
+    let record =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .unwrap();
     assert_eq!(record.status, VerificationStatus::Failed);
     assert_eq!(record.failure_reason, Some("test_reason".to_string()));
     assert!(record.finalised_at.is_some());
@@ -1481,9 +1502,10 @@ async fn test_service_multiple_wrong_code_attempts(pool: PgPool) {
 
     // Verify status remains PENDING
     let mut executor = db.pool().into();
-    let record1 = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .expect("Should find verification");
+    let record1 =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .expect("Should find verification");
 
     assert_eq!(
         record1.status,
@@ -1757,9 +1779,13 @@ async fn test_repository_state_mutation_protection(pool: PgPool) {
 
     // Get the prelude_id and original signup_code
     let mut executor = db.pool().into();
-    let record1 = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone1)
-        .await
-        .expect("Should find verification");
+    let record1 = SmsVerificationRepository::get_by_phone_number(
+        &mut executor,
+        &phone1,
+        &test_phone_hasher(),
+    )
+    .await
+    .expect("Should find verification");
     let prelude_id1 = record1.prelude_id;
     let original_signup_code = record1.signup_code.expect("signup_code should be set");
 
@@ -2128,9 +2154,10 @@ async fn test_service_max_validation_attempts_exceeded(pool: PgPool) {
 
     // Verify attempts counter is at 2
     let mut executor = db.pool().into();
-    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .expect("Should find verification");
+    let record =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .expect("Should find verification");
     assert_eq!(record.attempts, 2, "Should have 2 attempts recorded");
     assert_eq!(
         record.status,
@@ -2160,9 +2187,10 @@ async fn test_service_max_validation_attempts_exceeded(pool: PgPool) {
     }
 
     // Verify session is now FAILED
-    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .expect("Should find verification");
+    let record =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .expect("Should find verification");
     assert_eq!(
         record.status,
         VerificationStatus::Failed,
@@ -2285,9 +2313,10 @@ async fn test_service_correct_code_on_last_attempt_succeeds(pool: PgPool) {
 
     // Verify session is VERIFIED
     let mut executor = db.pool().into();
-    let record = SmsVerificationRepository::get_by_phone_number(&mut executor, &phone)
-        .await
-        .expect("Should find verification");
+    let record =
+        SmsVerificationRepository::get_by_phone_number(&mut executor, &phone, &test_phone_hasher())
+            .await
+            .expect("Should find verification");
     assert_eq!(
         record.status,
         VerificationStatus::Verified,

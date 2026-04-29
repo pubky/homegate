@@ -17,23 +17,8 @@ pub struct HasherArgon2id {
     argon2: Argon2<'static>,
 }
 
-impl Default for HasherArgon2id {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl HasherArgon2id {
-    pub fn new() -> Self {
-        Self::new_with_pepper_path(None)
-    }
-
-    #[cfg(test)]
-    fn with_pepper_path(pepper_path: PathBuf) -> Self {
-        Self::new_with_pepper_path(Some(pepper_path))
-    }
-
-    fn new_with_pepper_path(pepper_path: Option<PathBuf>) -> Self {
+    pub fn new(pepper_path: PathBuf) -> Self {
         // OWASP recommended parameters for Argon2id
         // Memory: 19456 KiB (19 MiB)
         // Iterations: 2
@@ -48,7 +33,7 @@ impl HasherArgon2id {
             .expect("Failed to build Argon2 params");
 
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-        let pepper = Pepper::with_path(pepper_path);
+        let pepper = Pepper::read_or_generate(pepper_path);
         Self { pepper, argon2 }
     }
 
@@ -79,24 +64,12 @@ impl HasherArgon2id {
 struct Pepper(String);
 
 impl Pepper {
-    pub fn with_path(custom_path: Option<PathBuf>) -> Self {
-        Self(Self::load_or_create(custom_path))
-    }
-
-    fn get_file_path() -> PathBuf {
-        let home = std::env::var("HOME")
-            .expect("Should be able to determine home directory - $HOME not set");
-        PathBuf::from(home).join(".homegate").join("pepper.txt")
-    }
-
-    fn load_or_create(custom_path: Option<PathBuf>) -> String {
-        let file_path = custom_path.unwrap_or_else(Self::get_file_path);
-
+    fn read_or_generate(file_path: PathBuf) -> Self {
         if file_path.exists() {
             let content = fs::read_to_string(&file_path).expect("Failed to read pepper file");
             let content = content.trim();
             Self::validate_pepper_value(content);
-            return content.to_string();
+            return Self(content.to_string());
         }
 
         // If not exist then generate new pepper and store
@@ -108,7 +81,7 @@ impl Pepper {
         fs::write(&file_path, pepper.as_bytes()).expect("Failed to write pepper file");
 
         tracing::info!("Generated new pepper at: {}", file_path.display());
-        pepper
+        Self(pepper)
     }
 
     fn generate_pepper_value() -> String {
@@ -140,7 +113,7 @@ mod tests {
         let pepper_file = temp_dir.path().join("pepper.txt");
 
         // Initialize hasher with custom pepper path
-        let hasher = HasherArgon2id::with_pepper_path(pepper_file.clone());
+        let hasher = HasherArgon2id::new(pepper_file.clone());
 
         // Verify pepper file was created
         assert!(pepper_file.exists(), "Pepper file should be created");
@@ -169,11 +142,11 @@ mod tests {
         fs::write(&pepper_file, known_pepper).unwrap();
 
         // Initialize hasher - should load existing pepper
-        let hasher1 = HasherArgon2id::with_pepper_path(pepper_file.clone());
+        let hasher1 = HasherArgon2id::new(pepper_file.clone());
         let hash1 = hasher1.hash("+1234567890");
 
         // Initialize another hasher - should load the same pepper
-        let hasher2 = HasherArgon2id::with_pepper_path(pepper_file.clone());
+        let hasher2 = HasherArgon2id::new(pepper_file.clone());
         let hash2 = hasher2.hash("+1234567890");
 
         // Both hashers should produce the same hash since they use the same pepper

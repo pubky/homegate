@@ -4,6 +4,8 @@ use std::net::IpAddr;
 
 use crate::infrastructure::sql::ConnectionString;
 use crate::sms_verification::PhoneNumber;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::filter::Directive;
 use url::Url;
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -15,10 +17,53 @@ pub struct AppConfig {
     pub allow_cors: bool,
     #[serde(default)]
     pub accept_proxy_ip_headers: bool,
+    pub logging: Option<LoggingConfig>,
     pub homeserver: HomeserverConfig,
     pub sms_verification: Option<SmsVerificationConfig>,
     pub ln_verification: Option<LnVerificationConfig>,
     pub ip_verification: Option<IpVerificationConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct LoggingConfig {
+    #[serde(
+        default = "default_log_level",
+        deserialize_with = "deserialize_level_filter"
+    )]
+    pub level: LevelFilter,
+    #[serde(default, deserialize_with = "deserialize_directives")]
+    pub module_levels: Vec<Directive>,
+}
+
+fn default_log_level() -> LevelFilter {
+    LevelFilter::INFO
+}
+
+fn deserialize_level_filter<'de, D>(deserializer: D) -> Result<LevelFilter, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: String = serde::Deserialize::deserialize(deserializer)?;
+    s.parse().map_err(|_| {
+        serde::de::Error::custom(format!(
+            "invalid log level '{s}', expected one of: trace, debug, info, warn, error, off"
+        ))
+    })
+}
+
+fn deserialize_directives<'de, D>(deserializer: D) -> Result<Vec<Directive>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let strings: Vec<String> = serde::Deserialize::deserialize(deserializer)?;
+    strings
+        .into_iter()
+        .map(|s| {
+            s.parse().map_err(|e| {
+                serde::de::Error::custom(format!("invalid module_levels directive '{s}': {e}"))
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -130,19 +175,35 @@ fn default_max_ip_verifications_per_year() -> u32 {
     4
 }
 
+const CONFIG_EXAMPLE: &str = include_str!("../../config.toml.example");
+
 impl AppConfig {
-    /// Load configuration from a TOML file.
-    /// Path is read from `HG_CONFIG_PATH` env var, defaulting to `~/.homegate/config.toml`.
-    pub fn load() -> anyhow::Result<AppConfig> {
-        let path = std::env::var("HG_CONFIG_PATH").unwrap_or_else(|_| {
-            let home = std::env::var("HOME")
-                .expect("Should be able to determine home directory - $HOME not set");
-            format!("{home}/.homegate/config.toml")
-        });
-        let contents = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", path, e))?;
+    /// Load configuration from a TOML file within the given data directory.
+    ///
+    /// If no config file exists, copies `config.toml.example` into the data
+    /// directory and returns an error asking the user to edit it.
+    pub fn load(data_dir: &super::DataDir) -> anyhow::Result<AppConfig> {
+        let path = data_dir.config_file_path();
+
+        if !path.exists() {
+            std::fs::write(&path, CONFIG_EXAMPLE).map_err(|e| {
+                anyhow::anyhow!(
+                    "No config file found and failed to create template at '{}': {}",
+                    path.display(),
+                    e
+                )
+            })?;
+            anyhow::bail!(
+                "No config file found. A template has been created at '{}' — please edit it and restart.",
+                path.display()
+            );
+        }
+
+        let contents = std::fs::read_to_string(&path).map_err(|e| {
+            anyhow::anyhow!("Failed to read config file '{}': {}", path.display(), e)
+        })?;
         let config: AppConfig = toml::from_str(&contents)
-            .map_err(|e| anyhow::anyhow!("Failed to parse '{}': {}", path, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse '{}': {}", path.display(), e))?;
         Ok(config)
     }
 }
@@ -256,6 +317,75 @@ database_url = "postgres://localhost:5432/pubky_homegate"
             err.to_string().contains("homeserver"),
             "Should require homeserver section, got: {err}"
         );
+    }
+
+    #[test]
+    fn test_logging_config() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[logging]
+level = "debug"
+module_levels = ["hyper=warn", "tower_http=info"]
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
+        let logging = config.logging.expect("logging should be present");
+        assert_eq!(logging.level, LevelFilter::DEBUG);
+        assert_eq!(logging.module_levels.len(), 2);
+        assert_eq!(logging.module_levels[0].to_string(), "hyper=warn");
+    }
+
+    #[test]
+    fn test_logging_config_defaults() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[logging]
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
+        let logging = config.logging.expect("logging should be present");
+        assert_eq!(logging.level, LevelFilter::INFO);
+        assert!(logging.module_levels.is_empty());
+    }
+
+    #[test]
+    fn test_logging_config_rejects_invalid_level() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[logging]
+level = "deubg"
+"#;
+        let err = toml::from_str::<AppConfig>(toml).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid log level"),
+            "Should reject invalid log level, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_logging_config_optional() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
+        assert!(config.logging.is_none());
     }
 
     #[test]

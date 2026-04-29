@@ -11,7 +11,7 @@ This service depends on
 
 # Configuration
 
-Homegate is configured via a TOML file. Copy `config.toml.example` to `~/.homegate/config.toml` and fill in the required values. Set the `HG_CONFIG_PATH` environment variable to use a different path (defaults to `~/.homegate/config.toml`).
+Homegate is configured via a TOML file. Copy `config.toml.example` to `~/.homegate/config.toml` and fill in the required values. Use `--data-dir` to specify a different data directory (defaults to `~/.homegate/`).
 
 The `database_url` field must point to an existing PostgreSQL database, e.g.:
 
@@ -27,10 +27,12 @@ See `config.toml.example` for the full list of options and defaults.
 
 ```
 cargo run
+# Or with a custom data directory:
+cargo run -- --data-dir /path/to/data
 ```
 
 ### **Warning**
-This code generates a secret which is written to local disk at `/.homegate/pepper.txt`.
+This code generates a secret which is written to local disk at `~/.homegate/pepper.txt`.
 
 If this value is lost then you lose the ability to match phone numbers which have been already verified to phone numbers of new verification requests - this is turn means that the verification limits will not be enforced.
 

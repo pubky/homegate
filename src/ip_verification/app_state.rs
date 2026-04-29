@@ -1,5 +1,6 @@
 use crate::{
     infrastructure::{config::IpVerificationConfig, sql::SqlDb},
+    shared::HasherArgon2id,
     shared::HomeserverAdminAPI,
 };
 
@@ -11,8 +12,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(homeserver_api: &HomeserverAdminAPI, ip: &IpVerificationConfig, db: SqlDb) -> Self {
-        let ip_verification = IpVerificationService::new(db, homeserver_api.clone(), ip);
+    pub fn new(
+        homeserver_api: &HomeserverAdminAPI,
+        ip: &IpVerificationConfig,
+        db: SqlDb,
+        hasher: HasherArgon2id,
+    ) -> Self {
+        let ip_verification = IpVerificationService::new(db, homeserver_api.clone(), ip, hasher);
         Self { ip_verification }
     }
 }

@@ -23,8 +23,9 @@ pub async fn router(
     homeserver_api: &HomeserverAdminAPI,
     sms: &SmsVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
+    hasher: crate::shared::HasherArgon2id,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(homeserver_api, sms, db);
+    let state = AppState::new(homeserver_api, sms, db, hasher);
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
@@ -130,7 +131,10 @@ mod tests {
 
         let db = SqlDb::test(pool.clone()).await;
 
-        let sms_verification_router = router(&homeserver_api, &sms, db)
+        let hasher = crate::shared::HasherArgon2id::new(
+            tempfile::tempdir().unwrap().keep().join("pepper.txt"),
+        );
+        let sms_verification_router = router(&homeserver_api, &sms, db, hasher)
             .await
             .expect("Failed to create router");
 

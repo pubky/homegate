@@ -20,8 +20,9 @@ pub async fn router(
     homeserver_api: &HomeserverAdminAPI,
     ip: &IpVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
+    hasher: crate::shared::HasherArgon2id,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(homeserver_api, ip, db);
+    let state = AppState::new(homeserver_api, ip, db, hasher);
     Ok(Router::new()
         .route("/", post(root_handler))
         .with_state(state))
@@ -101,7 +102,10 @@ mod tests {
 
         let db = SqlDb::test(pool).await;
 
-        let ip_verification_router = router(&homeserver_api, &ip_config, db)
+        let hasher = crate::shared::HasherArgon2id::new(
+            tempfile::tempdir().unwrap().keep().join("pepper.txt"),
+        );
+        let ip_verification_router = router(&homeserver_api, &ip_config, db, hasher)
             .await
             .expect("Failed to create router");
 

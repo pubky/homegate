@@ -15,6 +15,12 @@ use crate::shared::HomeserverAdminAPI;
 use sqlx::PgPool;
 use std::net::IpAddr;
 
+static TEST_HASHER: std::sync::LazyLock<crate::shared::HasherArgon2id> =
+    std::sync::LazyLock::new(|| {
+        let dir = tempfile::tempdir().unwrap();
+        crate::shared::HasherArgon2id::new(dir.path().join("pepper.txt"))
+    });
+
 fn create_service(
     servers: &WiremockServers,
     db: SqlDb,
@@ -42,7 +48,7 @@ fn create_service_with_quota(
         signup_quota,
         limit_whitelist: vec![],
     };
-    IpVerificationService::new(db, homeserver_admin_api, &config)
+    IpVerificationService::new(db, homeserver_admin_api, &config, TEST_HASHER.clone())
 }
 
 #[sqlx::test]

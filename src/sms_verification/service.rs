@@ -1,6 +1,8 @@
+use std::net::IpAddr;
+
 use crate::infrastructure::sql::{SqlDb, UnifiedExecutor};
+use crate::shared::HasherArgon2id;
 use crate::shared::HomeserverAdminAPI;
-use crate::sms_verification::HasherArgon2id;
 use crate::sms_verification::error::SmsVerificationError;
 use crate::sms_verification::prelude_api::{
     PreludeAPI, PreludeCheckCodeResponse, PreludeCreateVerificationResponse,
@@ -9,7 +11,6 @@ use crate::sms_verification::repository::SmsVerificationRepository;
 use crate::sms_verification::types::{
     CreateVerificationRequest, PhoneNumber, ValidateCodeRequest, ValidateCodeResponse,
 };
-use std::net::IpAddr;
 
 const WEEKLY_WINDOW_DAYS: i64 = 7;
 const ANNUAL_WINDOW_DAYS: i64 = 365;
@@ -33,6 +34,7 @@ impl SmsVerificationService {
         max_verifications_per_year: u32,
         max_failed_validation_attempts: u32,
         limit_whitelist: Vec<PhoneNumber>,
+        hasher: HasherArgon2id,
     ) -> Self {
         if !limit_whitelist.is_empty() {
             tracing::info!("SMS verification limit whitelist: {:?}", limit_whitelist);
@@ -41,7 +43,7 @@ impl SmsVerificationService {
         Self {
             prelude_api,
             homeserver_admin_api,
-            hasher_argon2id: HasherArgon2id::new(),
+            hasher_argon2id: hasher,
             max_verifications_per_week,
             max_verifications_per_year,
             max_failed_validation_attempts,

@@ -10,6 +10,7 @@ use crate::{
         sql::{DbError, SqlDb},
     },
     ip_verification, ln_verification,
+    shared::HasherArgon2id,
     shared::HomeserverAdminAPI,
     sms_verification::http::router,
 };
@@ -32,6 +33,7 @@ impl HttpServer {
         config: &AppConfig,
         db: &SqlDb,
         homeserver_api: &HomeserverAdminAPI,
+        hasher: HasherArgon2id,
     ) -> Result<Router, HttpServerError> {
         let mut app = Router::new().route("/", get(root));
 
@@ -39,7 +41,7 @@ impl HttpServer {
             tracing::info!("SMS verification enabled");
             app = app.nest(
                 "/sms_verification",
-                router(homeserver_api, sms, db.clone()).await?,
+                router(homeserver_api, sms, db.clone(), hasher.clone()).await?,
             );
         }
         if let Some(ln) = &config.ln_verification {
@@ -53,7 +55,7 @@ impl HttpServer {
             tracing::info!("IP verification enabled");
             app = app.nest(
                 "/ip_verification",
-                ip_verification::router(homeserver_api, ip, db.clone()).await?,
+                ip_verification::router(homeserver_api, ip, db.clone(), hasher.clone()).await?,
             );
         }
 
@@ -77,14 +79,14 @@ impl HttpServer {
         Ok(app.layer(TraceLayer::new_for_http()))
     }
 
-    pub async fn start(config: AppConfig) -> Result<Self, HttpServerError> {
+    pub async fn start(config: AppConfig, hasher: HasherArgon2id) -> Result<Self, HttpServerError> {
         let homeserver_api = Self::connect_to_homeserver(&config).await;
 
         let db = SqlDb::connect(&config.database_url)
             .await
             .map_err(DbError::from)?;
 
-        let router = Self::create_router(&config, &db, &homeserver_api).await?;
+        let router = Self::create_router(&config, &db, &homeserver_api, hasher).await?;
 
         let (http_handle, http_socket) =
             Self::start_http_server(config.http_listen_socket, router).await?;
