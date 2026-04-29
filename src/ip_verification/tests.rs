@@ -15,6 +15,13 @@ use crate::shared::HomeserverAdminAPI;
 use sqlx::PgPool;
 use std::net::IpAddr;
 
+static TEST_PEPPER_DIR: std::sync::LazyLock<tempfile::TempDir> =
+    std::sync::LazyLock::new(|| tempfile::tempdir().unwrap());
+
+fn test_pepper_path() -> std::path::PathBuf {
+    TEST_PEPPER_DIR.path().join("pepper.txt")
+}
+
 fn create_service(
     servers: &WiremockServers,
     db: SqlDb,
@@ -42,7 +49,7 @@ fn create_service_with_quota(
         signup_quota,
         limit_whitelist: vec![],
     };
-    IpVerificationService::new(db, homeserver_admin_api, &config)
+    IpVerificationService::new(db, homeserver_admin_api, &config, test_pepper_path())
 }
 
 #[sqlx::test]

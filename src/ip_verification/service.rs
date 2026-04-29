@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+use std::path::PathBuf;
 
 use crate::infrastructure::config::{IpVerificationConfig, SignupQuotaConfig};
 use crate::infrastructure::sql::{DbError, SqlDb, UnifiedExecutor};
@@ -28,6 +29,7 @@ impl IpVerificationService {
         db: SqlDb,
         homeserver_admin_api: HomeserverAdminAPI,
         config: &IpVerificationConfig,
+        pepper_path: PathBuf,
     ) -> Self {
         if !config.limit_whitelist.is_empty() {
             tracing::info!(
@@ -39,7 +41,7 @@ impl IpVerificationService {
         Self {
             db,
             homeserver_admin_api,
-            hasher_argon2id: HasherArgon2id::new(),
+            hasher_argon2id: HasherArgon2id::new(pepper_path),
             max_verifications_per_week: config.max_verifications_per_week,
             max_verifications_per_year: config.max_verifications_per_year,
             signup_quota: config.signup_quota.clone(),

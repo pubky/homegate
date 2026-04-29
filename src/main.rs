@@ -8,15 +8,27 @@ mod sms_verification;
 mod e2e;
 
 use anyhow::Context;
-use infrastructure::{AppConfig, http::HttpServer};
+use clap::Parser;
+use infrastructure::{AppConfig, DataDir, http::HttpServer};
+
+#[derive(Parser)]
+#[command(name = "homegate", about = "Pubky Homegate service")]
+struct Cli {
+    /// Path to the data directory (contains config.toml, pepper.txt, etc.)
+    #[arg(long, default_value_os_t = DataDir::default_path())]
+    data_dir: std::path::PathBuf,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = AppConfig::load().context("Failed to load config")?;
+    let cli = Cli::parse();
+    let data_dir = DataDir::new(cli.data_dir);
+
+    let config = AppConfig::load(&data_dir).context("Failed to load config")?;
 
     infrastructure::tracing::init_tracing(config.logging.as_ref());
 
-    let http_server = HttpServer::start(config).await?;
+    let http_server = HttpServer::start(config, &data_dir).await?;
 
     tracing::info!("Homegate HTTP listening on {}", http_server.url_string());
 

@@ -144,18 +144,14 @@ fn default_max_ip_verifications_per_year() -> u32 {
 }
 
 impl AppConfig {
-    /// Load configuration from a TOML file.
-    /// Path is read from `HG_CONFIG_PATH` env var, defaulting to `~/.homegate/config.toml`.
-    pub fn load() -> anyhow::Result<AppConfig> {
-        let path = std::env::var("HG_CONFIG_PATH").unwrap_or_else(|_| {
-            let home = std::env::var("HOME")
-                .expect("Should be able to determine home directory - $HOME not set");
-            format!("{home}/.homegate/config.toml")
-        });
-        let contents = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", path, e))?;
+    /// Load configuration from a TOML file within the given data directory.
+    pub fn load(data_dir: &super::DataDir) -> anyhow::Result<AppConfig> {
+        let path = data_dir.config_file_path();
+        let contents = std::fs::read_to_string(&path).map_err(|e| {
+            anyhow::anyhow!("Failed to read config file '{}': {}", path.display(), e)
+        })?;
         let config: AppConfig = toml::from_str(&contents)
-            .map_err(|e| anyhow::anyhow!("Failed to parse '{}': {}", path, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse '{}': {}", path.display(), e))?;
         Ok(config)
     }
 }

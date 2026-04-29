@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     infrastructure::{
+        DataDir,
         config::AppConfig,
         http::HttpServerError,
         sql::{DbError, SqlDb},
@@ -32,6 +33,7 @@ impl HttpServer {
         config: &AppConfig,
         db: &SqlDb,
         homeserver_api: &HomeserverAdminAPI,
+        data_dir: &DataDir,
     ) -> Result<Router, HttpServerError> {
         let mut app = Router::new().route("/", get(root));
 
@@ -39,7 +41,7 @@ impl HttpServer {
             tracing::info!("SMS verification enabled");
             app = app.nest(
                 "/sms_verification",
-                router(homeserver_api, sms, db.clone()).await?,
+                router(homeserver_api, sms, db.clone(), data_dir.pepper_file_path()).await?,
             );
         }
         if let Some(ln) = &config.ln_verification {
@@ -53,7 +55,13 @@ impl HttpServer {
             tracing::info!("IP verification enabled");
             app = app.nest(
                 "/ip_verification",
-                ip_verification::router(homeserver_api, ip, db.clone()).await?,
+                ip_verification::router(
+                    homeserver_api,
+                    ip,
+                    db.clone(),
+                    data_dir.pepper_file_path(),
+                )
+                .await?,
             );
         }
 
@@ -77,14 +85,14 @@ impl HttpServer {
         Ok(app.layer(TraceLayer::new_for_http()))
     }
 
-    pub async fn start(config: AppConfig) -> Result<Self, HttpServerError> {
+    pub async fn start(config: AppConfig, data_dir: &DataDir) -> Result<Self, HttpServerError> {
         let homeserver_api = Self::connect_to_homeserver(&config).await;
 
         let db = SqlDb::connect(&config.database_url)
             .await
             .map_err(DbError::from)?;
 
-        let router = Self::create_router(&config, &db, &homeserver_api).await?;
+        let router = Self::create_router(&config, &db, &homeserver_api, data_dir).await?;
 
         let (http_handle, http_socket) =
             Self::start_http_server(config.http_listen_socket, router).await?;

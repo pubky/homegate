@@ -12,6 +12,7 @@ axum-server = { version = "0.7.1", features = ["tls-rustls-no-provider"] }
 base64 = "0.22"
 blake3 = "1.5"
 chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
 toml = "0.8"
 futures-util = "0.3.31"
 getrandom = "0.3.4"
