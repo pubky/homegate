@@ -24,7 +24,10 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct LoggingConfig {
-    #[serde(default = "default_log_level")]
+    #[serde(
+        default = "default_log_level",
+        deserialize_with = "deserialize_log_level"
+    )]
     pub level: String,
     #[serde(default)]
     pub module_levels: Vec<String>,
@@ -32,6 +35,22 @@ pub struct LoggingConfig {
 
 fn default_log_level() -> String {
     "info".to_string()
+}
+
+fn deserialize_log_level<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: String = serde::Deserialize::deserialize(deserializer)?;
+    const VALID_LEVELS: &[&str] = &["trace", "debug", "info", "warn", "error", "off"];
+    if !VALID_LEVELS.contains(&s.to_lowercase().as_str()) {
+        return Err(serde::de::Error::custom(format!(
+            "invalid log level '{}', expected one of: {}",
+            s,
+            VALID_LEVELS.join(", ")
+        )));
+    }
+    Ok(s)
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -302,6 +321,25 @@ admin_password = "test-admin-password"
         let logging = config.logging.expect("logging should be present");
         assert_eq!(logging.level, "info");
         assert!(logging.module_levels.is_empty());
+    }
+
+    #[test]
+    fn test_logging_config_rejects_invalid_level() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[logging]
+level = "deubg"
+"#;
+        let err = toml::from_str::<AppConfig>(toml).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid log level"),
+            "Should reject invalid log level, got: {err}"
+        );
     }
 
     #[test]

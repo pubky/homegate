@@ -10,9 +10,9 @@ use crate::e2e::{
     setup_prelude_create_verification,
 };
 use crate::infrastructure::sql::{DbError, SqlDb};
+use crate::shared::HasherArgon2id;
 use crate::shared::HomeserverAdminAPI;
 use crate::sms_verification::error::SmsVerificationError;
-use crate::sms_verification::hasher_argon2id::HasherArgon2id;
 use crate::sms_verification::prelude_api::{PreludeAPI, PreludeBlockedReason};
 use crate::sms_verification::repository::{SmsVerificationRepository, VerificationStatus};
 use crate::sms_verification::service::SmsVerificationService;
@@ -25,16 +25,14 @@ use std::net::IpAddr;
 const TEST_VERIFICATION_CODE: &str = "123456";
 const TEST_WRONG_CODE: &str = "111111";
 
-static TEST_PEPPER_DIR: std::sync::LazyLock<tempfile::TempDir> =
-    std::sync::LazyLock::new(|| tempfile::tempdir().unwrap());
-
-fn test_pepper_path() -> std::path::PathBuf {
-    TEST_PEPPER_DIR.path().join("pepper.txt")
-}
+static TEST_HASHER: std::sync::LazyLock<HasherArgon2id> = std::sync::LazyLock::new(|| {
+    let dir = tempfile::tempdir().unwrap();
+    HasherArgon2id::new(dir.path().join("pepper.txt"))
+});
 
 // TODO replace with faster hasher
 fn test_phone_hasher() -> HasherArgon2id {
-    HasherArgon2id::new(test_pepper_path())
+    TEST_HASHER.clone()
 }
 
 /// Helper to create service with wiremock for direct service layer testing
@@ -56,7 +54,7 @@ fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerification
         4,
         2,
         vec![],
-        test_pepper_path(),
+        test_phone_hasher(),
     )
 }
 

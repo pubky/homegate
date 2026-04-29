@@ -10,6 +10,7 @@ mod e2e;
 use anyhow::Context;
 use clap::Parser;
 use infrastructure::{AppConfig, DataDir, http::HttpServer};
+use shared::HasherArgon2id;
 
 #[derive(Parser)]
 #[command(name = "homegate", about = "Pubky Homegate service")]
@@ -22,13 +23,14 @@ struct Cli {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let data_dir = DataDir::new(cli.data_dir);
+    let data_dir = DataDir::new(cli.data_dir).context("Invalid data directory")?;
 
     let config = AppConfig::load(&data_dir).context("Failed to load config")?;
 
     infrastructure::tracing::init_tracing(config.logging.as_ref());
 
-    let http_server = HttpServer::start(config, &data_dir).await?;
+    let hasher = HasherArgon2id::new(data_dir.pepper_file_path());
+    let http_server = HttpServer::start(config, hasher).await?;
 
     tracing::info!("Homegate HTTP listening on {}", http_server.url_string());
 

@@ -327,7 +327,7 @@ impl SmsVerificationRepository {
     pub async fn get_by_phone_number(
         executor: &mut UnifiedExecutor<'_>,
         phone_number: &PhoneNumber,
-        hasher: &crate::sms_verification::HasherArgon2id,
+        hasher: &crate::shared::HasherArgon2id,
     ) -> Result<SmsVerificationEntity, DbError> {
         let hashed_phone = hasher.hash(phone_number.as_str());
 

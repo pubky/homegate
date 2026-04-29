@@ -1,7 +1,6 @@
-use std::path::PathBuf;
-
 use crate::{
     infrastructure::{config::IpVerificationConfig, sql::SqlDb},
+    shared::HasherArgon2id,
     shared::HomeserverAdminAPI,
 };
 
@@ -17,10 +16,9 @@ impl AppState {
         homeserver_api: &HomeserverAdminAPI,
         ip: &IpVerificationConfig,
         db: SqlDb,
-        pepper_path: PathBuf,
+        hasher: HasherArgon2id,
     ) -> Self {
-        let ip_verification =
-            IpVerificationService::new(db, homeserver_api.clone(), ip, pepper_path);
+        let ip_verification = IpVerificationService::new(db, homeserver_api.clone(), ip, hasher);
         Self { ip_verification }
     }
 }

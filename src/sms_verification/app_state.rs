@@ -1,7 +1,6 @@
-use std::path::PathBuf;
-
 use crate::{
     infrastructure::{config::SmsVerificationConfig, sql::SqlDb},
+    shared::HasherArgon2id,
     shared::HomeserverAdminAPI,
     sms_verification::{prelude_api::PreludeAPI, service::SmsVerificationService},
 };
@@ -17,7 +16,7 @@ impl AppState {
         homeserver_api: &HomeserverAdminAPI,
         sms: &SmsVerificationConfig,
         db: SqlDb,
-        pepper_path: PathBuf,
+        hasher: HasherArgon2id,
     ) -> Self {
         let prelude_api = PreludeAPI::new(&sms.prelude_api_url, &sms.prelude_api_key);
         let sms_verification = SmsVerificationService::new(
@@ -27,7 +26,7 @@ impl AppState {
             sms.max_verifications_per_year,
             sms.max_failed_validation_attempts,
             sms.limit_whitelist.clone(),
-            pepper_path,
+            hasher,
         );
         Self {
             db,

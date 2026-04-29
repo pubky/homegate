@@ -7,8 +7,14 @@ use std::path::PathBuf;
 pub struct DataDir(PathBuf);
 
 impl DataDir {
-    pub fn new(path: PathBuf) -> Self {
-        Self(path)
+    pub fn new(path: PathBuf) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            path.exists(),
+            "Data directory '{}' does not exist",
+            path.display()
+        );
+        anyhow::ensure!(path.is_dir(), "'{}' is not a directory", path.display());
+        Ok(Self(path))
     }
 
     pub fn default_path() -> PathBuf {
