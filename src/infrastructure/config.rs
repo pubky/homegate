@@ -120,6 +120,8 @@ pub struct SignupQuotaConfig {
     pub rate_write: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_write_burst: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_write_paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -418,6 +420,7 @@ admin_password = "test-admin-password"
 storage_quota_mb = 500
 rate_read = "10mb/s"
 rate_write = "5mb/s"
+allowed_write_paths = ["/pub/", "/pub/test/"]
 "#;
         let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
         let ip = config
@@ -427,6 +430,10 @@ rate_write = "5mb/s"
         assert_eq!(quota.storage_quota_mb, Some(500));
         assert_eq!(quota.rate_read.as_deref(), Some("10mb/s"));
         assert_eq!(quota.rate_write.as_deref(), Some("5mb/s"));
+        assert_eq!(
+            quota.allowed_write_paths.as_deref(),
+            Some(["/pub/".to_string(), "/pub/test/".to_string()].as_slice())
+        );
     }
 
     #[test]
@@ -482,10 +489,17 @@ admin_password = "test-admin-password"
             rate_read_burst: None,
             rate_write: None,
             rate_write_burst: None,
+            allowed_write_paths: None,
         };
         let json = serde_json::to_value(&quota).unwrap();
         assert_eq!(json["storage_quota_mb"], 500);
         assert_eq!(json["rate_read"], "10mb/s");
         assert!(!json.as_object().unwrap().contains_key("rate_write"));
+        assert!(
+            !json
+                .as_object()
+                .unwrap()
+                .contains_key("allowed_write_paths")
+        );
     }
 }

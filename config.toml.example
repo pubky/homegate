@@ -44,3 +44,4 @@ admin_password = "admin"
 # rate_read_burst = 10
 # rate_write = "1mb/s"
 # rate_write_burst = 10
+# allowed_write_paths = ["/pub/"]
