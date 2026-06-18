@@ -52,13 +52,7 @@ A low-friction alternative to SMS/LN verification. A client POSTs to `/ip_verifi
 
 IP-based rate limiting is inherently easy to circumvent (rotating IPs, VPNs). See `src/ip_verification/mod.rs` for detailed security considerations.
 
-Enabled by adding an `[ip_verification]` section to `config.toml`:
-
-```toml
-[ip_verification]
-max_verifications_per_week = 2   # default
-max_verifications_per_year = 4   # default
-```
+Enabled by adding an `[ip_verification]` section to `config.toml`.
 
 ## Running Tests
 
