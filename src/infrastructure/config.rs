@@ -22,6 +22,7 @@ pub struct AppConfig {
     pub sms_verification: Option<SmsVerificationConfig>,
     pub ln_verification: Option<LnVerificationConfig>,
     pub ip_verification: Option<IpVerificationConfig>,
+    pub google_verification: Option<GoogleVerificationConfig>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -135,6 +136,16 @@ pub struct IpVerificationConfig {
     pub limit_whitelist: Vec<IpAddr>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct GoogleVerificationConfig {
+    pub google_client_id: String,
+    #[serde(default = "default_max_google_verifications_per_week")]
+    pub max_verifications_per_week: u32,
+    #[serde(default = "default_max_google_verifications_per_year")]
+    pub max_verifications_per_year: u32,
+    pub signup_quota: Option<SignupQuotaConfig>,
+}
+
 fn default_http_listen_socket() -> SocketAddr {
     "0.0.0.0:8080"
         .parse()
@@ -174,6 +185,14 @@ fn default_max_ip_verifications_per_week() -> u32 {
 }
 
 fn default_max_ip_verifications_per_year() -> u32 {
+    4
+}
+
+fn default_max_google_verifications_per_week() -> u32 {
+    2
+}
+
+fn default_max_google_verifications_per_year() -> u32 {
     4
 }
 
@@ -246,6 +265,9 @@ phoenixd_api_url = "http://localhost:9740"
 phoenixd_api_password = "test-password"
 
 [ip_verification]
+
+[google_verification]
+google_client_id = "test-google-client-id.apps.googleusercontent.com"
 "#;
         let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
         assert_eq!(
@@ -256,6 +278,7 @@ phoenixd_api_password = "test-password"
         assert!(config.sms_verification.is_some());
         assert!(config.ln_verification.is_some());
         assert!(config.ip_verification.is_some());
+        assert!(config.google_verification.is_some());
     }
 
     #[test]
@@ -403,6 +426,91 @@ admin_password = "test-admin-password"
         assert!(config.sms_verification.is_none());
         assert!(config.ln_verification.is_none());
         assert!(config.ip_verification.is_none());
+        assert!(config.google_verification.is_none());
+    }
+
+    #[test]
+    fn test_config_example_is_valid_toml() {
+        toml::from_str::<AppConfig>(CONFIG_EXAMPLE).expect("config.toml.example should parse");
+    }
+
+    #[test]
+    fn test_google_verification_requires_client_id() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[google_verification]
+"#;
+        let err = toml::from_str::<AppConfig>(toml).unwrap_err();
+        assert!(
+            err.to_string().contains("google_client_id"),
+            "Should require google_client_id, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_google_verification_defaults() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[google_verification]
+google_client_id = "test-google-client-id.apps.googleusercontent.com"
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
+        let google = config
+            .google_verification
+            .expect("google_verification should be present");
+        assert_eq!(
+            google.google_client_id,
+            "test-google-client-id.apps.googleusercontent.com"
+        );
+        assert_eq!(google.max_verifications_per_week, 2);
+        assert_eq!(google.max_verifications_per_year, 4);
+        assert!(google.signup_quota.is_none());
+    }
+
+    #[test]
+    fn test_google_verification_with_signup_quota() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[google_verification]
+google_client_id = "test-google-client-id.apps.googleusercontent.com"
+max_verifications_per_week = 3
+max_verifications_per_year = 6
+
+[google_verification.signup_quota]
+storage_quota_mb = 500
+rate_read = "10mb/s"
+rate_write = "5mb/s"
+allowed_write_paths = ["/pub/", "/pub/test/"]
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
+        let google = config
+            .google_verification
+            .expect("google_verification should be present");
+        assert_eq!(google.max_verifications_per_week, 3);
+        assert_eq!(google.max_verifications_per_year, 6);
+        let quota = google.signup_quota.expect("signup_quota should be present");
+        assert_eq!(quota.storage_quota_mb, Some(500));
+        assert_eq!(quota.rate_read.as_deref(), Some("10mb/s"));
+        assert_eq!(quota.rate_write.as_deref(), Some("5mb/s"));
+        assert_eq!(
+            quota.allowed_write_paths.as_deref(),
+            Some(["/pub/".to_string(), "/pub/test/".to_string()].as_slice())
+        );
     }
 
     #[test]

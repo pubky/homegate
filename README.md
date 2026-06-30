@@ -8,6 +8,7 @@ This service depends on
 
 - [Prelude](https://docs.prelude.so/) as a SMS service provider.
 - [PhoenixD](https://github.com/ACINQ/phoenixd) As a Lightning Payment provider.
+- Google JWKS for Google ID token verification.
 
 # Configuration
 
@@ -19,7 +20,7 @@ The `database_url` field must point to an existing PostgreSQL database, e.g.:
 database_url = "postgres://postgres:postgres@localhost:5432/pubky_homegate"
 ```
 
-Verification routes are **optional** — include an `[sms_verification]`, `[ln_verification]`, or `[ip_verification]` section to enable each one. Omitting a section disables that route entirely.
+Verification routes are **optional** — include an `[sms_verification]`, `[ln_verification]`, `[ip_verification]`, or `[google_verification]` section to enable each one. Omitting a section disables that route entirely.
 
 See `config.toml.example` for the full list of options and defaults.
 
@@ -54,6 +55,14 @@ IP-based rate limiting is inherently easy to circumvent (rotating IPs, VPNs). Se
 
 Enabled by adding an `[ip_verification]` section to `config.toml`.
 
+## Google Verification
+
+Server-side Google ID token verification for issuing homeserver signup codes. A trusted backend POSTs to `/google_verification` with a `googleIdToken` and receives a signup code if the token is valid and the Google identity has not exceeded the configured weekly/annual limits.
+
+Homegate verifies the token signature against Google's JWKS and validates the expected audience, issuer, expiry, and subject. Rate limiting uses a secret-peppered hash of the verified issuer and subject claims; raw Google IDs and emails are not stored.
+
+Enabled by adding a `[google_verification]` section with `google_client_id` to `config.toml`.
+
 ## Running Tests
 
 Tests use the `DATABASE_URL` env var (a `sqlx::test` convention) to provision test database pools. This is separate from the `database_url` field in `config.toml` which is only used at runtime, tests never load `config.toml`.
@@ -69,5 +78,5 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/pubky_homegate?pubky-te
 ### Test Structure
 
 - **Unit Tests**: IP extraction logic (`src/infrastructure/http/extractors/request_origin.rs`)
-- **Service Tests**: Business logic and database operations (`src/sms_verification/tests.rs`, `src/ip_verification/tests.rs`)
+- **Service Tests**: Business logic and database operations (`src/sms_verification/tests.rs`, `src/ip_verification/tests.rs`, `src/google_verification/tests.rs`)
 - **E2E Tests**: Full HTTP integration tests (`src/e2e/`)
