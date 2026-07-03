@@ -10,6 +10,10 @@ use tokio::sync::RwLock;
 use url::Url;
 
 const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
+/// Environment variable that overrides [`GOOGLE_JWKS_URL`]. Intentionally not
+/// part of `config.toml` — it exists as an escape hatch (e.g. pointing at a
+/// mock during manual testing, or if Google ever moves the endpoint).
+const GOOGLE_JWKS_URL_ENV_VAR: &str = "HOMEGATE_GOOGLE_JWKS_URL";
 const DEFAULT_JWKS_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const GOOGLE_JWKS_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MIN_FORCED_JWKS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
@@ -46,10 +50,7 @@ pub struct GoogleJwksIdTokenVerifier {
 
 impl GoogleJwksIdTokenVerifier {
     pub fn new(google_client_id: String) -> Self {
-        Self::with_jwks_url(
-            google_client_id,
-            Url::parse(GOOGLE_JWKS_URL).expect("Google JWKS URL is valid"),
-        )
+        Self::with_jwks_url(google_client_id, jwks_url_from_env_or_default())
     }
 
     fn with_jwks_url(google_client_id: String, jwks_url: Url) -> Self {
@@ -58,6 +59,21 @@ impl GoogleJwksIdTokenVerifier {
             jwks_cache: GoogleJwksCache::new(jwks_url),
         }
     }
+}
+
+/// Resolve the JWKS URL, honouring the [`GOOGLE_JWKS_URL_ENV_VAR`] override.
+///
+/// Panics on an invalid override so a misconfiguration fails at startup
+/// rather than surfacing as verification errors at runtime.
+fn jwks_url_from_env_or_default() -> Url {
+    let Ok(value) = std::env::var(GOOGLE_JWKS_URL_ENV_VAR) else {
+        return Url::parse(GOOGLE_JWKS_URL).expect("Default Google JWKS URL is valid");
+    };
+    let url = Url::parse(&value).unwrap_or_else(|error| {
+        panic!("{GOOGLE_JWKS_URL_ENV_VAR} must be a valid URL, got '{value}': {error}")
+    });
+    tracing::info!(jwks_url = %url, "Using Google JWKS URL override from {GOOGLE_JWKS_URL_ENV_VAR}");
+    url
 }
 
 #[async_trait]

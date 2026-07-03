@@ -61,7 +61,7 @@ Server-side Google ID token verification for issuing homeserver signup codes. A 
 
 Homegate verifies the token signature against Google's JWKS and validates the expected audience, issuer, expiry, and subject. Rate limiting uses a secret-peppered hash of the verified issuer and subject claims; raw Google IDs and emails are not stored.
 
-Enabled by adding a `[google_verification]` section with `google_client_id` to `config.toml`.
+Enabled by adding a `[google_verification]` section with `google_client_id` to `config.toml`. The JWKS endpoint defaults to Google's well-known URL; the `HOMEGATE_GOOGLE_JWKS_URL` environment variable overrides it if ever needed (e.g. manual testing against a mock).
 
 ## Adding a New Verification Provider
 
