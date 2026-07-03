@@ -63,6 +63,12 @@ Homegate verifies the token signature against Google's JWKS and validates the ex
 
 Enabled by adding a `[google_verification]` section with `google_client_id` to `config.toml`.
 
+## Adding a New Verification Provider
+
+Each verification method is a self-contained module (`src/<provider>_verification/`) with its own HTTP router, config section, error enum, and database table. Provider routes are registered conditionally in `src/infrastructure/http/server.rs` based on config presence.
+
+The final step of every low-friction provider — atomically rate-limiting a verified identity and issuing a homeserver signup code — is shared. Do not reimplement it: derive a peppered identity hash with `HasherArgon2id` and delegate to `RateLimitedSignupIssuer` (`src/shared/rate_limited_signup_issuer.rs`). Its module documentation contains the step-by-step recipe; `src/google_verification/` is the reference implementation.
+
 ## Running Tests
 
 Tests use the `DATABASE_URL` env var (a `sqlx::test` convention) to provision test database pools. This is separate from the `database_url` field in `config.toml` which is only used at runtime, tests never load `config.toml`.

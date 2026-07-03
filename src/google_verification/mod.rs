@@ -7,7 +7,6 @@ mod app_state;
 mod error;
 mod google_id_token_verifier;
 pub mod http;
-mod repository;
 mod service;
 #[cfg(test)]
 mod tests;

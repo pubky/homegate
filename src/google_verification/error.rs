@@ -1,4 +1,5 @@
 use crate::infrastructure::sql::DbError;
+use crate::shared::SignupIssuanceError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum GoogleVerificationError {
@@ -22,4 +23,15 @@ pub enum GoogleVerificationError {
 
     #[error("internal_error")]
     Database(#[from] DbError),
+}
+
+impl From<SignupIssuanceError> for GoogleVerificationError {
+    fn from(error: SignupIssuanceError) -> Self {
+        match error {
+            SignupIssuanceError::WeeklyLimitExceeded => Self::WeeklyLimitExceeded,
+            SignupIssuanceError::AnnualLimitExceeded => Self::AnnualLimitExceeded,
+            SignupIssuanceError::HomeserverUnavailable => Self::HomeserverUnavailable,
+            SignupIssuanceError::Database(error) => Self::Database(error),
+        }
+    }
 }

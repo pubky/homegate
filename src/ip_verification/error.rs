@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use crate::infrastructure::sql::DbError;
+use crate::shared::SignupIssuanceError;
 
 #[derive(Error, Debug)]
 pub enum IpVerificationError {
@@ -18,4 +19,15 @@ pub enum IpVerificationError {
 
     #[error("{0}")]
     Database(#[from] DbError),
+}
+
+impl From<SignupIssuanceError> for IpVerificationError {
+    fn from(error: SignupIssuanceError) -> Self {
+        match error {
+            SignupIssuanceError::WeeklyLimitExceeded => Self::WeeklyLimitExceeded,
+            SignupIssuanceError::AnnualLimitExceeded => Self::AnnualLimitExceeded,
+            SignupIssuanceError::HomeserverUnavailable => Self::HomeserverUnavailable,
+            SignupIssuanceError::Database(error) => Self::Database(error),
+        }
+    }
 }

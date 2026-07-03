@@ -24,7 +24,6 @@
 mod app_state;
 mod error;
 pub mod http;
-mod repository;
 mod service;
 #[cfg(test)]
 mod tests;
