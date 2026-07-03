@@ -118,9 +118,16 @@ impl GoogleIdTokenVerifier for GoogleJwksIdTokenVerifier {
             return Err(GoogleIdTokenVerificationError::Invalid);
         }
 
+        let GoogleClaims { iss, sub, .. } = token.claims;
+        let issuer = if iss == "accounts.google.com" {
+            "https://accounts.google.com".to_string()
+        } else {
+            iss
+        };
+
         Ok(VerifiedGoogleIdentity {
-            issuer: token.claims.iss,
-            subject: token.claims.sub,
+            issuer,
+            subject: sub,
         })
     }
 }
@@ -316,6 +323,23 @@ mod tests {
         let token = test_token(
             TEST_GOOGLE_CLIENT_ID,
             "https://accounts.google.com",
+            "google-subject",
+            future_exp(),
+        );
+
+        let identity = verifier.verify(&token).await.unwrap();
+
+        assert_eq!(identity.issuer, "https://accounts.google.com");
+        assert_eq!(identity.subject, "google-subject");
+    }
+
+    #[tokio::test]
+    async fn test_canonicalizes_bare_google_issuer() {
+        let server = jwks_server().await;
+        let verifier = verifier_for_server(&server);
+        let token = test_token(
+            TEST_GOOGLE_CLIENT_ID,
+            "accounts.google.com",
             "google-subject",
             future_exp(),
         );
