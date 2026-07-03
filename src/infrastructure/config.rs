@@ -143,7 +143,6 @@ pub struct GoogleVerificationConfig {
     pub max_verifications_per_week: u32,
     #[serde(default = "default_max_google_verifications_per_year")]
     pub max_verifications_per_year: u32,
-    pub signup_quota: Option<SignupQuotaConfig>,
 }
 
 fn default_http_listen_socket() -> SocketAddr {
@@ -474,43 +473,6 @@ google_client_id = "test-google-client-id.apps.googleusercontent.com"
         );
         assert_eq!(google.max_verifications_per_week, 2);
         assert_eq!(google.max_verifications_per_year, 4);
-        assert!(google.signup_quota.is_none());
-    }
-
-    #[test]
-    fn test_google_verification_with_signup_quota() {
-        let toml = r#"
-database_url = "postgres://localhost:5432/pubky_homegate"
-
-[homeserver]
-admin_api_url = "http://localhost:6288"
-admin_password = "test-admin-password"
-
-[google_verification]
-google_client_id = "test-google-client-id.apps.googleusercontent.com"
-max_verifications_per_week = 3
-max_verifications_per_year = 6
-
-[google_verification.signup_quota]
-storage_quota_mb = 500
-rate_read = "10mb/s"
-rate_write = "5mb/s"
-allowed_write_paths = ["/pub/", "/pub/test/"]
-"#;
-        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
-        let google = config
-            .google_verification
-            .expect("google_verification should be present");
-        assert_eq!(google.max_verifications_per_week, 3);
-        assert_eq!(google.max_verifications_per_year, 6);
-        let quota = google.signup_quota.expect("signup_quota should be present");
-        assert_eq!(quota.storage_quota_mb, Some(500));
-        assert_eq!(quota.rate_read.as_deref(), Some("10mb/s"));
-        assert_eq!(quota.rate_write.as_deref(), Some("5mb/s"));
-        assert_eq!(
-            quota.allowed_write_paths.as_deref(),
-            Some(["/pub/".to_string(), "/pub/test/".to_string()].as_slice())
-        );
     }
 
     #[test]

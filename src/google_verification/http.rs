@@ -148,7 +148,6 @@ mod tests {
             google_client_id: "test-google-client-id.apps.googleusercontent.com".to_string(),
             max_verifications_per_week: max_per_week,
             max_verifications_per_year: max_per_year,
-            signup_quota: None,
         };
         let db = SqlDb::test(pool).await;
         let hasher = crate::shared::HasherArgon2id::new(

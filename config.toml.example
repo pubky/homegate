@@ -50,13 +50,3 @@ admin_password = "admin"
 # google_client_id = "your-google-client-id.apps.googleusercontent.com"
 # max_verifications_per_week = 2                   # optional
 # max_verifications_per_year = 4                   # optional
-# # Quota limits applied to signup codes (optional).
-# # When set, signup tokens are created with these limits via the homeserver POST endpoint.
-# # When omitted, homeserver system defaults apply.
-# [google_verification.signup_quota]
-# storage_quota_mb = 64
-# rate_read = "1mb/s"
-# rate_read_burst = 10
-# rate_write = "1mb/s"
-# rate_write_burst = 10
-# allowed_write_paths = ["/pub/"]

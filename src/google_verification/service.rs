@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::google_verification::google_id_token_verifier::{
     GoogleIdTokenVerificationError, GoogleIdTokenVerifier, GoogleJwksIdTokenVerifier,
 };
-use crate::infrastructure::config::{GoogleVerificationConfig, SignupQuotaConfig};
+use crate::infrastructure::config::GoogleVerificationConfig;
 use crate::infrastructure::sql::{DbError, SqlDb, UnifiedExecutor};
 use crate::shared::{HasherArgon2id, HomeserverAdminAPI};
 
@@ -22,7 +22,6 @@ pub struct GoogleVerificationService {
     hasher_argon2id: HasherArgon2id,
     max_verifications_per_week: u32,
     max_verifications_per_year: u32,
-    signup_quota: Option<SignupQuotaConfig>,
 }
 
 impl GoogleVerificationService {
@@ -57,7 +56,6 @@ impl GoogleVerificationService {
             hasher_argon2id: hasher,
             max_verifications_per_week: config.max_verifications_per_week,
             max_verifications_per_year: config.max_verifications_per_year,
-            signup_quota: config.signup_quota.clone(),
         }
     }
 
@@ -162,18 +160,13 @@ impl GoogleVerificationService {
     }
 
     async fn generate_signup_token(&self) -> Result<String, GoogleVerificationError> {
-        let result = match &self.signup_quota {
-            Some(quota) => {
-                self.homeserver_admin_api
-                    .generate_signup_token_with_quota(quota)
-                    .await
-            }
-            None => self.homeserver_admin_api.generate_signup_token().await,
-        };
-        result.map_err(|error| {
-            tracing::error!(error = %error, "Failed to generate signup token");
-            GoogleVerificationError::HomeserverUnavailable
-        })
+        self.homeserver_admin_api
+            .generate_signup_token()
+            .await
+            .map_err(|error| {
+                tracing::error!(error = %error, "Failed to generate signup token");
+                GoogleVerificationError::HomeserverUnavailable
+            })
     }
 }
 

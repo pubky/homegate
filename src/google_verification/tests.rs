@@ -8,10 +8,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use sqlx::PgPool;
 
-use crate::e2e::{
-    WiremockServers, setup_homeserver_signup_token, setup_homeserver_signup_token_with_quota,
-};
-use crate::infrastructure::config::{GoogleVerificationConfig, SignupQuotaConfig};
+use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
+use crate::infrastructure::config::GoogleVerificationConfig;
 use crate::infrastructure::sql::SqlDb;
 use crate::shared::HomeserverAdminAPI;
 
@@ -38,22 +36,6 @@ fn create_service(
         db,
         max_per_week,
         max_per_year,
-        None,
-        fake_valid_verifier("google-subject"),
-    )
-}
-
-fn create_service_with_quota(
-    servers: &WiremockServers,
-    db: SqlDb,
-    signup_quota: SignupQuotaConfig,
-) -> GoogleVerificationService {
-    create_service_with_verifier(
-        servers,
-        db,
-        2,
-        4,
-        Some(signup_quota),
         fake_valid_verifier("google-subject"),
     )
 }
@@ -63,7 +45,6 @@ fn create_service_with_verifier(
     db: SqlDb,
     max_per_week: u32,
     max_per_year: u32,
-    signup_quota: Option<SignupQuotaConfig>,
     verifier: Arc<dyn GoogleIdTokenVerifier>,
 ) -> GoogleVerificationService {
     let homeserver_admin_api = HomeserverAdminAPI::new(
@@ -75,7 +56,6 @@ fn create_service_with_verifier(
         google_client_id: "test-google-client-id.apps.googleusercontent.com".to_string(),
         max_verifications_per_week: max_per_week,
         max_verifications_per_year: max_per_year,
-        signup_quota,
     };
     GoogleVerificationService::with_verifier(
         db,
@@ -174,17 +154,10 @@ async fn test_rate_limits_are_per_google_identity(pool: PgPool) {
         db.clone(),
         1,
         10,
-        None,
         fake_valid_verifier("google-subject-a"),
     );
-    let service_b = create_service_with_verifier(
-        &servers,
-        db,
-        1,
-        10,
-        None,
-        fake_valid_verifier("google-subject-b"),
-    );
+    let service_b =
+        create_service_with_verifier(&servers, db, 1, 10, fake_valid_verifier("google-subject-b"));
 
     setup_homeserver_signup_token("token")
         .expect(2)
@@ -241,35 +214,6 @@ async fn test_annual_limit_exceeded(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn test_signup_quota_uses_post_endpoint(pool: PgPool) {
-    let servers = WiremockServers::start().await;
-    let db = SqlDb::test(pool).await;
-    let service = create_service_with_quota(
-        &servers,
-        db,
-        SignupQuotaConfig {
-            storage_quota_mb: Some(64),
-            rate_read: Some("1mb/s".to_string()),
-            rate_read_burst: Some(10),
-            rate_write: Some("1mb/s".to_string()),
-            rate_write_burst: Some(10),
-            allowed_write_paths: Some(vec!["/pub/".to_string()]),
-        },
-    );
-
-    setup_homeserver_signup_token_with_quota("quota-token")
-        .expect(1)
-        .mount(&servers.homeserver_server)
-        .await;
-
-    let response = service
-        .verify("valid-google-id-token")
-        .await
-        .expect("verification should succeed");
-    assert_eq!(response.signup_code, "quota-token");
-}
-
-#[sqlx::test]
 async fn test_invalid_google_token_does_not_call_homeserver(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let db = SqlDb::test(pool).await;
@@ -278,7 +222,6 @@ async fn test_invalid_google_token_does_not_call_homeserver(pool: PgPool) {
         db,
         2,
         4,
-        None,
         fake_error_verifier(GoogleIdTokenVerificationError::Invalid),
     );
 
@@ -298,7 +241,6 @@ async fn test_google_verifier_unavailable_does_not_call_homeserver(pool: PgPool)
         db,
         2,
         4,
-        None,
         fake_error_verifier(GoogleIdTokenVerificationError::DependencyUnavailable),
     );
 
