@@ -4,7 +4,14 @@ use argon2::{
 use std::fs;
 use std::path::PathBuf;
 
-/// Hashes phone numbers using Argon2id with a global pepper for rainbow table resistance.
+/// Hashes identifiers using Argon2id with a global pepper for rainbow table resistance.
+///
+/// This hasher was primarily built for phone numbers (SMS verification), whose
+/// small preimage space makes them cheap to brute-force from a leaked database.
+/// Other verification providers reuse it for their identifiers (IP addresses,
+/// Google `iss`+`sub` claims) for consistency and simplicity: one pepper file,
+/// one set of tuned parameters, and uniformly non-reversible rate-limit keys —
+/// even where the preimage space would not strictly demand a hash this slow.
 ///
 /// Choice of hash function:
 ///     The configured argon2id params use a substantial amount of RAM and > 100ms to compute.
@@ -57,8 +64,8 @@ impl HasherArgon2id {
     }
 }
 
-/// Pepper is used a bit like a salt for hashing phone numbers in the db.
-/// The difference is that the same value is used for all phone number instances, rather than a new salt per phone number.
+/// Pepper is used a bit like a salt for hashing identifiers (phone numbers, IPs, ...) in the db.
+/// The difference is that the same value is used for all identifier instances, rather than a new salt per identifier.
 /// We store the generated value in ~/.homegate/pepper.txt for convenience
 #[derive(Clone, Debug)]
 struct Pepper(String);
