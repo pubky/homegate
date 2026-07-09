@@ -1,7 +1,6 @@
 use axum::{
     Json, Router,
-    body::Bytes,
-    extract::State,
+    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
@@ -24,34 +23,23 @@ pub async fn router(
 ) -> Result<Router, HttpServerError> {
     let state = AppState::new(homeserver_api, google, db, hasher);
     Ok(Router::new()
-        .route("/", post(root_handler))
+        .route(
+            "/",
+            post(root_handler).layer(DefaultBodyLimit::max(MAX_GOOGLE_VERIFICATION_REQUEST_BYTES)),
+        )
         .with_state(state))
 }
 
 async fn root_handler(
     State(state): State<AppState>,
-    body: Bytes,
+    request: Result<Json<GoogleVerificationRequest>, JsonRejection>,
 ) -> Result<Json<GoogleVerificationResponse>, GoogleVerificationError> {
-    let request = parse_request_body(&body)?;
+    let Json(request) = request.map_err(|_| GoogleVerificationError::InvalidRequest)?;
     let response = state
         .google_verification
         .verify(&request.google_id_token)
         .await?;
     Ok(Json(response))
-}
-
-fn parse_request_body(body: &[u8]) -> Result<GoogleVerificationRequest, GoogleVerificationError> {
-    if body.len() > MAX_GOOGLE_VERIFICATION_REQUEST_BYTES {
-        return Err(GoogleVerificationError::InvalidRequest);
-    }
-
-    let request = serde_json::from_slice::<GoogleVerificationRequest>(body)
-        .map_err(|_| GoogleVerificationError::InvalidRequest)?;
-    if request.google_id_token.trim().is_empty() {
-        return Err(GoogleVerificationError::InvalidRequest);
-    }
-
-    Ok(request)
 }
 
 impl IntoResponse for GoogleVerificationError {
@@ -95,32 +83,6 @@ mod tests {
     use crate::infrastructure::sql::SqlDb;
     use crate::shared::HomeserverAdminAPI;
 
-    #[test]
-    fn test_parse_request_body_rejects_unknown_fields() {
-        let err =
-            parse_request_body(br#"{"googleIdToken":"token","driveAccessToken":"drive-token"}"#)
-                .unwrap_err();
-        assert!(matches!(err, GoogleVerificationError::InvalidRequest));
-    }
-
-    #[test]
-    fn test_parse_request_body_rejects_empty_token() {
-        let err = parse_request_body(br#"{"googleIdToken":"   "}"#).unwrap_err();
-        assert!(matches!(err, GoogleVerificationError::InvalidRequest));
-    }
-
-    #[test]
-    fn test_parse_request_body_rejects_oversized_body() {
-        let body = format!(
-            r#"{{"googleIdToken":"{}"}}"#,
-            "a".repeat(MAX_GOOGLE_VERIFICATION_REQUEST_BYTES)
-        );
-
-        let err = parse_request_body(body.as_bytes()).unwrap_err();
-
-        assert!(matches!(err, GoogleVerificationError::InvalidRequest));
-    }
-
     async fn create_http_test_server(
         pool: PgPool,
         servers: &WiremockServers,
@@ -158,12 +120,15 @@ mod tests {
             hasher,
             jwks_url(google_server),
         );
-        let google_verification_router =
-            Router::new()
-                .route("/", post(root_handler))
-                .with_state(AppState {
-                    google_verification,
-                });
+        let google_verification_router = Router::new()
+            .route(
+                "/",
+                post(root_handler)
+                    .layer(DefaultBodyLimit::max(MAX_GOOGLE_VERIFICATION_REQUEST_BYTES)),
+            )
+            .with_state(AppState {
+                google_verification,
+            });
         let router = Router::new().nest("/google_verification", google_verification_router);
         TestServer::new(router).expect("Failed to create test server")
     }
