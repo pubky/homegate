@@ -55,6 +55,7 @@ impl GoogleVerificationService {
                 GOOGLE_VERIFICATIONS_TABLE,
                 config.max_verifications_per_week,
                 config.max_verifications_per_year,
+                None,
             ),
             google_id_token_verifier,
             hasher_argon2id: hasher,
@@ -83,7 +84,7 @@ impl GoogleVerificationService {
 
         let issued = self
             .signup_issuer
-            .issue(&google_identity_hash, LimitEnforcement::Enforce, None)
+            .issue(&google_identity_hash, LimitEnforcement::Enforce)
             .await?;
 
         Ok(GoogleVerificationResponse {

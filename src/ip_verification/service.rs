@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use crate::infrastructure::config::{IpVerificationConfig, SignupQuotaConfig};
+use crate::infrastructure::config::IpVerificationConfig;
 use crate::infrastructure::sql::SqlDb;
 use crate::shared::HasherArgon2id;
 use crate::shared::HomeserverAdminAPI;
@@ -18,7 +18,6 @@ const IP_VERIFICATIONS_TABLE: VerificationTable = VerificationTable {
 pub struct IpVerificationService {
     signup_issuer: RateLimitedSignupIssuer,
     hasher_argon2id: HasherArgon2id,
-    signup_quota: Option<SignupQuotaConfig>,
     limit_whitelist: Vec<IpAddr>,
 }
 
@@ -43,9 +42,9 @@ impl IpVerificationService {
                 IP_VERIFICATIONS_TABLE,
                 config.max_verifications_per_week,
                 config.max_verifications_per_year,
+                config.signup_quota.clone(),
             ),
             hasher_argon2id: hasher,
-            signup_quota: config.signup_quota.clone(),
             limit_whitelist: config.limit_whitelist.clone(),
         }
     }
@@ -66,10 +65,7 @@ impl IpVerificationService {
         };
         let ip_hash = self.hasher_argon2id.hash(&ip_address.to_string());
 
-        let issued = self
-            .signup_issuer
-            .issue(&ip_hash, enforcement, self.signup_quota.as_ref())
-            .await?;
+        let issued = self.signup_issuer.issue(&ip_hash, enforcement).await?;
 
         Ok(IpVerificationResponse {
             signup_code: issued.signup_code,

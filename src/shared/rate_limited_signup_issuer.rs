@@ -94,6 +94,7 @@ pub struct RateLimitedSignupIssuer {
     table: VerificationTable,
     max_verifications_per_week: u32,
     max_verifications_per_year: u32,
+    signup_quota: Option<SignupQuotaConfig>,
 }
 
 impl RateLimitedSignupIssuer {
@@ -103,6 +104,7 @@ impl RateLimitedSignupIssuer {
         table: VerificationTable,
         max_verifications_per_week: u32,
         max_verifications_per_year: u32,
+        signup_quota: Option<SignupQuotaConfig>,
     ) -> Self {
         Self {
             db,
@@ -110,6 +112,7 @@ impl RateLimitedSignupIssuer {
             table,
             max_verifications_per_week,
             max_verifications_per_year,
+            signup_quota,
         }
     }
 
@@ -119,15 +122,10 @@ impl RateLimitedSignupIssuer {
     /// limit check and insert are atomic — concurrent requests for the same
     /// identity cannot bypass the limit.
     ///
-    /// `signup_quota` applies quota limits to the issued code via the
-    /// homeserver POST endpoint. This is an `ip_verification`-only concept
-    /// (signing up "low tier" users); other providers should pass `None`,
-    /// which issues codes with homeserver system defaults (GET).
     pub async fn issue(
         &self,
         identity_hash: &str,
         enforcement: LimitEnforcement,
-        signup_quota: Option<&SignupQuotaConfig>,
     ) -> Result<IssuedSignup, SignupIssuanceError> {
         let mut tx = self.db.pool().begin().await.map_err(DbError::from)?;
         self.acquire_advisory_lock(&mut tx, identity_hash).await?;
@@ -141,7 +139,7 @@ impl RateLimitedSignupIssuer {
         // The homeserver HTTP call happens while holding the advisory lock for
         // this identity. Keeping the call inside the transaction means we never
         // record a verification without a valid signup code.
-        let signup_code = self.generate_signup_token(signup_quota).await?;
+        let signup_code = self.generate_signup_token().await?;
 
         let mut executor: UnifiedExecutor<'_> = (&mut tx).into();
         self.record_verification(&mut executor, identity_hash, &signup_code)
@@ -210,11 +208,8 @@ impl RateLimitedSignupIssuer {
         Ok(())
     }
 
-    async fn generate_signup_token(
-        &self,
-        signup_quota: Option<&SignupQuotaConfig>,
-    ) -> Result<String, SignupIssuanceError> {
-        let result = match signup_quota {
+    async fn generate_signup_token(&self) -> Result<String, SignupIssuanceError> {
+        let result = match self.signup_quota.as_ref() {
             Some(quota) => {
                 self.homeserver_admin_api
                     .generate_signup_token_with_quota(quota)
