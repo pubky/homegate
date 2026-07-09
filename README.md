@@ -57,7 +57,7 @@ Enabled by adding an `[ip_verification]` section to `config.toml`.
 
 ## Google Verification
 
-Server-side Google ID token verification for issuing homeserver signup codes. A trusted backend POSTs to `/google_verification` with a `googleIdToken` and receives a signup code if the token is valid and the Google identity has not exceeded the configured weekly/annual limits.
+Server-side Google ID token verification for issuing homeserver signup codes. A client POSTs to `/google_verification` with a `googleIdToken` and receives a signup code if the token is valid and the Google identity has not exceeded the configured weekly/annual limits.
 
 Homegate verifies the token signature against Google's JWKS and validates the expected audience, issuer, expiry, and subject. Rate limiting uses a secret-peppered hash of the verified issuer and subject claims; raw Google IDs and emails are not stored.
 
