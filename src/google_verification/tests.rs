@@ -1,12 +1,10 @@
 //! Service-layer integration tests for Google verification.
 //!
-//! These tests use a fake Google verifier and mocked Homeserver API. They do not
-//! call Google or depend on live JWKS endpoints.
+//! These tests use mocked Google JWKS and Homeserver HTTP APIs. They do not call
+//! Google or depend on live JWKS endpoints.
 
-use std::sync::Arc;
-
-use async_trait::async_trait;
 use sqlx::PgPool;
+use wiremock::MockServer;
 
 use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
 use crate::infrastructure::config::GoogleVerificationConfig;
@@ -14,8 +12,8 @@ use crate::infrastructure::sql::SqlDb;
 use crate::shared::HomeserverAdminAPI;
 
 use super::error::GoogleVerificationError;
-use super::google_id_token_verifier::{
-    GoogleIdTokenVerificationError, GoogleIdTokenVerifier, VerifiedGoogleIdentity,
+use super::google_id_token_verifier::test_support::{
+    TEST_GOOGLE_CLIENT_ID, jwks_server, jwks_url, valid_token, wrong_audience_token,
 };
 use super::service::GoogleVerificationService;
 
@@ -27,25 +25,20 @@ static TEST_HASHER: std::sync::LazyLock<crate::shared::HasherArgon2id> =
 
 fn create_service(
     servers: &WiremockServers,
+    google_server: &MockServer,
     db: SqlDb,
     max_per_week: u32,
     max_per_year: u32,
 ) -> GoogleVerificationService {
-    create_service_with_verifier(
-        servers,
-        db,
-        max_per_week,
-        max_per_year,
-        fake_valid_verifier("google-subject"),
-    )
+    create_service_with_google_server(servers, google_server, db, max_per_week, max_per_year)
 }
 
-fn create_service_with_verifier(
+fn create_service_with_google_server(
     servers: &WiremockServers,
+    google_server: &MockServer,
     db: SqlDb,
     max_per_week: u32,
     max_per_year: u32,
-    verifier: Arc<dyn GoogleIdTokenVerifier>,
 ) -> GoogleVerificationService {
     let homeserver_admin_api = HomeserverAdminAPI::new(
         &servers.homeserver_server.uri().parse().unwrap(),
@@ -53,52 +46,25 @@ fn create_service_with_verifier(
         "test-homeserver-pubky",
     );
     let config = GoogleVerificationConfig {
-        google_client_id: "test-google-client-id.apps.googleusercontent.com".to_string(),
+        google_client_id: TEST_GOOGLE_CLIENT_ID.to_string(),
         max_verifications_per_week: max_per_week,
         max_verifications_per_year: max_per_year,
     };
-    GoogleVerificationService::with_verifier(
+    GoogleVerificationService::for_test(
         db,
         homeserver_admin_api,
         &config,
         TEST_HASHER.clone(),
-        verifier,
+        jwks_url(google_server),
     )
-}
-
-fn fake_valid_verifier(subject: &str) -> Arc<dyn GoogleIdTokenVerifier> {
-    Arc::new(FakeGoogleVerifier {
-        result: Ok(VerifiedGoogleIdentity {
-            issuer: "https://accounts.google.com".to_string(),
-            subject: subject.to_string(),
-        }),
-    })
-}
-
-fn fake_error_verifier(error: GoogleIdTokenVerificationError) -> Arc<dyn GoogleIdTokenVerifier> {
-    Arc::new(FakeGoogleVerifier { result: Err(error) })
-}
-
-#[derive(Debug)]
-struct FakeGoogleVerifier {
-    result: Result<VerifiedGoogleIdentity, GoogleIdTokenVerificationError>,
-}
-
-#[async_trait]
-impl GoogleIdTokenVerifier for FakeGoogleVerifier {
-    async fn verify(
-        &self,
-        _id_token: &str,
-    ) -> Result<VerifiedGoogleIdentity, GoogleIdTokenVerificationError> {
-        self.result.clone()
-    }
 }
 
 #[sqlx::test]
 async fn test_successful_verification(pool: PgPool) {
     let servers = WiremockServers::start().await;
+    let google_server = jwks_server().await;
     let db = SqlDb::test(pool.clone()).await;
-    let service = create_service(&servers, db, 2, 4);
+    let service = create_service(&servers, &google_server, db, 2, 4);
 
     setup_homeserver_signup_token("token-123")
         .expect(1)
@@ -106,7 +72,7 @@ async fn test_successful_verification(pool: PgPool) {
         .await;
 
     let response = service
-        .verify("valid-google-id-token")
+        .verify(&valid_token("google-subject"))
         .await
         .expect("verification should succeed");
 
@@ -125,8 +91,10 @@ async fn test_successful_verification(pool: PgPool) {
 #[sqlx::test]
 async fn test_weekly_limit_exceeded(pool: PgPool) {
     let servers = WiremockServers::start().await;
+    let google_server = jwks_server().await;
     let db = SqlDb::test(pool).await;
-    let service = create_service(&servers, db, 1, 10);
+    let service = create_service(&servers, &google_server, db, 1, 10);
+    let token = valid_token("google-subject");
 
     setup_homeserver_signup_token("token")
         .expect(1)
@@ -134,11 +102,11 @@ async fn test_weekly_limit_exceeded(pool: PgPool) {
         .await;
 
     service
-        .verify("valid-google-id-token")
+        .verify(&token)
         .await
         .expect("first verification should succeed");
 
-    let error = service.verify("valid-google-id-token").await.unwrap_err();
+    let error = service.verify(&token).await.unwrap_err();
     assert!(matches!(
         error,
         GoogleVerificationError::WeeklyLimitExceeded
@@ -148,16 +116,12 @@ async fn test_weekly_limit_exceeded(pool: PgPool) {
 #[sqlx::test]
 async fn test_rate_limits_are_per_google_identity(pool: PgPool) {
     let servers = WiremockServers::start().await;
+    let google_server = jwks_server().await;
     let db = SqlDb::test(pool).await;
-    let service_a = create_service_with_verifier(
-        &servers,
-        db.clone(),
-        1,
-        10,
-        fake_valid_verifier("google-subject-a"),
-    );
-    let service_b =
-        create_service_with_verifier(&servers, db, 1, 10, fake_valid_verifier("google-subject-b"));
+    let service_a = create_service(&servers, &google_server, db.clone(), 1, 10);
+    let service_b = create_service(&servers, &google_server, db, 1, 10);
+    let token_a = valid_token("google-subject-a");
+    let token_b = valid_token("google-subject-b");
 
     setup_homeserver_signup_token("token")
         .expect(2)
@@ -165,18 +129,15 @@ async fn test_rate_limits_are_per_google_identity(pool: PgPool) {
         .await;
 
     service_a
-        .verify("valid-google-id-token-a")
+        .verify(&token_a)
         .await
         .expect("first identity should pass");
     service_b
-        .verify("valid-google-id-token-b")
+        .verify(&token_b)
         .await
         .expect("second identity should pass independently");
 
-    let error = service_a
-        .verify("valid-google-id-token-a")
-        .await
-        .unwrap_err();
+    let error = service_a.verify(&token_a).await.unwrap_err();
     assert!(matches!(
         error,
         GoogleVerificationError::WeeklyLimitExceeded
@@ -186,8 +147,10 @@ async fn test_rate_limits_are_per_google_identity(pool: PgPool) {
 #[sqlx::test]
 async fn test_annual_limit_exceeded(pool: PgPool) {
     let servers = WiremockServers::start().await;
+    let google_server = jwks_server().await;
     let db = SqlDb::test(pool.clone()).await;
-    let service = create_service(&servers, db, 10, 1);
+    let service = create_service(&servers, &google_server, db, 10, 1);
+    let token = valid_token("google-subject");
 
     setup_homeserver_signup_token("token")
         .expect(1)
@@ -195,7 +158,7 @@ async fn test_annual_limit_exceeded(pool: PgPool) {
         .await;
 
     service
-        .verify("valid-google-id-token")
+        .verify(&token)
         .await
         .expect("first verification should succeed");
 
@@ -206,7 +169,7 @@ async fn test_annual_limit_exceeded(pool: PgPool) {
         .await
         .expect("Failed to age verification");
 
-    let error = service.verify("valid-google-id-token").await.unwrap_err();
+    let error = service.verify(&token).await.unwrap_err();
     assert!(matches!(
         error,
         GoogleVerificationError::AnnualLimitExceeded
@@ -216,16 +179,11 @@ async fn test_annual_limit_exceeded(pool: PgPool) {
 #[sqlx::test]
 async fn test_invalid_google_token_does_not_call_homeserver(pool: PgPool) {
     let servers = WiremockServers::start().await;
+    let google_server = jwks_server().await;
     let db = SqlDb::test(pool).await;
-    let service = create_service_with_verifier(
-        &servers,
-        db,
-        2,
-        4,
-        fake_error_verifier(GoogleIdTokenVerificationError::Invalid),
-    );
+    let service = create_service(&servers, &google_server, db, 2, 4);
 
-    let error = service.verify("invalid-google-id-token").await.unwrap_err();
+    let error = service.verify(&wrong_audience_token()).await.unwrap_err();
     assert!(matches!(
         error,
         GoogleVerificationError::InvalidGoogleIdToken
@@ -235,16 +193,14 @@ async fn test_invalid_google_token_does_not_call_homeserver(pool: PgPool) {
 #[sqlx::test]
 async fn test_google_verifier_unavailable_does_not_call_homeserver(pool: PgPool) {
     let servers = WiremockServers::start().await;
+    let google_server = MockServer::start().await;
     let db = SqlDb::test(pool).await;
-    let service = create_service_with_verifier(
-        &servers,
-        db,
-        2,
-        4,
-        fake_error_verifier(GoogleIdTokenVerificationError::DependencyUnavailable),
-    );
+    let service = create_service(&servers, &google_server, db, 2, 4);
 
-    let error = service.verify("valid-google-id-token").await.unwrap_err();
+    let error = service
+        .verify(&valid_token("google-subject"))
+        .await
+        .unwrap_err();
     assert!(matches!(
         error,
         GoogleVerificationError::GoogleVerifierUnavailable
@@ -254,10 +210,14 @@ async fn test_google_verifier_unavailable_does_not_call_homeserver(pool: PgPool)
 #[sqlx::test]
 async fn test_homeserver_unavailable_returns_error(pool: PgPool) {
     let servers = WiremockServers::start().await;
+    let google_server = jwks_server().await;
     let db = SqlDb::test(pool).await;
-    let service = create_service(&servers, db, 2, 4);
+    let service = create_service(&servers, &google_server, db, 2, 4);
 
-    let error = service.verify("valid-google-id-token").await.unwrap_err();
+    let error = service
+        .verify(&valid_token("google-subject"))
+        .await
+        .unwrap_err();
     assert!(matches!(
         error,
         GoogleVerificationError::HomeserverUnavailable
@@ -267,8 +227,10 @@ async fn test_homeserver_unavailable_returns_error(pool: PgPool) {
 #[sqlx::test]
 async fn test_concurrent_requests_respect_rate_limit(pool: PgPool) {
     let servers = WiremockServers::start().await;
+    let google_server = jwks_server().await;
     let db = SqlDb::test(pool).await;
-    let service = create_service(&servers, db, 1, 10);
+    let service = create_service(&servers, &google_server, db, 1, 10);
+    let token = valid_token("google-subject");
 
     setup_homeserver_signup_token("token")
         .expect(1..=2)
@@ -277,10 +239,8 @@ async fn test_concurrent_requests_respect_rate_limit(pool: PgPool) {
 
     let service_a = service.clone();
     let service_b = service.clone();
-    let (result_a, result_b) = tokio::join!(
-        service_a.verify("valid-google-id-token"),
-        service_b.verify("valid-google-id-token"),
-    );
+    let token_a = token.clone();
+    let (result_a, result_b) = tokio::join!(service_a.verify(&token_a), service_b.verify(&token),);
 
     let results = [result_a, result_b];
     let success_count = results.iter().filter(|result| result.is_ok()).count();

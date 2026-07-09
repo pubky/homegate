@@ -1,7 +1,8 @@
-use std::sync::Arc;
+#[cfg(test)]
+use url::Url;
 
 use crate::google_verification::google_id_token_verifier::{
-    GoogleIdTokenVerificationError, GoogleIdTokenVerifier, GoogleJwksIdTokenVerifier,
+    GoogleIdTokenVerificationError, GoogleJwksIdTokenVerifier,
 };
 use crate::infrastructure::config::GoogleVerificationConfig;
 use crate::infrastructure::sql::SqlDb;
@@ -19,7 +20,7 @@ const GOOGLE_VERIFICATIONS_TABLE: VerificationTable = VerificationTable {
 #[derive(Clone, Debug)]
 pub struct GoogleVerificationService {
     signup_issuer: RateLimitedSignupIssuer,
-    google_id_token_verifier: Arc<dyn GoogleIdTokenVerifier>,
+    google_id_token_verifier: GoogleJwksIdTokenVerifier,
     hasher_argon2id: HasherArgon2id,
 }
 
@@ -30,23 +31,38 @@ impl GoogleVerificationService {
         config: &GoogleVerificationConfig,
         hasher: HasherArgon2id,
     ) -> Self {
-        Self::with_verifier(
+        Self::from_verifier(
             db,
             homeserver_admin_api,
             config,
             hasher,
-            Arc::new(GoogleJwksIdTokenVerifier::new(
-                config.google_client_id.clone(),
-            )),
+            GoogleJwksIdTokenVerifier::new(config.google_client_id.clone()),
         )
     }
 
-    pub(crate) fn with_verifier(
+    #[cfg(test)]
+    pub(crate) fn for_test(
         db: SqlDb,
         homeserver_admin_api: HomeserverAdminAPI,
         config: &GoogleVerificationConfig,
         hasher: HasherArgon2id,
-        google_id_token_verifier: Arc<dyn GoogleIdTokenVerifier>,
+        jwks_url: Url,
+    ) -> Self {
+        Self::from_verifier(
+            db,
+            homeserver_admin_api,
+            config,
+            hasher,
+            GoogleJwksIdTokenVerifier::for_test(config.google_client_id.clone(), jwks_url),
+        )
+    }
+
+    fn from_verifier(
+        db: SqlDb,
+        homeserver_admin_api: HomeserverAdminAPI,
+        config: &GoogleVerificationConfig,
+        hasher: HasherArgon2id,
+        google_id_token_verifier: GoogleJwksIdTokenVerifier,
     ) -> Self {
         Self {
             signup_issuer: RateLimitedSignupIssuer::new(
