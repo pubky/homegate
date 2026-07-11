@@ -3,9 +3,6 @@ use crate::shared::SignupIssuanceError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum GoogleVerificationError {
-    #[error("invalid_request")]
-    InvalidRequest,
-
     #[error("invalid_google_id_token")]
     InvalidGoogleIdToken,
 
