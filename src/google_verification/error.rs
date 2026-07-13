@@ -1,27 +1,28 @@
-use thiserror::Error;
-
 use crate::infrastructure::sql::DbError;
 use crate::shared::SignupIssuanceError;
 
-#[derive(Error, Debug)]
-pub enum IpVerificationError {
-    #[error("IP address has exceeded weekly verification limit")]
+#[derive(thiserror::Error, Debug)]
+pub enum GoogleVerificationError {
+    #[error("invalid_google_id_token")]
+    InvalidGoogleIdToken,
+
+    #[error("weekly_limit_exceeded")]
     WeeklyLimitExceeded,
 
-    #[error("IP address has exceeded annual verification limit")]
+    #[error("annual_limit_exceeded")]
     AnnualLimitExceeded,
 
-    #[error("Could not determine client IP address")]
-    IpAddressRequired,
-
-    #[error("Homeserver temporarily unavailable, please retry")]
+    #[error("homeserver_unavailable")]
     HomeserverUnavailable,
 
-    #[error("{0}")]
+    #[error("google_verifier_unavailable")]
+    GoogleVerifierUnavailable,
+
+    #[error("internal_error")]
     Database(#[from] DbError),
 }
 
-impl From<SignupIssuanceError> for IpVerificationError {
+impl From<SignupIssuanceError> for GoogleVerificationError {
     fn from(error: SignupIssuanceError) -> Self {
         match error {
             SignupIssuanceError::WeeklyLimitExceeded => Self::WeeklyLimitExceeded,

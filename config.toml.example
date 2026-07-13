@@ -45,3 +45,8 @@ admin_password = "admin"
 # rate_write = "1mb/s"
 # rate_write_burst = 10
 # allowed_write_paths = ["/pub/"]
+
+# [google_verification]
+# google_client_id = "your-google-client-id.apps.googleusercontent.com"
+# max_verifications_per_week = 2                   # optional
+# max_verifications_per_year = 4                   # optional

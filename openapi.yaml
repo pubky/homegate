@@ -4,10 +4,11 @@ info:
   description: |
     #### WARNING: This OpenAPI specification is AI generated. It may not be accurate.
 
-    A backend service to gatekeep Pubky Homeserver signups. Provides three verification methods:
+    A backend service to gatekeep Pubky Homeserver signups. Provides four verification methods:
     - SMS verification via Prelude
     - Lightning Network payment verification
     - IP-based verification (optional, disabled by default)
+    - Google ID token verification (optional, disabled by default)
 
     ## SMS Verification
     Uses Prelude for SMS verification. Each phone number:
@@ -29,6 +30,13 @@ info:
     will collectively exhaust the limit, and rotating IPs can bypass it. This endpoint should not
     be the sole line of defence against spam. It is disabled by default (omit the `[ip_verification]`
     section from `config.toml`).
+
+    ## Google Verification
+    Server-side verification of Google ID tokens. The token signature is validated against
+    Google's JWKS along with the expected audience, issuer, expiry, and subject. Rate limiting
+    uses a secret-peppered hash of the verified issuer and subject claims; raw Google IDs and
+    emails are not stored. Disabled by default (omit the `[google_verification]` section from
+    `config.toml`).
   version: 0.2.0
   contact:
     name: Homegate API Support
@@ -331,6 +339,89 @@ paths:
                   value: "Homeserver temporarily unavailable, please retry"
                 internalError:
                   value: "Internal Server Error"
+
+  /google_verification:
+    post:
+      summary: Create Google ID token verification
+      description: |
+        Verifies a Google ID token server-side and returns a signup code if the token is valid
+        and the Google identity has not exceeded the configured weekly/annual rate limits.
+
+        The token must be an RS256-signed Google ID token for the configured `google_client_id`
+        audience. The request body is limited to 20 KiB and unknown fields are rejected.
+
+        Rate limits apply per verified Google identity (peppered hash of `iss` + `sub`):
+        - Weekly limit: 2 verifications (default, configurable via `max_verifications_per_week` in `[google_verification]`)
+        - Annual limit: 4 verifications (default, configurable via `max_verifications_per_year` in `[google_verification]`)
+
+        This endpoint is only available when a `[google_verification]` section is present in `config.toml`. Returns 404 otherwise.
+      operationId: createGoogleVerification
+      tags:
+        - Google Verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoogleVerificationRequest'
+            examples:
+              valid:
+                summary: Valid Google ID token
+                value:
+                  googleIdToken: "eyJhbGciOiJSUzI1NiIsImtpZCI6Ii..."
+      responses:
+        '200':
+          description: Verification successful, signup code issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoogleVerificationResponse'
+              examples:
+                success:
+                  summary: Successful verification
+                  value:
+                    signupCode: "token-uuid-123"
+                    homeserverPubky: "test-homeserver-pubky"
+        '400':
+          description: Malformed request (invalid JSON, unknown fields, empty token, or body over 20 KiB)
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "invalid_request"
+        '401':
+          description: The Google ID token is invalid (bad signature, wrong audience/issuer, or expired)
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "invalid_google_id_token"
+        '404':
+          description: Google verification is not enabled on this server
+        '429':
+          description: Rate limit exceeded for this Google identity
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                weeklyLimit:
+                  value: "weekly_limit_exceeded"
+                annualLimit:
+                  value: "annual_limit_exceeded"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                homeserverUnavailable:
+                  value: "homeserver_unavailable"
+                googleVerifierUnavailable:
+                  value: "google_verifier_unavailable"
+                internalError:
+                  value: "internal_error"
 
   /ln_verification/info:
     get:
@@ -651,6 +742,32 @@ components:
           description: Public key of the homeserver
           example: "test-homeserver-pubky"
 
+    GoogleVerificationRequest:
+      type: object
+      required:
+        - googleIdToken
+      additionalProperties: false
+      properties:
+        googleIdToken:
+          type: string
+          description: RS256-signed Google ID token issued for the configured client ID
+          example: "eyJhbGciOiJSUzI1NiIsImtpZCI6Ii..."
+
+    GoogleVerificationResponse:
+      type: object
+      required:
+        - signupCode
+        - homeserverPubky
+      properties:
+        signupCode:
+          type: string
+          description: Signup token to use for homeserver registration
+          example: "token-uuid-123"
+        homeserverPubky:
+          type: string
+          description: Public key of the homeserver
+          example: "test-homeserver-pubky"
+
     LnInfoResponse:
       type: object
       required:
@@ -739,3 +856,5 @@ tags:
     description: Lightning Network payment-based verification endpoints
   - name: IP Verification
     description: IP-based verification endpoints (optional, disabled by default)
+  - name: Google Verification
+    description: Google ID token verification endpoints (optional, disabled by default)
