@@ -1,6 +1,6 @@
 # Homegate
 
-A backend service to gatekeep [Pubky Homeserver](https://github.com/pubky/pubky-core/) signups.
+A backend service to gatekeep [Pubky Homeserver](https://github.com/pubky/pubky-homeserver/) signups.
 
 The Pubky social media app uses Homegate to gatekeep signups. Check out https://pubky.app/onboarding/human (use a private browser window if you have an active session).
 
