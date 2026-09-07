@@ -16,7 +16,7 @@ jobs:
     name: Build Rust
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup environment
         id: setup
         uses: ./.github/setup
@@ -43,7 +43,7 @@ jobs:
     env:
       DATABASE_URL: postgres://test_user:test_pass@localhost:5432/postgres?pubky-test=true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup environment
         id: setup
         uses: ./.github/setup
