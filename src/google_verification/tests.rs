@@ -55,6 +55,7 @@ fn create_service_with_google_server(
         homeserver_admin_api,
         &config,
         TEST_HASHER.clone(),
+        crate::shared::Metrics::new(),
         jwks_url(google_server),
     )
 }

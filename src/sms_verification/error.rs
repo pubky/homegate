@@ -1,6 +1,10 @@
 use thiserror::Error;
 
-use crate::{infrastructure::sql::DbError, sms_verification::prelude_api::PreludeError};
+use crate::{
+    infrastructure::sql::DbError,
+    shared::{Dependency, FailureKind, RejectionReason},
+    sms_verification::prelude_api::PreludeError,
+};
 
 #[derive(Error, Debug)]
 pub enum SmsVerificationError {
@@ -37,6 +41,32 @@ pub enum SmsVerificationError {
     Database(#[from] DbError),
 }
 
+impl SmsVerificationError {
+    /// How this error is counted in metrics.
+    pub fn failure_kind(&self) -> FailureKind {
+        match self {
+            Self::Blocked => FailureKind::Rejected(RejectionReason::Blocked),
+            Self::WeeklyLimitExceeded => {
+                FailureKind::Rejected(RejectionReason::WeeklyLimitExceeded)
+            }
+            Self::AnnualLimitExceeded => {
+                FailureKind::Rejected(RejectionReason::AnnualLimitExceeded)
+            }
+            Self::NoActiveVerification => {
+                FailureKind::Rejected(RejectionReason::NoActiveVerification)
+            }
+            Self::MaxValidationAttemptsExceeded => {
+                FailureKind::Rejected(RejectionReason::MaxValidationAttemptsExceeded)
+            }
+            Self::InvalidPhoneNumber => FailureKind::Rejected(RejectionReason::InvalidPhoneNumber),
+            Self::RateLimited { .. } => FailureKind::Rejected(RejectionReason::PreludeRateLimited),
+            Self::HomeserverUnavailable => FailureKind::DependencyError(Dependency::Homeserver),
+            Self::RequestFailed(_) => FailureKind::DependencyError(Dependency::Prelude),
+            Self::Database(_) => FailureKind::Internal,
+        }
+    }
+}
+
 impl From<PreludeError> for SmsVerificationError {
     fn from(error: PreludeError) -> Self {
         match error {
@@ -47,5 +77,36 @@ impl From<PreludeError> for SmsVerificationError {
             PreludeError::InvalidPhoneNumber => SmsVerificationError::InvalidPhoneNumber,
             PreludeError::RequestFailed(e) => SmsVerificationError::RequestFailed(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::SignupType;
+
+    #[test]
+    fn rejection_reasons_are_pre_created_for_sms() {
+        let errors = [
+            SmsVerificationError::Blocked,
+            SmsVerificationError::WeeklyLimitExceeded,
+            SmsVerificationError::AnnualLimitExceeded,
+            SmsVerificationError::NoActiveVerification,
+            SmsVerificationError::MaxValidationAttemptsExceeded,
+            SmsVerificationError::InvalidPhoneNumber,
+            SmsVerificationError::RateLimited { retry_after: None },
+            SmsVerificationError::HomeserverUnavailable,
+        ];
+        let pre_created = RejectionReason::for_signup_type(SignupType::Sms);
+        for error in errors {
+            if let FailureKind::Rejected(reason) = error.failure_kind() {
+                assert!(
+                    pre_created.contains(&reason),
+                    "{reason:?} missing from RejectionReason::for_signup_type(Sms)"
+                );
+            }
+        }
+        // Recorded directly by the service on a wrong code, not via failure_kind().
+        assert!(pre_created.contains(&RejectionReason::InvalidCode));
     }
 }

@@ -15,7 +15,7 @@ use crate::{
         VerificationId, app_state::AppState, error::LnVerificationError, phoenixd_api::PhoenixdAPI,
         service::LnVerificationService, types::VerificationResponse,
     },
-    shared::HomeserverAdminAPI,
+    shared::{HomeserverAdminAPI, Metrics, SignupType},
 };
 
 /// Default timeout for long-polling verification requests
@@ -28,6 +28,7 @@ pub async fn router(
     homeserver_api: &HomeserverAdminAPI,
     ln: &LnVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
+    metrics: Metrics,
 ) -> Result<Router, HttpServerError> {
     let phoenixd_api = PhoenixdAPI::new(&ln.phoenixd_api_url, &ln.phoenixd_api_password);
 
@@ -38,6 +39,7 @@ pub async fn router(
         ln.invoice_price_sat,
         ln.invoice_description.clone(),
         ln.invoice_expiry_seconds,
+        metrics.clone(),
     );
     let ln_service = std::sync::Arc::new(ln_service);
 
@@ -49,7 +51,7 @@ pub async fn router(
         }
     });
 
-    let state = AppState::new(ln_service, homeserver_api.clone());
+    let state = AppState::new(ln_service, homeserver_api.clone(), metrics);
     Ok(Router::new()
         .route("/", post(create_verification_handler))
         .route("/{id}", get(get_verification_handler))
@@ -64,7 +66,11 @@ pub async fn router(
 async fn create_verification_handler(
     State(state): State<AppState>,
 ) -> Result<Json<CreateVerificationResponse>, LnVerificationError> {
-    let (verification, invoice) = state.ln_service.create_verification().await?;
+    let (verification, invoice) = state
+        .ln_service
+        .create_verification()
+        .await
+        .inspect_err(|error| record_failure(&state, error))?;
     tracing::info!("Created verification {}", verification.id);
     let response = CreateVerificationResponse {
         id: verification.id,
@@ -80,7 +86,12 @@ async fn get_verification_handler(
     State(state): State<AppState>,
     Path(id): Path<VerificationId>,
 ) -> Response {
-    let verification = match state.ln_service.get_and_sync_verification(&id).await {
+    let verification = match state
+        .ln_service
+        .get_and_sync_verification(&id)
+        .await
+        .inspect_err(|error| record_failure(&state, error))
+    {
         Ok(Some(verification)) => verification,
         Ok(None) => {
             return (StatusCode::NOT_FOUND, "Not found".to_string()).into_response();
@@ -104,6 +115,7 @@ async fn await_verification_handler(
         .ln_service
         .get_and_await_verification(&id, Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .await
+        .inspect_err(|error| record_failure(&state, error))
     {
         Ok(Some(response)) => response,
         Ok(None) => {
@@ -129,6 +141,12 @@ async fn await_verification_handler(
         )
             .into_response(),
     }
+}
+
+fn record_failure(state: &AppState, error: &LnVerificationError) {
+    state
+        .metrics
+        .record_failure(SignupType::Lightning, error.failure_kind());
 }
 
 /// Get Lightning verification info handler.
@@ -233,11 +251,12 @@ mod tests {
             1000, // amount_sat
             "Test Invoice".to_string(),
             600, // invoice_expiry_seconds
+            Metrics::new(),
         );
         let ln_service = std::sync::Arc::new(ln_service);
 
         // Note: We intentionally skip spawning the background sync task for this test
-        let state = AppState::new(ln_service, homeserver_api.clone());
+        let state = AppState::new(ln_service, homeserver_api.clone(), Metrics::new());
         Router::new()
             .route("/info", get(get_info_handler))
             .with_state(state)

@@ -15,7 +15,7 @@ use crate::{
         config::SmsVerificationConfig,
         http::{HttpServerError, RequestOrigin, UserAgent},
     },
-    shared::HomeserverAdminAPI,
+    shared::{HomeserverAdminAPI, Metrics, SignupType},
     sms_verification::app_state::AppState,
 };
 
@@ -24,8 +24,9 @@ pub async fn router(
     sms: &SmsVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
     hasher: crate::shared::HasherArgon2id,
+    metrics: Metrics,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(homeserver_api, sms, db, hasher);
+    let state = AppState::new(homeserver_api, sms, db, hasher, metrics);
     Ok(Router::new()
         .route("/send_code", post(send_code_handler))
         .route("/validate_code", post(validate_code_handler))
@@ -42,7 +43,8 @@ async fn send_code_handler(
     state
         .sms_verification
         .create_verification(&state.db, request, ip_address, user_agent)
-        .await?;
+        .await
+        .inspect_err(|error| record_failure(&state, error))?;
     Ok(StatusCode::OK)
 }
 
@@ -53,8 +55,15 @@ async fn validate_code_handler(
     let response = state
         .sms_verification
         .validate_code(&state.db, request)
-        .await?;
+        .await
+        .inspect_err(|error| record_failure(&state, error))?;
     Ok(Json(response))
+}
+
+fn record_failure(state: &AppState, error: &SmsVerificationError) {
+    state
+        .metrics
+        .record_failure(SignupType::Sms, error.failure_kind());
 }
 
 /// Get SMS verification info handler.
@@ -120,6 +129,14 @@ mod tests {
         pool: PgPool,
         servers: &WiremockServers,
     ) -> (TestServer, PgPool) {
+        create_http_test_server_with_metrics(pool, servers, Metrics::new()).await
+    }
+
+    async fn create_http_test_server_with_metrics(
+        pool: PgPool,
+        servers: &WiremockServers,
+        metrics: Metrics,
+    ) -> (TestServer, PgPool) {
         use crate::infrastructure::sql::SqlDb;
 
         let homeserver_api = HomeserverAdminAPI::new(
@@ -134,7 +151,7 @@ mod tests {
         let hasher = crate::shared::HasherArgon2id::new(
             tempfile::tempdir().unwrap().keep().join("pepper.txt"),
         );
-        let sms_verification_router = router(&homeserver_api, &sms, db, hasher)
+        let sms_verification_router = router(&homeserver_api, &sms, db, hasher, metrics)
             .await
             .expect("Failed to create router");
 
@@ -314,5 +331,62 @@ mod tests {
 
         let response = server.get("/sms_verification/info").await;
         response.assert_status_ok();
+    }
+
+    #[sqlx::test]
+    async fn metrics_follow_the_sms_flow(pool: PgPool) {
+        use crate::shared::RejectionReason;
+
+        let servers = WiremockServers::start().await;
+        let metrics = Metrics::new();
+        let (server, _pool) =
+            create_http_test_server_with_metrics(pool, &servers, metrics.clone()).await;
+        let phone = "+30123456789";
+        let phone_num = PhoneNumber::new(phone).unwrap();
+
+        // Code sent: a verification has started.
+        setup_prelude_create_verification(&phone_num, None, "success", None)
+            .expect(1)
+            .mount(&servers.prelude_server)
+            .await;
+        server
+            .post("/sms_verification/send_code")
+            .json(&serde_json::json!({ "phoneNumber": phone }))
+            .await
+            .assert_status_ok();
+        assert_eq!(metrics.verification_started(SignupType::Sms), 1);
+        assert_eq!(metrics.signup_codes_issued(SignupType::Sms), 0);
+
+        // Wrong code: counted as a rejection even though the HTTP status is 200.
+        setup_prelude_check_code(&phone_num, "000000", "failure")
+            .expect(1)
+            .mount(&servers.prelude_server)
+            .await;
+        server
+            .post("/sms_verification/validate_code")
+            .json(&serde_json::json!({ "phoneNumber": phone, "code": "000000" }))
+            .await
+            .assert_status_ok();
+        assert_eq!(
+            metrics.verification_rejected(SignupType::Sms, RejectionReason::InvalidCode),
+            1
+        );
+
+        // Right code: a signup code is issued.
+        setup_prelude_check_code(&phone_num, "123456", "success")
+            .expect(1)
+            .mount(&servers.prelude_server)
+            .await;
+        setup_homeserver_signup_token("token-uuid-123")
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+        server
+            .post("/sms_verification/validate_code")
+            .json(&serde_json::json!({ "phoneNumber": phone, "code": "123456" }))
+            .await
+            .assert_status_ok();
+        assert_eq!(metrics.signup_codes_issued(SignupType::Sms), 1);
+        assert_eq!(metrics.verification_started(SignupType::Sms), 1);
     }
 }

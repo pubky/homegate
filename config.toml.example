@@ -13,6 +13,11 @@ admin_password = "admin"
 # level = "info"                                    # trace, debug, info, warn, error, off
 # module_levels = ["hyper=warn", "tower_http=info"]  # optional per-module overrides
 
+# Prometheus metrics, served at /metrics on a separate listener.
+# Keep this socket off the public network. Omitting the section disables it.
+# [metrics]
+# listen_socket = "127.0.0.1:8081"                 # optional, this is the default
+
 # Uncomment sections below to enable verification routes.
 # Omitting a section disables that route entirely.
 

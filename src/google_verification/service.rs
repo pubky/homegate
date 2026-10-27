@@ -7,7 +7,9 @@ use crate::google_verification::google_id_token_verifier::{
 use crate::infrastructure::config::GoogleVerificationConfig;
 use crate::infrastructure::sql::SqlDb;
 use crate::shared::{HasherArgon2id, HomeserverAdminAPI};
-use crate::shared::{LimitEnforcement, RateLimitedSignupIssuer, VerificationTable};
+use crate::shared::{
+    LimitEnforcement, Metrics, RateLimitedSignupIssuer, SignupType, VerificationTable,
+};
 
 use super::error::GoogleVerificationError;
 use super::types::GoogleVerificationResponse;
@@ -15,6 +17,7 @@ use super::types::GoogleVerificationResponse;
 const GOOGLE_VERIFICATIONS_TABLE: VerificationTable = VerificationTable {
     name: "google_verifications",
     hash_column: "google_identity_hash",
+    signup_type: SignupType::Google,
 };
 
 #[derive(Clone, Debug)]
@@ -30,12 +33,14 @@ impl GoogleVerificationService {
         homeserver_admin_api: HomeserverAdminAPI,
         config: &GoogleVerificationConfig,
         hasher: HasherArgon2id,
+        metrics: Metrics,
     ) -> Self {
         Self::from_verifier(
             db,
             homeserver_admin_api,
             config,
             hasher,
+            metrics,
             GoogleJwksIdTokenVerifier::new(config.google_client_id.clone()),
         )
     }
@@ -46,6 +51,7 @@ impl GoogleVerificationService {
         homeserver_admin_api: HomeserverAdminAPI,
         config: &GoogleVerificationConfig,
         hasher: HasherArgon2id,
+        metrics: Metrics,
         jwks_url: Url,
     ) -> Self {
         Self::from_verifier(
@@ -53,6 +59,7 @@ impl GoogleVerificationService {
             homeserver_admin_api,
             config,
             hasher,
+            metrics,
             GoogleJwksIdTokenVerifier::for_test(config.google_client_id.clone(), jwks_url),
         )
     }
@@ -62,6 +69,7 @@ impl GoogleVerificationService {
         homeserver_admin_api: HomeserverAdminAPI,
         config: &GoogleVerificationConfig,
         hasher: HasherArgon2id,
+        metrics: Metrics,
         google_id_token_verifier: GoogleJwksIdTokenVerifier,
     ) -> Self {
         Self {
@@ -72,6 +80,7 @@ impl GoogleVerificationService {
                 config.max_verifications_per_week,
                 config.max_verifications_per_year,
                 None,
+                metrics,
             ),
             google_id_token_verifier,
             hasher_argon2id: hasher,

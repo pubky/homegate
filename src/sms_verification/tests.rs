@@ -50,11 +50,9 @@ fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerification
     SmsVerificationService::new(
         prelude_api,
         homeserver_admin_api,
-        2,
-        4,
-        2,
-        vec![],
+        &sms,
         test_phone_hasher(),
+        crate::shared::Metrics::new(),
     )
 }
 

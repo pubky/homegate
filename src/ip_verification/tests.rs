@@ -48,7 +48,13 @@ fn create_service_with_quota(
         signup_quota,
         limit_whitelist: vec![],
     };
-    IpVerificationService::new(db, homeserver_admin_api, &config, TEST_HASHER.clone())
+    IpVerificationService::new(
+        db,
+        homeserver_admin_api,
+        &config,
+        TEST_HASHER.clone(),
+        crate::shared::Metrics::new(),
+    )
 }
 
 #[sqlx::test]

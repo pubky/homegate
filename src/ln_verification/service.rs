@@ -12,7 +12,7 @@ use crate::{
         error::LnVerificationError, payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI,
         types::VerificationResponse,
     },
-    shared::HomeserverAdminAPI,
+    shared::{Dependency, HomeserverAdminAPI, Metrics, SignupType},
 };
 
 /// Service for the Lightning Network verification.
@@ -25,6 +25,7 @@ pub struct LnVerificationService {
     amount_sat: u64,
     invoice_description: String,
     invoice_expiry_seconds: u64,
+    metrics: Metrics,
 }
 
 impl LnVerificationService {
@@ -35,6 +36,7 @@ impl LnVerificationService {
         amount_sat: u64,
         invoice_description: String,
         invoice_expiry_seconds: u64,
+        metrics: Metrics,
     ) -> Self {
         let (tx, _) = broadcast::channel(200);
         Self {
@@ -45,6 +47,7 @@ impl LnVerificationService {
             invoice_description,
             invoice_expiry_seconds,
             completion_tx: tx,
+            metrics,
         }
     }
 
@@ -79,6 +82,8 @@ impl LnVerificationService {
             &mut self.db.pool().into(),
         )
         .await?;
+        self.metrics
+            .record_verification_started(SignupType::Lightning);
         Ok((verification, invoice))
     }
 
@@ -115,7 +120,11 @@ impl LnVerificationService {
             return Ok(None);
         }
 
-        let signup_code = match self.homeserver_api.generate_signup_token().await {
+        let token_result = self
+            .metrics
+            .observe_homeserver_request(self.homeserver_api.generate_signup_token())
+            .await;
+        let signup_code = match token_result {
             Ok(code) => code,
             Err(e) => {
                 tracing::warn!(
@@ -123,6 +132,9 @@ impl LnVerificationService {
                     error = %e,
                     "Homeserver unavailable during invoice sync"
                 );
+                // Recorded here rather than in the handler because this also
+                // runs from the background sync, which swallows the error.
+                self.metrics.record_dependency_error(Dependency::Homeserver);
                 return Err(LnVerificationError::HomeserverUnavailable);
             }
         };
@@ -133,6 +145,9 @@ impl LnVerificationService {
         )
         .await?;
         tx.commit().await?;
+        self.metrics
+            .record_signup_code_issued(SignupType::Lightning);
+        self.metrics.record_ln_sats_received(invoice.received_sat);
 
         tracing::info!("Verification {} finalised", verification.id);
         if let Err(e) = self.completion_tx.send(verification.id.clone()) {
@@ -355,5 +370,154 @@ impl LnVerificationService {
         }
         tracing::warn!("Websocket closed");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
+    use serde_json::json;
+    use sqlx::PgPool;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const PAYMENT_HASH: &str = "bb4b823baf2ed506c5c8679e5887499aff7097e063d91eaa2d135fe35c88d289";
+
+    /// Mock PhoenixD: invoice creation plus an invoice lookup reporting the
+    /// given payment state. `received_sat` above the requested 1000 shows the
+    /// sats metric uses the received amount.
+    async fn phoenixd_mock(is_paid: bool, received_sat: u64) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/createinvoice"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "amountSat": 1000,
+                "paymentHash": PAYMENT_HASH,
+                "serialized": "lnbc-test-invoice",
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/payments/incoming/{PAYMENT_HASH}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "paymentHash": PAYMENT_HASH,
+                "preimage": "00",
+                "externalId": null,
+                "description": "Test Invoice",
+                "invoice": "lnbc-test-invoice",
+                "isPaid": is_paid,
+                "receivedSat": received_sat,
+                "requestedSat": 1000,
+                "fees": 0,
+                "completedAt": null,
+                "createdAt": 1765463919000u64,
+                "isExpired": false,
+                "expiresAt": 1765464519000u64,
+            })))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn service(
+        db: SqlDb,
+        phoenixd: &MockServer,
+        servers: &WiremockServers,
+        metrics: Metrics,
+    ) -> LnVerificationService {
+        LnVerificationService::new(
+            db,
+            PhoenixdAPI::new(&phoenixd.uri().parse().unwrap(), "unused"),
+            HomeserverAdminAPI::new(
+                &servers.homeserver_server.uri().parse().unwrap(),
+                "test-pass",
+                "test-homeserver-pubky",
+            ),
+            1000,
+            "Test Invoice".to_string(),
+            600,
+            metrics,
+        )
+    }
+
+    #[sqlx::test]
+    async fn metrics_follow_a_paid_verification(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let phoenixd = phoenixd_mock(true, 1500).await;
+        let metrics = Metrics::new();
+        let service = service(
+            SqlDb::test(pool).await,
+            &phoenixd,
+            &servers,
+            metrics.clone(),
+        );
+        setup_homeserver_signup_token("token-123")
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+
+        let (verification, _invoice) = service.create_verification().await.unwrap();
+        assert_eq!(metrics.verification_started(SignupType::Lightning), 1);
+        assert_eq!(metrics.signup_codes_issued(SignupType::Lightning), 0);
+
+        let synced = service
+            .get_and_sync_verification(&verification.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(synced.is_finalised());
+        assert_eq!(metrics.signup_codes_issued(SignupType::Lightning), 1);
+        assert_eq!(metrics.ln_sats_received(), 1500);
+        assert_eq!(metrics.dependency_errors(Dependency::Homeserver), 0);
+    }
+
+    #[sqlx::test]
+    async fn metrics_count_homeserver_failure_during_sync(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let phoenixd = phoenixd_mock(true, 1000).await;
+        let metrics = Metrics::new();
+        let service = service(
+            SqlDb::test(pool).await,
+            &phoenixd,
+            &servers,
+            metrics.clone(),
+        );
+        // No homeserver mock: token generation fails.
+
+        let (verification, _invoice) = service.create_verification().await.unwrap();
+        let result = service.get_and_sync_verification(&verification.id).await;
+
+        assert!(matches!(
+            result,
+            Err(LnVerificationError::HomeserverUnavailable)
+        ));
+        assert_eq!(metrics.dependency_errors(Dependency::Homeserver), 1);
+        assert_eq!(metrics.signup_codes_issued(SignupType::Lightning), 0);
+        assert_eq!(metrics.ln_sats_received(), 0);
+    }
+
+    #[sqlx::test]
+    async fn metrics_do_not_count_unpaid_invoices(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let phoenixd = phoenixd_mock(false, 0).await;
+        let metrics = Metrics::new();
+        let service = service(
+            SqlDb::test(pool).await,
+            &phoenixd,
+            &servers,
+            metrics.clone(),
+        );
+
+        let (verification, _invoice) = service.create_verification().await.unwrap();
+        let synced = service
+            .get_and_sync_verification(&verification.id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(!synced.is_finalised());
+        assert_eq!(metrics.verification_started(SignupType::Lightning), 1);
+        assert_eq!(metrics.signup_codes_issued(SignupType::Lightning), 0);
     }
 }
