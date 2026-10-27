@@ -73,8 +73,6 @@ Adding a `[metrics]` section to `config.toml` starts a second listener (default 
 | `homegate_verification_started_total` | `type` | SMS codes sent and Lightning invoices created; compare with issued for drop-off |
 | `homegate_verification_rejected_total` | `type`, `reason` | Requests refused for a client-attributable reason (rate limits, invalid tokens, wrong codes, ...) |
 | `homegate_dependency_errors_total` | `dependency` | Failed calls to `homeserver`, `prelude`, `phoenixd` or `google_jwks` |
-| `homegate_limit_bypassed_total` | `type` | Rate-limit checks skipped because the identity is whitelisted (`sms` counts whitelisted code requests, `ip` whitelisted issuance attempts; `google` has no whitelist) |
-| `homegate_ln_sats_received_total` | | Satoshis received for finalised Lightning verifications |
 | `homegate_homeserver_request_duration_seconds` | | Histogram of signup token requests to the homeserver admin API |
 | `homegate_route_enabled` | `type` | 1 if the route is enabled in config, else 0 |
 | `homegate_build_info` | `version` | Always 1; carries the running version |

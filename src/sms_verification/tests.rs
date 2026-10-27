@@ -42,17 +42,19 @@ fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerification
     let sms = SmsVerificationConfig::for_test(servers.prelude_server.uri().parse().unwrap());
 
     let prelude_api = PreludeAPI::new(&sms.prelude_api_url, &sms.prelude_api_key);
+    let metrics = crate::shared::Metrics::new();
     let homeserver_admin_api = HomeserverAdminAPI::new(
         &servers.homeserver_server.uri().parse().unwrap(),
         "test-pass",
         "test-homeserver-pubky",
+        metrics.clone(),
     );
     SmsVerificationService::new(
         prelude_api,
         homeserver_admin_api,
         &sms,
         test_phone_hasher(),
-        crate::shared::Metrics::new(),
+        metrics,
     )
 }
 

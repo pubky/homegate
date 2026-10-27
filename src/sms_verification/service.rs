@@ -69,7 +69,6 @@ impl SmsVerificationService {
         phone_number_hash: &str,
     ) -> Result<(), SmsVerificationError> {
         if self.limit_whitelist.iter().any(|w| w == phone_number) {
-            self.metrics.record_limit_bypassed(SignupType::Sms);
             return Ok(());
         }
         let weekly_count = SmsVerificationRepository::count_verified_sessions_in_last_days(
@@ -208,10 +207,7 @@ impl SmsVerificationService {
 
         match prelude_response {
             PreludeCheckCodeResponse::Success { id, .. } => {
-                let token_result = self
-                    .metrics
-                    .observe_homeserver_request(self.homeserver_admin_api.generate_signup_token())
-                    .await;
+                let token_result = self.homeserver_admin_api.generate_signup_token().await;
                 let code = match token_result {
                     Ok(code) => code,
                     Err(_e) => {

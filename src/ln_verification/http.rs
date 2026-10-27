@@ -238,10 +238,12 @@ mod tests {
         let db = SqlDb::test(pool).await;
         // Use placeholder URLs - these won't be called for the /info endpoint
         let phoenixd_api = PhoenixdAPI::new(&"http://localhost:1".parse().unwrap(), "unused");
+        let metrics = Metrics::new();
         let homeserver_api = HomeserverAdminAPI::new(
             &"http://localhost:1".parse().unwrap(),
             "unused",
             "test-homeserver-pubky",
+            metrics.clone(),
         );
 
         let ln_service = crate::ln_verification::service::LnVerificationService::new(
@@ -251,12 +253,12 @@ mod tests {
             1000, // amount_sat
             "Test Invoice".to_string(),
             600, // invoice_expiry_seconds
-            Metrics::new(),
+            metrics.clone(),
         );
         let ln_service = std::sync::Arc::new(ln_service);
 
         // Note: We intentionally skip spawning the background sync task for this test
-        let state = AppState::new(ln_service, homeserver_api.clone(), Metrics::new());
+        let state = AppState::new(ln_service, homeserver_api.clone(), metrics);
         Router::new()
             .route("/info", get(get_info_handler))
             .with_state(state)

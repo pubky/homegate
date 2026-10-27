@@ -123,6 +123,7 @@ mod tests {
             &servers.homeserver_server.uri().parse().unwrap(),
             "test-pass",
             "test-homeserver-pubky",
+            metrics.clone(),
         );
         let config = GoogleVerificationConfig {
             google_client_id: TEST_GOOGLE_CLIENT_ID.to_string(),

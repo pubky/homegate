@@ -12,7 +12,7 @@ use crate::{
         error::LnVerificationError, payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI,
         types::VerificationResponse,
     },
-    shared::{Dependency, HomeserverAdminAPI, Metrics, SignupType},
+    shared::{HomeserverAdminAPI, Metrics, SignupType},
 };
 
 /// Service for the Lightning Network verification.
@@ -120,11 +120,7 @@ impl LnVerificationService {
             return Ok(None);
         }
 
-        let token_result = self
-            .metrics
-            .observe_homeserver_request(self.homeserver_api.generate_signup_token())
-            .await;
-        let signup_code = match token_result {
+        let signup_code = match self.homeserver_api.generate_signup_token().await {
             Ok(code) => code,
             Err(e) => {
                 tracing::warn!(
@@ -132,9 +128,6 @@ impl LnVerificationService {
                     error = %e,
                     "Homeserver unavailable during invoice sync"
                 );
-                // Recorded here rather than in the handler because this also
-                // runs from the background sync, which swallows the error.
-                self.metrics.record_dependency_error(Dependency::Homeserver);
                 return Err(LnVerificationError::HomeserverUnavailable);
             }
         };
@@ -147,7 +140,6 @@ impl LnVerificationService {
         tx.commit().await?;
         self.metrics
             .record_signup_code_issued(SignupType::Lightning);
-        self.metrics.record_ln_sats_received(invoice.received_sat);
 
         tracing::info!("Verification {} finalised", verification.id);
         if let Err(e) = self.completion_tx.send(verification.id.clone()) {
@@ -377,6 +369,7 @@ impl LnVerificationService {
 mod tests {
     use super::*;
     use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
+    use crate::shared::Dependency;
     use serde_json::json;
     use sqlx::PgPool;
     use wiremock::matchers::{method, path};
@@ -385,9 +378,8 @@ mod tests {
     const PAYMENT_HASH: &str = "bb4b823baf2ed506c5c8679e5887499aff7097e063d91eaa2d135fe35c88d289";
 
     /// Mock PhoenixD: invoice creation plus an invoice lookup reporting the
-    /// given payment state. `received_sat` above the requested 1000 shows the
-    /// sats metric uses the received amount.
-    async fn phoenixd_mock(is_paid: bool, received_sat: u64) -> MockServer {
+    /// given payment state.
+    async fn phoenixd_mock(is_paid: bool) -> MockServer {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/createinvoice"))
@@ -407,7 +399,7 @@ mod tests {
                 "description": "Test Invoice",
                 "invoice": "lnbc-test-invoice",
                 "isPaid": is_paid,
-                "receivedSat": received_sat,
+                "receivedSat": if is_paid { 1000 } else { 0 },
                 "requestedSat": 1000,
                 "fees": 0,
                 "completedAt": null,
@@ -433,6 +425,7 @@ mod tests {
                 &servers.homeserver_server.uri().parse().unwrap(),
                 "test-pass",
                 "test-homeserver-pubky",
+                metrics.clone(),
             ),
             1000,
             "Test Invoice".to_string(),
@@ -444,7 +437,7 @@ mod tests {
     #[sqlx::test]
     async fn metrics_follow_a_paid_verification(pool: PgPool) {
         let servers = WiremockServers::start().await;
-        let phoenixd = phoenixd_mock(true, 1500).await;
+        let phoenixd = phoenixd_mock(true).await;
         let metrics = Metrics::new();
         let service = service(
             SqlDb::test(pool).await,
@@ -468,14 +461,13 @@ mod tests {
             .unwrap();
         assert!(synced.is_finalised());
         assert_eq!(metrics.signup_codes_issued(SignupType::Lightning), 1);
-        assert_eq!(metrics.ln_sats_received(), 1500);
         assert_eq!(metrics.dependency_errors(Dependency::Homeserver), 0);
     }
 
     #[sqlx::test]
     async fn metrics_count_homeserver_failure_during_sync(pool: PgPool) {
         let servers = WiremockServers::start().await;
-        let phoenixd = phoenixd_mock(true, 1000).await;
+        let phoenixd = phoenixd_mock(true).await;
         let metrics = Metrics::new();
         let service = service(
             SqlDb::test(pool).await,
@@ -494,13 +486,12 @@ mod tests {
         ));
         assert_eq!(metrics.dependency_errors(Dependency::Homeserver), 1);
         assert_eq!(metrics.signup_codes_issued(SignupType::Lightning), 0);
-        assert_eq!(metrics.ln_sats_received(), 0);
     }
 
     #[sqlx::test]
     async fn metrics_do_not_count_unpaid_invoices(pool: PgPool) {
         let servers = WiremockServers::start().await;
-        let phoenixd = phoenixd_mock(false, 0).await;
+        let phoenixd = phoenixd_mock(false).await;
         let metrics = Metrics::new();
         let service = service(
             SqlDb::test(pool).await,

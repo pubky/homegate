@@ -6,15 +6,16 @@
 //!
 //! Failures are classified once per route from its error enum (see each
 //! route's `error.rs`) and recorded by the HTTP handler. Positive events
-//! (started, issued, bypassed, sats received, homeserver latency) are
-//! recorded where they happen.
+//! (started, issued) are recorded where they
+//! happen. Homeserver calls are timed and their failures counted by
+//! `HomeserverAdminAPI` itself.
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use prometheus::{
-    Encoder, Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGaugeVec, Opts, Registry,
-    TextEncoder, core::Collector,
+    Encoder, Histogram, HistogramOpts, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder,
+    core::Collector,
 };
 
 /// The verification routes, used as the `type` label.
@@ -128,16 +129,15 @@ pub enum FailureKind {
     Rejected(RejectionReason),
     /// An upstream service failed.
     DependencyError(Dependency),
-    /// Internal failure (e.g. database); not counted by these metrics.
-    Internal,
+    /// Not counted by the handler: database failures are not tracked, and
+    /// homeserver failures are already counted by `HomeserverAdminAPI`.
+    NotCounted,
 }
 
 const SIGNUP_CODES_ISSUED: &str = "homegate_signup_codes_issued_total";
 const VERIFICATION_REJECTED: &str = "homegate_verification_rejected_total";
 const DEPENDENCY_ERRORS: &str = "homegate_dependency_errors_total";
 const VERIFICATION_STARTED: &str = "homegate_verification_started_total";
-const LIMIT_BYPASSED: &str = "homegate_limit_bypassed_total";
-const LN_SATS_RECEIVED: &str = "homegate_ln_sats_received_total";
 const HOMESERVER_REQUEST_DURATION: &str = "homegate_homeserver_request_duration_seconds";
 const BUILD_INFO: &str = "homegate_build_info";
 const ROUTE_ENABLED: &str = "homegate_route_enabled";
@@ -149,8 +149,6 @@ pub struct Metrics {
     verification_rejected: IntCounterVec,
     dependency_errors: IntCounterVec,
     verification_started: IntCounterVec,
-    limit_bypassed: IntCounterVec,
-    ln_sats_received: IntCounter,
     homeserver_request_duration: Histogram,
     build_info: IntGaugeVec,
     route_enabled: IntGaugeVec,
@@ -193,19 +191,6 @@ impl Metrics {
                 "Multi-step verifications started (SMS code sent, Lightning invoice created), per verification type.",
                 &["type"],
             ),
-            limit_bypassed: counter_vec(
-                LIMIT_BYPASSED,
-                "Verifications where rate limits were skipped because the identity is whitelisted, per verification type.",
-                &["type"],
-            ),
-            ln_sats_received: register(
-                &registry,
-                IntCounter::new(
-                    LN_SATS_RECEIVED,
-                    "Satoshis received for finalised Lightning verifications.",
-                )
-                .expect("valid definition"),
-            ),
             homeserver_request_duration: register(
                 &registry,
                 Histogram::with_opts(
@@ -239,7 +224,6 @@ impl Metrics {
         for signup_type in SignupType::ALL {
             let t = signup_type.as_str();
             self.signup_codes_issued.with_label_values(&[t]);
-            self.limit_bypassed.with_label_values(&[t]);
             self.route_enabled.with_label_values(&[t]).set(0);
             for reason in RejectionReason::ALL {
                 self.verification_rejected
@@ -279,7 +263,7 @@ impl Metrics {
         match kind {
             FailureKind::Rejected(reason) => self.record_rejection(signup_type, reason),
             FailureKind::DependencyError(dependency) => self.record_dependency_error(dependency),
-            FailureKind::Internal => {}
+            FailureKind::NotCounted => {}
         }
     }
 
@@ -289,23 +273,20 @@ impl Metrics {
             .inc();
     }
 
-    pub fn record_limit_bypassed(&self, signup_type: SignupType) {
-        self.limit_bypassed
-            .with_label_values(&[signup_type.as_str()])
-            .inc();
-    }
-
-    pub fn record_ln_sats_received(&self, sats: u64) {
-        self.ln_sats_received.inc_by(sats);
-    }
-
-    /// Run a homeserver admin API call and record how long it took.
-    pub async fn observe_homeserver_request<T>(&self, call: impl Future<Output = T>) -> T {
+    /// Run a homeserver admin API call, recording its duration and, on
+    /// failure, a homeserver dependency error.
+    pub async fn observe_homeserver_request<T, E>(
+        &self,
+        call: impl Future<Output = Result<T, E>>,
+    ) -> Result<T, E> {
         let start = Instant::now();
-        let output = call.await;
+        let result = call.await;
         self.homeserver_request_duration
             .observe(start.elapsed().as_secs_f64());
-        output
+        if result.is_err() {
+            self.record_dependency_error(Dependency::Homeserver);
+        }
+        result
     }
 
     pub fn set_route_enabled(&self, signup_type: SignupType, enabled: bool) {
@@ -342,18 +323,6 @@ impl Metrics {
         self.verification_started
             .with_label_values(&[signup_type.as_str()])
             .get()
-    }
-
-    #[cfg(test)]
-    pub fn limit_bypassed(&self, signup_type: SignupType) -> u64 {
-        self.limit_bypassed
-            .with_label_values(&[signup_type.as_str()])
-            .get()
-    }
-
-    #[cfg(test)]
-    pub fn ln_sats_received(&self) -> u64 {
-        self.ln_sats_received.get()
     }
 
     #[cfg(test)]
@@ -404,10 +373,6 @@ mod tests {
             let t = signup_type.as_str();
             assert_eq!(
                 sample(&rendered, &format!("{SIGNUP_CODES_ISSUED}{{type=\"{t}\"}}")).as_deref(),
-                Some("0")
-            );
-            assert_eq!(
-                sample(&rendered, &format!("{LIMIT_BYPASSED}{{type=\"{t}\"}}")).as_deref(),
                 Some("0")
             );
             assert_eq!(
@@ -462,7 +427,6 @@ mod tests {
                 );
             }
         }
-        assert_eq!(sample(&rendered, LN_SATS_RECEIVED).as_deref(), Some("0"));
         assert_eq!(
             sample(&rendered, &format!("{HOMESERVER_REQUEST_DURATION}_count")).as_deref(),
             Some("0")
@@ -488,19 +452,20 @@ mod tests {
             SignupType::Sms,
             FailureKind::DependencyError(Dependency::Prelude),
         );
-        metrics.record_failure(SignupType::Sms, FailureKind::Internal);
+        metrics.record_failure(SignupType::Sms, FailureKind::NotCounted);
         metrics.record_verification_started(SignupType::Lightning);
-        metrics.record_limit_bypassed(SignupType::Ip);
-        metrics.record_ln_sats_received(1000);
-        metrics.record_ln_sats_received(500);
         metrics.set_route_enabled(SignupType::Google, true);
         let value = metrics
             .observe_homeserver_request(async {
                 tokio::time::sleep(Duration::from_millis(5)).await;
-                42
+                Ok::<_, ()>(42)
             })
             .await;
-        assert_eq!(value, 42);
+        assert_eq!(value, Ok(42));
+        let failed = metrics
+            .observe_homeserver_request(async { Err::<(), _>("down") })
+            .await;
+        assert_eq!(failed, Err("down"));
 
         let rendered = metrics.render().unwrap();
         assert_eq!(
@@ -534,16 +499,19 @@ mod tests {
             Some("1")
         );
         assert_eq!(
-            sample(&rendered, &format!("{LIMIT_BYPASSED}{{type=\"ip\"}}")).as_deref(),
-            Some("1")
-        );
-        assert_eq!(sample(&rendered, LN_SATS_RECEIVED).as_deref(), Some("1500"));
-        assert_eq!(
             sample(&rendered, &format!("{ROUTE_ENABLED}{{type=\"google\"}}")).as_deref(),
             Some("1")
         );
         assert_eq!(
             sample(&rendered, &format!("{HOMESERVER_REQUEST_DURATION}_count")).as_deref(),
+            Some("2")
+        );
+        assert_eq!(
+            sample(
+                &rendered,
+                &format!("{DEPENDENCY_ERRORS}{{dependency=\"homeserver\"}}")
+            )
+            .as_deref(),
             Some("1")
         );
         let sum: f64 = sample(&rendered, &format!("{HOMESERVER_REQUEST_DURATION}_sum"))

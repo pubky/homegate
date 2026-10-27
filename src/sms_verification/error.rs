@@ -60,9 +60,9 @@ impl SmsVerificationError {
             }
             Self::InvalidPhoneNumber => FailureKind::Rejected(RejectionReason::InvalidPhoneNumber),
             Self::RateLimited { .. } => FailureKind::Rejected(RejectionReason::PreludeRateLimited),
-            Self::HomeserverUnavailable => FailureKind::DependencyError(Dependency::Homeserver),
+            Self::HomeserverUnavailable => FailureKind::NotCounted,
             Self::RequestFailed(_) => FailureKind::DependencyError(Dependency::Prelude),
-            Self::Database(_) => FailureKind::Internal,
+            Self::Database(_) => FailureKind::NotCounted,
         }
     }
 }

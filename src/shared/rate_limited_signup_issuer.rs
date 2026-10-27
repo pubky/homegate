@@ -139,13 +139,8 @@ impl RateLimitedSignupIssuer {
         self.acquire_advisory_lock(&mut tx, identity_hash).await?;
 
         let mut executor: UnifiedExecutor<'_> = (&mut tx).into();
-        match enforcement {
-            LimitEnforcement::Enforce => {
-                self.check_rate_limits(&mut executor, identity_hash).await?;
-            }
-            LimitEnforcement::Bypass => {
-                self.metrics.record_limit_bypassed(self.table.signup_type);
-            }
+        if enforcement == LimitEnforcement::Enforce {
+            self.check_rate_limits(&mut executor, identity_hash).await?;
         }
         drop(executor);
 
@@ -224,19 +219,14 @@ impl RateLimitedSignupIssuer {
     }
 
     async fn generate_signup_token(&self) -> Result<String, SignupIssuanceError> {
-        let result = self
-            .metrics
-            .observe_homeserver_request(async {
-                match self.signup_quota.as_ref() {
-                    Some(quota) => {
-                        self.homeserver_admin_api
-                            .generate_signup_token_with_quota(quota)
-                            .await
-                    }
-                    None => self.homeserver_admin_api.generate_signup_token().await,
-                }
-            })
-            .await;
+        let result = match self.signup_quota.as_ref() {
+            Some(quota) => {
+                self.homeserver_admin_api
+                    .generate_signup_token_with_quota(quota)
+                    .await
+            }
+            None => self.homeserver_admin_api.generate_signup_token().await,
+        };
         result.map_err(|error| {
             tracing::error!(error = %error, "Failed to generate signup token");
             SignupIssuanceError::HomeserverUnavailable

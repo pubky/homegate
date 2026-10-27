@@ -14,15 +14,11 @@ pub enum LnVerificationError {
 }
 
 impl LnVerificationError {
-    /// How this error is counted in metrics by the HTTP handlers.
-    ///
-    /// `HomeserverUnavailable` is `Internal` here because the service records
-    /// it at the call site, which is also reached from the background sync.
+    /// How this error is counted in metrics.
     pub fn failure_kind(&self) -> FailureKind {
         match self {
             Self::Phoenixd(_) => FailureKind::DependencyError(Dependency::Phoenixd),
-            Self::Database(_) => FailureKind::Internal,
-            Self::HomeserverUnavailable => FailureKind::Internal,
+            Self::Database(_) | Self::HomeserverUnavailable => FailureKind::NotCounted,
         }
     }
 }

@@ -112,13 +112,13 @@ impl HttpServer {
     }
 
     pub async fn start(config: AppConfig, hasher: HasherArgon2id) -> Result<Self, HttpServerError> {
-        let homeserver_api = Self::connect_to_homeserver(&config).await;
+        let metrics = Metrics::new();
+        let homeserver_api = Self::connect_to_homeserver(&config, &metrics).await;
 
         let db = SqlDb::connect(&config.database_url)
             .await
             .map_err(DbError::from)?;
 
-        let metrics = Metrics::new();
         report_enabled_routes(&config, &metrics);
         let router = Self::create_router(&config, &db, &homeserver_api, hasher, &metrics).await?;
 
@@ -180,10 +180,11 @@ impl HttpServer {
 
     /// Connect to the homeserver admin API, verify credentials, and fetch
     /// the homeserver's public key from /info. Exits the process on failure.
-    async fn connect_to_homeserver(config: &AppConfig) -> HomeserverAdminAPI {
+    async fn connect_to_homeserver(config: &AppConfig, metrics: &Metrics) -> HomeserverAdminAPI {
         let mut api = HomeserverAdminAPI::from_config(
             &config.homeserver.admin_api_url,
             &config.homeserver.admin_password,
+            metrics.clone(),
         );
         if let Err(e) = api.fetch_info().await {
             tracing::error!(

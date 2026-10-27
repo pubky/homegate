@@ -143,6 +143,7 @@ mod tests {
             &servers.homeserver_server.uri().parse().unwrap(),
             "test-pass",
             "test-homeserver-pubky",
+            metrics.clone(),
         );
         let sms = SmsVerificationConfig::for_test(servers.prelude_server.uri().parse().unwrap());
 

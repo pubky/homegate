@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::infrastructure::sql::DbError;
-use crate::shared::{Dependency, FailureKind, RejectionReason, SignupIssuanceError};
+use crate::shared::{FailureKind, RejectionReason, SignupIssuanceError};
 
 #[derive(Error, Debug)]
 pub enum IpVerificationError {
@@ -32,8 +32,8 @@ impl IpVerificationError {
                 FailureKind::Rejected(RejectionReason::AnnualLimitExceeded)
             }
             Self::IpAddressRequired => FailureKind::Rejected(RejectionReason::IpAddressRequired),
-            Self::HomeserverUnavailable => FailureKind::DependencyError(Dependency::Homeserver),
-            Self::Database(_) => FailureKind::Internal,
+            Self::HomeserverUnavailable => FailureKind::NotCounted,
+            Self::Database(_) => FailureKind::NotCounted,
         }
     }
 }

@@ -40,10 +40,12 @@ fn create_service_with_google_server(
     max_per_week: u32,
     max_per_year: u32,
 ) -> GoogleVerificationService {
+    let metrics = crate::shared::Metrics::new();
     let homeserver_admin_api = HomeserverAdminAPI::new(
         &servers.homeserver_server.uri().parse().unwrap(),
         "test-pass",
         "test-homeserver-pubky",
+        metrics.clone(),
     );
     let config = GoogleVerificationConfig {
         google_client_id: TEST_GOOGLE_CLIENT_ID.to_string(),
@@ -55,7 +57,7 @@ fn create_service_with_google_server(
         homeserver_admin_api,
         &config,
         TEST_HASHER.clone(),
-        crate::shared::Metrics::new(),
+        metrics,
         jwks_url(google_server),
     )
 }

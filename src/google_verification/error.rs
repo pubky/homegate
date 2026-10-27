@@ -35,9 +35,9 @@ impl GoogleVerificationError {
             Self::AnnualLimitExceeded => {
                 FailureKind::Rejected(RejectionReason::AnnualLimitExceeded)
             }
-            Self::HomeserverUnavailable => FailureKind::DependencyError(Dependency::Homeserver),
+            Self::HomeserverUnavailable => FailureKind::NotCounted,
             Self::GoogleVerifierUnavailable => FailureKind::DependencyError(Dependency::GoogleJwks),
-            Self::Database(_) => FailureKind::Internal,
+            Self::Database(_) => FailureKind::NotCounted,
         }
     }
 }
