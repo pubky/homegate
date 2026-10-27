@@ -48,27 +48,3 @@ impl From<SignupIssuanceError> for IpVerificationError {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shared::SignupType;
-
-    #[test]
-    fn rejection_reasons_are_pre_created_for_ip() {
-        let errors = [
-            IpVerificationError::WeeklyLimitExceeded,
-            IpVerificationError::AnnualLimitExceeded,
-            IpVerificationError::IpAddressRequired,
-            IpVerificationError::HomeserverUnavailable,
-        ];
-        for error in errors {
-            if let FailureKind::Rejected(reason) = error.failure_kind() {
-                assert!(
-                    RejectionReason::for_signup_type(SignupType::Ip).contains(&reason),
-                    "{reason:?} missing from RejectionReason::for_signup_type(Ip)"
-                );
-            }
-        }
-    }
-}

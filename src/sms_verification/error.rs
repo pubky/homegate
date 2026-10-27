@@ -79,34 +79,3 @@ impl From<PreludeError> for SmsVerificationError {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shared::SignupType;
-
-    #[test]
-    fn rejection_reasons_are_pre_created_for_sms() {
-        let errors = [
-            SmsVerificationError::Blocked,
-            SmsVerificationError::WeeklyLimitExceeded,
-            SmsVerificationError::AnnualLimitExceeded,
-            SmsVerificationError::NoActiveVerification,
-            SmsVerificationError::MaxValidationAttemptsExceeded,
-            SmsVerificationError::InvalidPhoneNumber,
-            SmsVerificationError::RateLimited { retry_after: None },
-            SmsVerificationError::HomeserverUnavailable,
-        ];
-        let pre_created = RejectionReason::for_signup_type(SignupType::Sms);
-        for error in errors {
-            if let FailureKind::Rejected(reason) = error.failure_kind() {
-                assert!(
-                    pre_created.contains(&reason),
-                    "{reason:?} missing from RejectionReason::for_signup_type(Sms)"
-                );
-            }
-        }
-        // Recorded directly by the service on a wrong code, not via failure_kind().
-        assert!(pre_created.contains(&RejectionReason::InvalidCode));
-    }
-}

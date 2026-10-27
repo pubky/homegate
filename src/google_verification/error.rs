@@ -52,28 +52,3 @@ impl From<SignupIssuanceError> for GoogleVerificationError {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shared::SignupType;
-
-    #[test]
-    fn rejection_reasons_are_pre_created_for_google() {
-        let errors = [
-            GoogleVerificationError::InvalidGoogleIdToken,
-            GoogleVerificationError::WeeklyLimitExceeded,
-            GoogleVerificationError::AnnualLimitExceeded,
-            GoogleVerificationError::HomeserverUnavailable,
-            GoogleVerificationError::GoogleVerifierUnavailable,
-        ];
-        for error in errors {
-            if let FailureKind::Rejected(reason) = error.failure_kind() {
-                assert!(
-                    RejectionReason::for_signup_type(SignupType::Google).contains(&reason),
-                    "{reason:?} missing from RejectionReason::for_signup_type(Google)"
-                );
-            }
-        }
-    }
-}

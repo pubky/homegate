@@ -92,32 +92,18 @@ pub enum RejectionReason {
 }
 
 impl RejectionReason {
-    /// The reasons a route can emit, used to pre-create its series.
-    pub fn for_signup_type(signup_type: SignupType) -> &'static [RejectionReason] {
-        match signup_type {
-            SignupType::Sms => &[
-                RejectionReason::WeeklyLimitExceeded,
-                RejectionReason::AnnualLimitExceeded,
-                RejectionReason::InvalidPhoneNumber,
-                RejectionReason::Blocked,
-                RejectionReason::PreludeRateLimited,
-                RejectionReason::NoActiveVerification,
-                RejectionReason::MaxValidationAttemptsExceeded,
-                RejectionReason::InvalidCode,
-            ],
-            SignupType::Lightning => &[],
-            SignupType::Ip => &[
-                RejectionReason::WeeklyLimitExceeded,
-                RejectionReason::AnnualLimitExceeded,
-                RejectionReason::IpAddressRequired,
-            ],
-            SignupType::Google => &[
-                RejectionReason::WeeklyLimitExceeded,
-                RejectionReason::AnnualLimitExceeded,
-                RejectionReason::InvalidGoogleIdToken,
-            ],
-        }
-    }
+    pub const ALL: [RejectionReason; 10] = [
+        RejectionReason::WeeklyLimitExceeded,
+        RejectionReason::AnnualLimitExceeded,
+        RejectionReason::InvalidGoogleIdToken,
+        RejectionReason::InvalidPhoneNumber,
+        RejectionReason::IpAddressRequired,
+        RejectionReason::Blocked,
+        RejectionReason::PreludeRateLimited,
+        RejectionReason::NoActiveVerification,
+        RejectionReason::MaxValidationAttemptsExceeded,
+        RejectionReason::InvalidCode,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -255,7 +241,7 @@ impl Metrics {
             self.signup_codes_issued.with_label_values(&[t]);
             self.limit_bypassed.with_label_values(&[t]);
             self.route_enabled.with_label_values(&[t]).set(0);
-            for reason in RejectionReason::for_signup_type(signup_type) {
+            for reason in RejectionReason::ALL {
                 self.verification_rejected
                     .with_label_values(&[t, reason.as_str()]);
             }
@@ -461,11 +447,9 @@ mod tests {
                 None
             );
         }
-        // Rejection series exist for every (type, reason) pair a route can emit,
-        // and only those.
         for signup_type in SignupType::ALL {
             let t = signup_type.as_str();
-            for reason in RejectionReason::for_signup_type(signup_type) {
+            for reason in RejectionReason::ALL {
                 let r = reason.as_str();
                 assert_eq!(
                     sample(
@@ -477,17 +461,6 @@ mod tests {
                     "missing series for {t}/{r}"
                 );
             }
-            let series_for_type = rendered
-                .lines()
-                .filter(|line| {
-                    line.starts_with(VERIFICATION_REJECTED)
-                        && line.contains(&format!("type=\"{t}\""))
-                })
-                .count();
-            assert_eq!(
-                series_for_type,
-                RejectionReason::for_signup_type(signup_type).len()
-            );
         }
         assert_eq!(sample(&rendered, LN_SATS_RECEIVED).as_deref(), Some("0"));
         assert_eq!(
