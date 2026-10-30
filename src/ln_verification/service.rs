@@ -12,7 +12,7 @@ use crate::{
         error::LnVerificationError, payment_hash::PaymentHash, phoenixd_api::PhoenixdAPI,
         types::VerificationResponse,
     },
-    shared::{HomeserverAdminAPI, Metrics, SignupType},
+    shared::{Dependency, HomeserverAdminAPI, Metrics, SignupType},
 };
 
 /// Service for the Lightning Network verification.
@@ -347,6 +347,7 @@ impl LnVerificationService {
             let event = match websocket
                 .try_next()
                 .await
+                .inspect_err(|_| self.metrics.record_dependency_error(Dependency::Phoenixd))
                 .map_err(LnVerificationError::Phoenixd)?
             {
                 Some(event) => event,
@@ -420,7 +421,7 @@ mod tests {
     ) -> LnVerificationService {
         LnVerificationService::new(
             db,
-            PhoenixdAPI::new(&phoenixd.uri().parse().unwrap(), "unused"),
+            PhoenixdAPI::new(&phoenixd.uri().parse().unwrap(), "unused", metrics.clone()),
             HomeserverAdminAPI::new(
                 &servers.homeserver_server.uri().parse().unwrap(),
                 "test-pass",
@@ -510,5 +511,44 @@ mod tests {
         assert!(!synced.is_finalised());
         assert_eq!(metrics.verification_started(SignupType::Lightning), 1);
         assert_eq!(metrics.signup_codes_issued(SignupType::Lightning), 0);
+    }
+
+    #[sqlx::test]
+    async fn metrics_count_phoenixd_failures(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        // No routes mounted: invoice creation fails.
+        let phoenixd = MockServer::start().await;
+        let metrics = Metrics::new();
+        let service = service(
+            SqlDb::test(pool).await,
+            &phoenixd,
+            &servers,
+            metrics.clone(),
+        );
+
+        let result = service.create_verification().await;
+
+        assert!(matches!(result, Err(LnVerificationError::Phoenixd(_))));
+        assert_eq!(metrics.dependency_errors(Dependency::Phoenixd), 1);
+        assert_eq!(metrics.verification_started(SignupType::Lightning), 0);
+    }
+
+    #[sqlx::test]
+    async fn background_sync_counts_a_failed_websocket_connection(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        // Plain HTTP mock: the websocket upgrade is refused.
+        let phoenixd = MockServer::start().await;
+        let metrics = Metrics::new();
+        let service = service(
+            SqlDb::test(pool).await,
+            &phoenixd,
+            &servers,
+            metrics.clone(),
+        );
+
+        let result = service.run_background_sync().await;
+
+        assert!(matches!(result, Err(LnVerificationError::Phoenixd(_))));
+        assert_eq!(metrics.dependency_errors(Dependency::Phoenixd), 1);
     }
 }

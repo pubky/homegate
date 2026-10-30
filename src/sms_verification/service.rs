@@ -135,12 +135,7 @@ impl SmsVerificationService {
             .await?;
 
         let id = match &prelude_response {
-            PreludeCreateVerificationResponse::Success { id } => {
-                // Counted once per session: a Retry re-sends the code for the
-                // same session and is not a new start.
-                self.metrics.record_verification_started(SignupType::Sms);
-                id
-            }
+            PreludeCreateVerificationResponse::Success { id } => id,
             PreludeCreateVerificationResponse::Retry { id } => {
                 tracing::info!(
                     phone_number = %request.phone_number,
@@ -154,6 +149,14 @@ impl SmsVerificationService {
 
         SmsVerificationRepository::create_verification(&mut executor, &phone_number_hash, id)
             .await?;
+        if matches!(
+            prelude_response,
+            PreludeCreateVerificationResponse::Success { .. }
+        ) {
+            // Counted once per session, after the row exists: a Retry re-sends
+            // the code for the same session and is not a new start.
+            self.metrics.record_verification_started(SignupType::Sms);
+        }
 
         if let PreludeCreateVerificationResponse::Blocked { id, reason } = &prelude_response {
             tracing::info!(

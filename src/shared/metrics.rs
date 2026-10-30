@@ -7,8 +7,8 @@
 //! Failures are classified once per route from its error enum (see each
 //! route's `error.rs`) and recorded by the HTTP handler. Positive events
 //! (started, issued) are recorded where they
-//! happen. Homeserver calls are timed and their failures counted by
-//! `HomeserverAdminAPI` itself.
+//! happen. `HomeserverAdminAPI` and `PhoenixdAPI` count their own failures,
+//! so routes do not classify those.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -130,7 +130,7 @@ pub enum FailureKind {
     /// An upstream service failed.
     DependencyError(Dependency),
     /// Not counted by the handler: database failures are not tracked, and
-    /// homeserver failures are already counted by `HomeserverAdminAPI`.
+    /// homeserver and PhoenixD failures are already counted by their clients.
     NotCounted,
 }
 
@@ -273,6 +273,16 @@ impl Metrics {
             .inc();
     }
 
+    /// Run a call to an upstream service, counting a failure as a dependency error.
+    pub async fn count_dependency_failure<T, E>(
+        &self,
+        dependency: Dependency,
+        call: impl Future<Output = Result<T, E>>,
+    ) -> Result<T, E> {
+        call.await
+            .inspect_err(|_| self.record_dependency_error(dependency))
+    }
+
     /// Run a homeserver admin API call, recording its duration and, on
     /// failure, a homeserver dependency error.
     pub async fn observe_homeserver_request<T, E>(
@@ -280,12 +290,11 @@ impl Metrics {
         call: impl Future<Output = Result<T, E>>,
     ) -> Result<T, E> {
         let start = Instant::now();
-        let result = call.await;
+        let result = self
+            .count_dependency_failure(Dependency::Homeserver, call)
+            .await;
         self.homeserver_request_duration
             .observe(start.elapsed().as_secs_f64());
-        if result.is_err() {
-            self.record_dependency_error(Dependency::Homeserver);
-        }
         result
     }
 
