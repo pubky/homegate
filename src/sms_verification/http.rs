@@ -389,5 +389,27 @@ mod tests {
             .assert_status_ok();
         assert_eq!(metrics.signup_codes_issued(SignupType::Sms), 1);
         assert_eq!(metrics.verification_started(SignupType::Sms), 1);
+
+        // Prelude failing outright is a dependency error, not a start.
+        use crate::shared::Dependency;
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let other_phone = "+30987654321";
+        Mock::given(method("POST"))
+            .and(path("/v2/verification"))
+            .and(body_partial_json(serde_json::json!({
+                "target": { "type": "phone_number", "value": other_phone }
+            })))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&servers.prelude_server)
+            .await;
+        server
+            .post("/sms_verification/send_code")
+            .json(&serde_json::json!({ "phoneNumber": other_phone }))
+            .await
+            .assert_status(StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(metrics.dependency_errors(Dependency::Prelude), 1);
+        assert_eq!(metrics.verification_started(SignupType::Sms), 1);
     }
 }

@@ -5,10 +5,12 @@
 //! own registry, so tests can create one per test without clashing.
 //!
 //! Failures are classified once per route from its error enum (see each
-//! route's `error.rs`) and recorded by the HTTP handler. Positive events
-//! (started, issued) are recorded where they
-//! happen. `HomeserverAdminAPI` and `PhoenixdAPI` count their own failures,
-//! so routes do not classify those.
+//! route's `error.rs`) and recorded by the HTTP handler, except where an
+//! error never reaches a handler: a wrong SMS code is a 200 response, so the
+//! SMS service records it, and the Lightning sync loop counts failed
+//! websocket reads. Positive events (started, issued) are recorded where
+//! they happen. `HomeserverAdminAPI` and `PhoenixdAPI` count their own
+//! failed calls, so routes do not classify those.
 
 use std::sync::Arc;
 use std::time::Instant;
