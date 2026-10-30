@@ -1,6 +1,10 @@
 use thiserror::Error;
 
-use crate::{infrastructure::sql::DbError, sms_verification::prelude_api::PreludeError};
+use crate::{
+    infrastructure::sql::DbError,
+    shared::{Dependency, FailureKind, RejectionReason},
+    sms_verification::prelude_api::PreludeError,
+};
 
 #[derive(Error, Debug)]
 pub enum SmsVerificationError {
@@ -35,6 +39,32 @@ pub enum SmsVerificationError {
 
     #[error("{0}")]
     Database(#[from] DbError),
+}
+
+impl SmsVerificationError {
+    /// How this error is counted in metrics.
+    pub fn failure_kind(&self) -> FailureKind {
+        match self {
+            Self::Blocked => FailureKind::Rejected(RejectionReason::Blocked),
+            Self::WeeklyLimitExceeded => {
+                FailureKind::Rejected(RejectionReason::WeeklyLimitExceeded)
+            }
+            Self::AnnualLimitExceeded => {
+                FailureKind::Rejected(RejectionReason::AnnualLimitExceeded)
+            }
+            Self::NoActiveVerification => {
+                FailureKind::Rejected(RejectionReason::NoActiveVerification)
+            }
+            Self::MaxValidationAttemptsExceeded => {
+                FailureKind::Rejected(RejectionReason::MaxValidationAttemptsExceeded)
+            }
+            Self::InvalidPhoneNumber => FailureKind::Rejected(RejectionReason::InvalidPhoneNumber),
+            Self::RateLimited { .. } => FailureKind::Rejected(RejectionReason::PreludeRateLimited),
+            Self::HomeserverUnavailable => FailureKind::NotCounted,
+            Self::RequestFailed(_) => FailureKind::DependencyError(Dependency::Prelude),
+            Self::Database(_) => FailureKind::NotCounted,
+        }
+    }
 }
 
 impl From<PreludeError> for SmsVerificationError {

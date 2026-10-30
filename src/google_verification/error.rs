@@ -1,5 +1,5 @@
 use crate::infrastructure::sql::DbError;
-use crate::shared::SignupIssuanceError;
+use crate::shared::{Dependency, FailureKind, RejectionReason, SignupIssuanceError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum GoogleVerificationError {
@@ -20,6 +20,26 @@ pub enum GoogleVerificationError {
 
     #[error("internal_error")]
     Database(#[from] DbError),
+}
+
+impl GoogleVerificationError {
+    /// How this error is counted in metrics.
+    pub fn failure_kind(&self) -> FailureKind {
+        match self {
+            Self::InvalidGoogleIdToken => {
+                FailureKind::Rejected(RejectionReason::InvalidGoogleIdToken)
+            }
+            Self::WeeklyLimitExceeded => {
+                FailureKind::Rejected(RejectionReason::WeeklyLimitExceeded)
+            }
+            Self::AnnualLimitExceeded => {
+                FailureKind::Rejected(RejectionReason::AnnualLimitExceeded)
+            }
+            Self::HomeserverUnavailable => FailureKind::NotCounted,
+            Self::GoogleVerifierUnavailable => FailureKind::DependencyError(Dependency::GoogleJwks),
+            Self::Database(_) => FailureKind::NotCounted,
+        }
+    }
 }
 
 impl From<SignupIssuanceError> for GoogleVerificationError {

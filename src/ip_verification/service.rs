@@ -4,7 +4,9 @@ use crate::infrastructure::config::IpVerificationConfig;
 use crate::infrastructure::sql::SqlDb;
 use crate::shared::HasherArgon2id;
 use crate::shared::HomeserverAdminAPI;
-use crate::shared::{LimitEnforcement, RateLimitedSignupIssuer, VerificationTable};
+use crate::shared::{
+    LimitEnforcement, Metrics, RateLimitedSignupIssuer, SignupType, VerificationTable,
+};
 
 use super::error::IpVerificationError;
 use super::types::IpVerificationResponse;
@@ -12,6 +14,7 @@ use super::types::IpVerificationResponse;
 const IP_VERIFICATIONS_TABLE: VerificationTable = VerificationTable {
     name: "ip_verifications",
     hash_column: "ip_address_hash",
+    signup_type: SignupType::Ip,
 };
 
 #[derive(Clone, Debug)]
@@ -27,6 +30,7 @@ impl IpVerificationService {
         homeserver_admin_api: HomeserverAdminAPI,
         config: &IpVerificationConfig,
         hasher: HasherArgon2id,
+        metrics: Metrics,
     ) -> Self {
         if !config.limit_whitelist.is_empty() {
             tracing::info!(
@@ -43,6 +47,7 @@ impl IpVerificationService {
                 config.max_verifications_per_week,
                 config.max_verifications_per_year,
                 config.signup_quota.clone(),
+                metrics,
             ),
             hasher_argon2id: hasher,
             limit_whitelist: config.limit_whitelist.clone(),

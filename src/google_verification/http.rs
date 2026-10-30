@@ -7,7 +7,7 @@ use axum::{
 };
 
 use crate::infrastructure::{config::GoogleVerificationConfig, http::HttpServerError, sql::SqlDb};
-use crate::shared::{HasherArgon2id, HomeserverAdminAPI};
+use crate::shared::{HasherArgon2id, HomeserverAdminAPI, Metrics, SignupType};
 
 use super::app_state::AppState;
 use super::error::GoogleVerificationError;
@@ -18,8 +18,9 @@ pub async fn router(
     google: &GoogleVerificationConfig,
     db: SqlDb,
     hasher: HasherArgon2id,
+    metrics: Metrics,
 ) -> Result<Router, HttpServerError> {
-    let state = AppState::new(homeserver_api, google, db, hasher);
+    let state = AppState::new(homeserver_api, google, db, hasher, metrics);
     Ok(Router::new()
         .route("/", post(root_handler))
         .with_state(state))
@@ -32,8 +33,15 @@ async fn root_handler(
     let response = state
         .google_verification
         .verify(&request.google_id_token)
-        .await?;
+        .await
+        .inspect_err(|error| record_failure(&state, error))?;
     Ok(Json(response))
+}
+
+fn record_failure(state: &AppState, error: &GoogleVerificationError) {
+    state
+        .metrics
+        .record_failure(SignupType::Google, error.failure_kind());
 }
 
 impl IntoResponse for GoogleVerificationError {
@@ -92,10 +100,30 @@ mod tests {
         max_per_week: u32,
         max_per_year: u32,
     ) -> TestServer {
+        create_http_test_server_with_metrics(
+            pool,
+            servers,
+            google_server,
+            max_per_week,
+            max_per_year,
+            Metrics::new(),
+        )
+        .await
+    }
+
+    async fn create_http_test_server_with_metrics(
+        pool: PgPool,
+        servers: &WiremockServers,
+        google_server: &MockServer,
+        max_per_week: u32,
+        max_per_year: u32,
+        metrics: Metrics,
+    ) -> TestServer {
         let homeserver_api = HomeserverAdminAPI::new(
             &servers.homeserver_server.uri().parse().unwrap(),
             "test-pass",
             "test-homeserver-pubky",
+            metrics.clone(),
         );
         let config = GoogleVerificationConfig {
             google_client_id: TEST_GOOGLE_CLIENT_ID.to_string(),
@@ -111,6 +139,7 @@ mod tests {
             homeserver_api,
             &config,
             hasher,
+            metrics.clone(),
             jwks_url(google_server),
         );
         let google_verification_router =
@@ -118,6 +147,7 @@ mod tests {
                 .route("/", post(root_handler))
                 .with_state(AppState {
                     google_verification,
+                    metrics,
                 });
         let router = Router::new().nest("/google_verification", google_verification_router);
         TestServer::new(router).expect("Failed to create test server")
@@ -245,5 +275,65 @@ mod tests {
             .await;
         response.assert_status(StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(response.text(), "annual_limit_exceeded");
+    }
+
+    #[sqlx::test]
+    async fn metrics_follow_the_google_flow(pool: PgPool) {
+        use crate::shared::{Dependency, RejectionReason};
+
+        let servers = WiremockServers::start().await;
+        let google_server = jwks_server().await;
+        let metrics = Metrics::new();
+        let server = create_http_test_server_with_metrics(
+            pool,
+            &servers,
+            &google_server,
+            1,
+            4,
+            metrics.clone(),
+        )
+        .await;
+
+        // Invalid token is a rejection.
+        server
+            .post("/google_verification")
+            .json(&serde_json::json!({ "googleIdToken": wrong_audience_token() }))
+            .await
+            .assert_status(StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            metrics
+                .verification_rejected(SignupType::Google, RejectionReason::InvalidGoogleIdToken),
+            1
+        );
+
+        // Homeserver down: dependency error, nothing issued.
+        server
+            .post("/google_verification")
+            .json(&serde_json::json!({ "googleIdToken": valid_token("google-subject") }))
+            .await
+            .assert_status(StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(metrics.dependency_errors(Dependency::Homeserver), 1);
+        assert_eq!(metrics.signup_codes_issued(SignupType::Google), 0);
+
+        // Success, then the weekly limit of 1.
+        setup_homeserver_signup_token("token-123")
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+        server
+            .post("/google_verification")
+            .json(&serde_json::json!({ "googleIdToken": valid_token("google-subject") }))
+            .await
+            .assert_status_ok();
+        server
+            .post("/google_verification")
+            .json(&serde_json::json!({ "googleIdToken": valid_token("google-subject") }))
+            .await
+            .assert_status(StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(metrics.signup_codes_issued(SignupType::Google), 1);
+        assert_eq!(
+            metrics.verification_rejected(SignupType::Google, RejectionReason::WeeklyLimitExceeded),
+            1
+        );
     }
 }

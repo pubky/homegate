@@ -1,47 +1,49 @@
 use crate::infrastructure::config::SignupQuotaConfig;
+use crate::shared::Metrics;
 use url::Url;
 
+/// Client for the homeserver admin API. Signup token requests are timed and
+/// their failures counted in [`Metrics`] here, so callers need not instrument them.
 #[derive(Clone, Debug)]
 pub struct HomeserverAdminAPI {
     http_client: reqwest::Client,
     admin_password: String,
     base_url: Url,
     homeserver_pubky: String,
+    metrics: Metrics,
 }
 
 impl HomeserverAdminAPI {
     #[cfg(test)]
-    pub fn new(base_url: &Url, admin_password: &str, homeserver_pubky: &str) -> Self {
+    pub fn new(
+        base_url: &Url,
+        admin_password: &str,
+        homeserver_pubky: &str,
+        metrics: Metrics,
+    ) -> Self {
         Self {
             http_client: reqwest::Client::new(),
             admin_password: admin_password.to_owned(),
             base_url: base_url.clone(),
             homeserver_pubky: homeserver_pubky.to_owned(),
+            metrics,
         }
     }
 
-    pub fn from_config(base_url: &Url, admin_password: &str) -> Self {
+    pub fn from_config(base_url: &Url, admin_password: &str, metrics: Metrics) -> Self {
         Self {
             http_client: reqwest::Client::new(),
             admin_password: admin_password.to_owned(),
             base_url: base_url.clone(),
             homeserver_pubky: String::new(),
+            metrics,
         }
     }
 
     /// Generates a signup token with homeserver system defaults (GET).
     pub async fn generate_signup_token(&self) -> Result<String, reqwest::Error> {
-        let url = self
-            .base_url
-            .join("generate_signup_token")
-            .expect("Failed to join URL path");
-        let response = self
-            .http_client
-            .get(url)
-            .header("X-Admin-Password", &self.admin_password)
-            .send()
-            .await?;
-        response.error_for_status()?.text().await
+        let request = self.http_client.get(self.signup_token_url());
+        self.send_signup_token_request(request).await
     }
 
     /// Generates a signup token with explicit quota limits (POST).
@@ -49,18 +51,29 @@ impl HomeserverAdminAPI {
         &self,
         quota: &SignupQuotaConfig,
     ) -> Result<String, reqwest::Error> {
-        let url = self
-            .base_url
+        let request = self.http_client.post(self.signup_token_url()).json(quota);
+        self.send_signup_token_request(request).await
+    }
+
+    fn signup_token_url(&self) -> Url {
+        self.base_url
             .join("generate_signup_token")
-            .expect("Failed to join URL path");
-        let response = self
-            .http_client
-            .post(url)
-            .header("X-Admin-Password", &self.admin_password)
-            .json(quota)
-            .send()
-            .await?;
-        response.error_for_status()?.text().await
+            .expect("Failed to join URL path")
+    }
+
+    async fn send_signup_token_request(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<String, reqwest::Error> {
+        self.metrics
+            .observe_homeserver_request(async {
+                let response = request
+                    .header("X-Admin-Password", &self.admin_password)
+                    .send()
+                    .await?;
+                response.error_for_status()?.text().await
+            })
+            .await
     }
 
     pub fn get_homeserver_pubky(&self) -> String {

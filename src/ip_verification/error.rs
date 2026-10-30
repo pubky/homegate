@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::infrastructure::sql::DbError;
-use crate::shared::SignupIssuanceError;
+use crate::shared::{FailureKind, RejectionReason, SignupIssuanceError};
 
 #[derive(Error, Debug)]
 pub enum IpVerificationError {
@@ -19,6 +19,23 @@ pub enum IpVerificationError {
 
     #[error("{0}")]
     Database(#[from] DbError),
+}
+
+impl IpVerificationError {
+    /// How this error is counted in metrics.
+    pub fn failure_kind(&self) -> FailureKind {
+        match self {
+            Self::WeeklyLimitExceeded => {
+                FailureKind::Rejected(RejectionReason::WeeklyLimitExceeded)
+            }
+            Self::AnnualLimitExceeded => {
+                FailureKind::Rejected(RejectionReason::AnnualLimitExceeded)
+            }
+            Self::IpAddressRequired => FailureKind::Rejected(RejectionReason::IpAddressRequired),
+            Self::HomeserverUnavailable => FailureKind::NotCounted,
+            Self::Database(_) => FailureKind::NotCounted,
+        }
+    }
 }
 
 impl From<SignupIssuanceError> for IpVerificationError {

@@ -37,6 +37,13 @@ fn test_phone_hasher() -> HasherArgon2id {
 
 /// Helper to create service with wiremock for direct service layer testing
 fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerificationService {
+    create_service_with_metrics(servers, crate::shared::Metrics::new())
+}
+
+fn create_service_with_metrics(
+    servers: &WiremockServers,
+    metrics: crate::shared::Metrics,
+) -> SmsVerificationService {
     use crate::infrastructure::config::SmsVerificationConfig;
 
     let sms = SmsVerificationConfig::for_test(servers.prelude_server.uri().parse().unwrap());
@@ -46,15 +53,14 @@ fn create_service_with_mocked_apis(servers: &WiremockServers) -> SmsVerification
         &servers.homeserver_server.uri().parse().unwrap(),
         "test-pass",
         "test-homeserver-pubky",
+        metrics.clone(),
     );
     SmsVerificationService::new(
         prelude_api,
         homeserver_admin_api,
-        2,
-        4,
-        2,
-        vec![],
+        &sms,
         test_phone_hasher(),
+        metrics,
     )
 }
 
@@ -1672,7 +1678,8 @@ async fn test_service_blocked_phone_number(pool: PgPool) {
 #[sqlx::test]
 async fn test_service_retry_response_from_prelude(pool: PgPool) {
     let servers = WiremockServers::start().await;
-    let mut service = create_service_with_mocked_apis(&servers);
+    let metrics = crate::shared::Metrics::new();
+    let mut service = create_service_with_metrics(&servers, metrics.clone());
     let db = SqlDb::test(pool.clone()).await;
 
     let phone = PhoneNumber::new("+30555555555").unwrap();
@@ -1723,6 +1730,12 @@ async fn test_service_retry_response_from_prelude(pool: PgPool) {
     assert_eq!(
         status, "PENDING",
         "Status should be PENDING for retry response"
+    );
+
+    // A retry re-sends the code for an existing session, not a new start.
+    assert_eq!(
+        metrics.verification_started(crate::shared::SignupType::Sms),
+        0
     );
 }
 
