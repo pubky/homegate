@@ -136,7 +136,16 @@ impl HttpServer {
         };
 
         let (http_handle, http_socket) =
-            Self::start_http_server(config.http_listen_socket, router).await?;
+            match Self::start_http_server(config.http_listen_socket, router).await {
+                Ok(listener) => listener,
+                Err(error) => {
+                    // Release the metrics port too, so a retry starts clean.
+                    if let Some(handle) = &metrics_handle {
+                        handle.shutdown();
+                    }
+                    return Err(error);
+                }
+            };
 
         Ok(Self {
             http_handle,

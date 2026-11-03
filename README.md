@@ -65,19 +65,28 @@ Enabled by adding a `[google_verification]` section with `google_client_id` to `
 
 ## Metrics
 
-Adding a `[metrics]` section to `config.toml` starts a second listener (default `127.0.0.1:8081`) that serves Prometheus metrics at `/metrics`. Keep it off the public network; only the monitoring stack needs it.
+Adding a `[metrics]` section to `config.toml` starts a second listener (default `127.0.0.1:8081`) that serves Prometheus metrics at `/metrics`. Keep it off the public network; only the monitoring stack needs it. In a container, localhost is not reachable from outside: set `listen_socket = "0.0.0.0:8081"` and publish that port only on the private network Prometheus is in, never to the internet. Then add the target to Prometheus:
+
+```yaml
+scrape_configs:
+  - job_name: homegate
+    static_configs:
+      - targets: ["homegate:8081"]
+```
 
 | Metric | Labels | Meaning |
 |---|---|---|
 | `homegate_signup_codes_issued_total` | `type` | Signup codes issued per route (`sms`, `lightning`, `ip`, `google`) |
 | `homegate_verification_started_total` | `type` | SMS codes sent and Lightning invoices created; compare with issued for drop-off |
-| `homegate_verification_rejected_total` | `type`, `reason` | Requests refused for a client-attributable reason (rate limits, invalid tokens, wrong codes, ...) |
+| `homegate_verification_rejected_total` | `type`, `reason` | Requests refused for a client-attributable reason (rate limits, invalid tokens, wrong codes, ...); see the note below on what it leaves out |
 | `homegate_dependency_errors_total` | `dependency` | Failed calls to `homeserver`, `prelude`, `phoenixd` or `google_jwks` |
 | `homegate_homeserver_request_duration_seconds` | | Histogram of signup token requests to the homeserver admin API |
 | `homegate_route_enabled` | `type` | 1 if the route is enabled in config, else 0 |
 | `homegate_build_info` | `version` | Always 1; carries the running version |
 
 Counters start at zero on each restart; use `increase()` or `rate()` in Prometheus. Whether an issued code was later redeemed on the homeserver is not visible to homegate; the homeserver's own `signup_count` metric covers that side.
+
+`homegate_verification_rejected_total` is not a complete count of rejected requests. Requests that never reach a route handler are not counted: malformed JSON bodies and invalid phone numbers are rejected by the request extractors with a 4xx, and a Lightning lookup for an unknown verification ID returns 404 without a metric. Database errors are not counted either. Treat the counter as the client-attributable rejections of well-formed requests.
 
 ## Adding a New Verification Provider
 
