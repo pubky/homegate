@@ -81,12 +81,14 @@ scrape_configs:
 | `homegate_verification_rejected_total` | `type`, `reason` | Requests refused for a client-attributable reason (rate limits, invalid tokens, wrong codes, ...); see the note below on what it leaves out |
 | `homegate_dependency_errors_total` | `dependency` | Failed calls to `homeserver`, `prelude`, `phoenixd` or `google_jwks` |
 | `homegate_homeserver_request_duration_seconds` | | Histogram of signup token requests to the homeserver admin API |
+| `homegate_http_requests_total` | `route`, `method`, `status` | Every response of the public API, by matched route template (for example `/sms_verification/send_code`; `unmatched` for unknown paths), HTTP method and status code. CORS preflights are not counted |
+| `homegate_http_request_duration_seconds` | `route`, `method` | Histogram of time to respond on the public API. `/ln_verification/{id}/await` long-polls for up to 25 seconds by design, so leave it out of latency percentiles |
 | `homegate_route_enabled` | `type` | 1 if the route is enabled in config, else 0 |
 | `homegate_build_info` | `version` | Always 1; carries the running version |
 
 Counters start at zero on each restart; use `increase()` or `rate()` in Prometheus. Whether an issued code was later redeemed on the homeserver is not visible to homegate; the homeserver's own `signup_count` metric covers that side.
 
-`homegate_verification_rejected_total` is not a complete count of rejected requests. Requests that never reach a route handler are not counted: malformed JSON bodies and invalid phone numbers are rejected by the request extractors with a 4xx, and a Lightning lookup for an unknown verification ID returns 404 without a metric. Database errors are not counted either. Treat the counter as the client-attributable rejections of well-formed requests.
+`homegate_verification_rejected_total` is not a complete count of rejected requests. Requests that never reach a route handler are not counted: malformed JSON bodies and phone numbers that fail to parse are rejected by the request extractors with a 4xx, and a Lightning lookup for an unknown verification ID returns 404 without a metric. Phone numbers that Prelude reports as invalid do reach the handler and are counted under `invalid_phone_number`. The Lightning route records no rejections at all, and a missing client address on the IP route (a proxy misconfiguration answered with 400) and database errors are not counted either. Treat the counter as the client-attributable rejections of well-formed requests, and use `homegate_http_requests_total` by `status` for the full picture.
 
 ## Adding a New Verification Provider
 

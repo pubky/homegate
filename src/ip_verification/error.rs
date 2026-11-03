@@ -31,9 +31,11 @@ impl IpVerificationError {
             Self::AnnualLimitExceeded => {
                 FailureKind::Rejected(RejectionReason::AnnualLimitExceeded)
             }
-            Self::IpAddressRequired => FailureKind::Rejected(RejectionReason::IpAddressRequired),
-            Self::HomeserverUnavailable => FailureKind::NotCounted,
-            Self::Database(_) => FailureKind::NotCounted,
+            // A missing address is a proxy misconfiguration, not a client
+            // rejection; it shows as a 400 in the request counter.
+            Self::IpAddressRequired | Self::HomeserverUnavailable | Self::Database(_) => {
+                FailureKind::NotCounted
+            }
         }
     }
 }

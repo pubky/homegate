@@ -336,4 +336,32 @@ mod tests {
             1
         );
     }
+
+    #[sqlx::test]
+    async fn metrics_count_jwks_failures_as_dependency_errors(pool: PgPool) {
+        use crate::shared::Dependency;
+
+        let servers = WiremockServers::start().await;
+        // No JWKS mounted: fetching the keys fails.
+        let google_server = MockServer::start().await;
+        let metrics = Metrics::new();
+        let server = create_http_test_server_with_metrics(
+            pool,
+            &servers,
+            &google_server,
+            2,
+            4,
+            metrics.clone(),
+        )
+        .await;
+
+        server
+            .post("/google_verification")
+            .json(&serde_json::json!({ "googleIdToken": valid_token("google-subject") }))
+            .await
+            .assert_status(StatusCode::INTERNAL_SERVER_ERROR);
+
+        assert_eq!(metrics.dependency_errors(Dependency::GoogleJwks), 1);
+        assert_eq!(metrics.signup_codes_issued(SignupType::Google), 0);
+    }
 }

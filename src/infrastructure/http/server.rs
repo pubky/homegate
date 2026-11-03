@@ -15,9 +15,9 @@ use crate::{
     sms_verification::http::router,
 };
 
-use super::metrics_server::metrics_router;
+use super::{http_metrics::record_http_metrics, metrics_server::metrics_router};
 
-use axum::{Router, response::IntoResponse, routing::get};
+use axum::{Router, middleware, response::IntoResponse, routing::get};
 use axum_server::Handle;
 use futures_util::TryFutureExt;
 use tower_http::{
@@ -90,6 +90,13 @@ impl HttpServer {
                 .await?,
             );
         }
+
+        // Innermost layer: CORS preflights answered by the CORS layer are not
+        // counted, every response of a route is.
+        app = app.layer(middleware::from_fn_with_state(
+            metrics.clone(),
+            record_http_metrics,
+        ));
 
         if config.accept_proxy_ip_headers {
             tracing::info!("Accepting proxy IP headers (X-Forwarded-For, X-Real-IP)");
@@ -227,6 +234,113 @@ fn report_enabled_routes(config: &AppConfig, metrics: &Metrics) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
+    use axum_test::TestServer;
+    use sqlx::PgPool;
+
+    #[sqlx::test]
+    async fn public_router_counts_every_response(pool: PgPool) {
+        let config: AppConfig = toml::from_str(
+            r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:1"
+admin_password = "unused"
+
+[ip_verification]
+max_verifications_per_week = 1
+"#,
+        )
+        .unwrap();
+        let servers = WiremockServers::start().await;
+        let metrics = Metrics::new();
+        let homeserver_api = HomeserverAdminAPI::new(
+            &servers.homeserver_server.uri().parse().unwrap(),
+            "test-pass",
+            "test-homeserver-pubky",
+            metrics.clone(),
+        );
+        let hasher = HasherArgon2id::new(tempfile::tempdir().unwrap().keep().join("pepper.txt"));
+        let router = HttpServer::create_router(
+            &config,
+            &SqlDb::test(pool).await,
+            &homeserver_api,
+            hasher,
+            &metrics,
+        )
+        .await
+        .unwrap();
+        let server =
+            TestServer::new(router.into_make_service_with_connect_info::<SocketAddr>()).unwrap();
+        setup_homeserver_signup_token("token")
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+
+        server.get("/").await.assert_status_ok();
+        server.post("/ip_verification").await.assert_status_ok();
+        server
+            .post("/ip_verification")
+            .await
+            .assert_status(axum::http::StatusCode::TOO_MANY_REQUESTS);
+        server.get("/nope").await.assert_status_not_found();
+
+        assert_eq!(metrics.http_requests("/", "GET", 200), 1);
+        assert_eq!(metrics.http_requests("/ip_verification", "POST", 200), 1);
+        assert_eq!(metrics.http_requests("/ip_verification", "POST", 429), 1);
+        assert_eq!(metrics.http_requests("unmatched", "GET", 404), 1);
+    }
+
+    #[sqlx::test]
+    async fn cors_preflights_are_not_counted(pool: PgPool) {
+        use axum::http::{Method, StatusCode, header};
+
+        let config: AppConfig = toml::from_str(
+            r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+allow_cors = true
+
+[homeserver]
+admin_api_url = "http://localhost:1"
+admin_password = "unused"
+
+[ip_verification]
+"#,
+        )
+        .unwrap();
+        let servers = WiremockServers::start().await;
+        let metrics = Metrics::new();
+        let homeserver_api = HomeserverAdminAPI::new(
+            &servers.homeserver_server.uri().parse().unwrap(),
+            "test-pass",
+            "test-homeserver-pubky",
+            metrics.clone(),
+        );
+        let hasher = HasherArgon2id::new(tempfile::tempdir().unwrap().keep().join("pepper.txt"));
+        let router = HttpServer::create_router(
+            &config,
+            &SqlDb::test(pool).await,
+            &homeserver_api,
+            hasher,
+            &metrics,
+        )
+        .await
+        .unwrap();
+        let server =
+            TestServer::new(router.into_make_service_with_connect_info::<SocketAddr>()).unwrap();
+
+        server
+            .method(Method::OPTIONS, "/ip_verification")
+            .add_header(header::ORIGIN, "https://example.com")
+            .add_header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+            .await
+            .assert_status(StatusCode::OK);
+
+        // Rendered first: the test reader below creates the series it reads.
+        assert!(!metrics.render().unwrap().contains("method=\"OPTIONS\""));
+        assert_eq!(metrics.http_requests("/ip_verification", "OPTIONS", 200), 0);
+    }
 
     #[test]
     fn enabled_routes_are_reported_in_metrics() {

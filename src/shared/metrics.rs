@@ -10,14 +10,15 @@
 //! SMS service records it, and the Lightning sync loop counts failed
 //! websocket reads. Positive events (started, issued) are recorded where
 //! they happen. `HomeserverAdminAPI` and `PhoenixdAPI` count their own
-//! failed calls, so routes do not classify those.
+//! failed calls, so routes do not classify those. Every response of the
+//! public router is counted and timed by `infrastructure::http::http_metrics`.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use prometheus::{
-    Encoder, Histogram, HistogramOpts, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder,
-    core::Collector,
+    Encoder, Histogram, HistogramOpts, HistogramVec, IntCounterVec, IntGaugeVec, Opts, Registry,
+    TextEncoder, core::Collector,
 };
 
 /// The verification routes, used as the `type` label.
@@ -86,7 +87,6 @@ pub enum RejectionReason {
     AnnualLimitExceeded,
     InvalidGoogleIdToken,
     InvalidPhoneNumber,
-    IpAddressRequired,
     Blocked,
     PreludeRateLimited,
     NoActiveVerification,
@@ -95,12 +95,11 @@ pub enum RejectionReason {
 }
 
 impl RejectionReason {
-    pub const ALL: [RejectionReason; 10] = [
+    pub const ALL: [RejectionReason; 9] = [
         RejectionReason::WeeklyLimitExceeded,
         RejectionReason::AnnualLimitExceeded,
         RejectionReason::InvalidGoogleIdToken,
         RejectionReason::InvalidPhoneNumber,
-        RejectionReason::IpAddressRequired,
         RejectionReason::Blocked,
         RejectionReason::PreludeRateLimited,
         RejectionReason::NoActiveVerification,
@@ -114,7 +113,6 @@ impl RejectionReason {
             RejectionReason::AnnualLimitExceeded => "annual_limit_exceeded",
             RejectionReason::InvalidGoogleIdToken => "invalid_google_id_token",
             RejectionReason::InvalidPhoneNumber => "invalid_phone_number",
-            RejectionReason::IpAddressRequired => "ip_address_required",
             RejectionReason::Blocked => "blocked",
             RejectionReason::PreludeRateLimited => "prelude_rate_limited",
             RejectionReason::NoActiveVerification => "no_active_verification",
@@ -131,7 +129,8 @@ pub enum FailureKind {
     Rejected(RejectionReason),
     /// An upstream service failed.
     DependencyError(Dependency),
-    /// Not counted by the handler: database failures are not tracked, and
+    /// Not counted by the handler: database failures and deployment faults
+    /// (such as a missing client address) are not client rejections, and
     /// homeserver and PhoenixD failures are already counted by their clients.
     NotCounted,
 }
@@ -143,6 +142,11 @@ const VERIFICATION_STARTED: &str = "homegate_verification_started_total";
 const HOMESERVER_REQUEST_DURATION: &str = "homegate_homeserver_request_duration_seconds";
 const BUILD_INFO: &str = "homegate_build_info";
 const ROUTE_ENABLED: &str = "homegate_route_enabled";
+const HTTP_REQUESTS: &str = "homegate_http_requests_total";
+const HTTP_REQUEST_DURATION: &str = "homegate_http_request_duration_seconds";
+
+/// Latency buckets in seconds, shared by the request histograms.
+const DURATION_BUCKETS: [f64; 10] = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
 
 #[derive(Clone, Debug)]
 pub struct Metrics {
@@ -154,6 +158,8 @@ pub struct Metrics {
     homeserver_request_duration: Histogram,
     build_info: IntGaugeVec,
     route_enabled: IntGaugeVec,
+    http_requests: IntCounterVec,
+    http_request_duration: HistogramVec,
 }
 
 impl Metrics {
@@ -200,7 +206,7 @@ impl Metrics {
                         HOMESERVER_REQUEST_DURATION,
                         "Duration of signup token requests to the homeserver admin API in seconds.",
                     )
-                    .buckets(vec![0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
+                    .buckets(DURATION_BUCKETS.to_vec()),
                 )
                 .expect("valid definition"),
             ),
@@ -209,6 +215,23 @@ impl Metrics {
                 ROUTE_ENABLED,
                 "Whether a verification route is enabled in config (1) or not (0).",
                 &["type"],
+            ),
+            http_requests: counter_vec(
+                HTTP_REQUESTS,
+                "Responses of the public API, per route template, method and status code.",
+                &["route", "method", "status"],
+            ),
+            http_request_duration: register(
+                &registry,
+                HistogramVec::new(
+                    HistogramOpts::new(
+                        HTTP_REQUEST_DURATION,
+                        "Time to respond on the public API in seconds, per route template and method.",
+                    )
+                    .buckets(DURATION_BUCKETS.to_vec()),
+                    &["route", "method"],
+                )
+                .expect("valid definition"),
             ),
             registry: Arc::new(registry),
         };
@@ -306,6 +329,17 @@ impl Metrics {
             .set(enabled as i64);
     }
 
+    /// Count and time one response of the public API. `route` is the matched
+    /// route template, so label cardinality stays bounded.
+    pub fn record_http_request(&self, route: &str, method: &str, status: u16, duration: Duration) {
+        self.http_requests
+            .with_label_values(&[route, method, &status.to_string()])
+            .inc();
+        self.http_request_duration
+            .with_label_values(&[route, method])
+            .observe(duration.as_secs_f64());
+    }
+
     // Current values, for asserting on wiring from route tests.
 
     #[cfg(test)]
@@ -340,6 +374,13 @@ impl Metrics {
     pub fn route_enabled(&self, signup_type: SignupType) -> i64 {
         self.route_enabled
             .with_label_values(&[signup_type.as_str()])
+            .get()
+    }
+
+    #[cfg(test)]
+    pub fn http_requests(&self, route: &str, method: &str, status: u16) -> u64 {
+        self.http_requests
+            .with_label_values(&[route, method, &status.to_string()])
             .get()
     }
 
@@ -530,6 +571,40 @@ mod tests {
             .parse()
             .unwrap();
         assert!(sum >= 0.005, "sum was {sum}");
+    }
+
+    #[test]
+    fn http_requests_are_counted_and_timed_per_route() {
+        let metrics = Metrics::new();
+
+        metrics.record_http_request("/ip_verification", "POST", 200, Duration::from_millis(20));
+        metrics.record_http_request("/ip_verification", "POST", 429, Duration::from_millis(1));
+        metrics.record_http_request("/ip_verification", "POST", 200, Duration::from_millis(30));
+
+        assert_eq!(metrics.http_requests("/ip_verification", "POST", 200), 2);
+        assert_eq!(metrics.http_requests("/ip_verification", "POST", 429), 1);
+        let rendered = metrics.render().unwrap();
+        assert_eq!(
+            sample(
+                &rendered,
+                &format!(
+                    "{HTTP_REQUESTS}{{method=\"POST\",route=\"/ip_verification\",status=\"200\"}}"
+                )
+            )
+            .as_deref(),
+            Some("2")
+        );
+        assert_eq!(
+            sample(
+                &rendered,
+                &format!(
+                    "{HTTP_REQUEST_DURATION}_count{{method=\"POST\",route=\"/ip_verification\"}}"
+                )
+            )
+            .as_deref(),
+            Some("3")
+        );
+        assert!(rendered.contains(&format!("# TYPE {HTTP_REQUEST_DURATION} histogram\n")));
     }
 
     #[test]

@@ -291,7 +291,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn metrics_count_missing_ip_as_rejection(pool: PgPool) {
+    async fn metrics_do_not_count_missing_ip_as_rejection(pool: PgPool) {
         use crate::shared::RejectionReason;
 
         let servers = WiremockServers::start().await;
@@ -304,9 +304,8 @@ mod tests {
             .await
             .assert_status(StatusCode::BAD_REQUEST);
 
-        assert_eq!(
-            metrics.verification_rejected(SignupType::Ip, RejectionReason::IpAddressRequired),
-            1
-        );
+        for reason in RejectionReason::ALL {
+            assert_eq!(metrics.verification_rejected(SignupType::Ip, reason), 0);
+        }
     }
 }
