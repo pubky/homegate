@@ -63,11 +63,38 @@ Homegate verifies the token signature against Google's JWKS and validates the ex
 
 Enabled by adding a `[google_verification]` section with `google_client_id` to `config.toml`. The JWKS endpoint defaults to Google's well-known URL; the `HOMEGATE_GOOGLE_JWKS_URL` environment variable overrides it if ever needed (e.g. manual testing against a mock).
 
+## Metrics
+
+Adding a `[metrics]` section to `config.toml` starts a second listener (default `127.0.0.1:8081`) that serves Prometheus metrics at `/metrics`. Keep it off the public network; only the monitoring stack needs it. In a container, localhost is not reachable from outside: set `listen_socket = "0.0.0.0:8081"` and publish that port only on the private network Prometheus is in, never to the internet. Then add the target to Prometheus:
+
+```yaml
+scrape_configs:
+  - job_name: homegate
+    static_configs:
+      - targets: ["homegate:8081"]
+```
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `homegate_signup_codes_issued_total` | `type` | Signup codes issued per route (`sms`, `lightning`, `ip`, `google`) |
+| `homegate_verification_started_total` | `type` | SMS codes sent and Lightning invoices created; compare with issued for drop-off |
+| `homegate_verification_rejected_total` | `type`, `reason` | Requests refused for a client-attributable reason (rate limits, invalid tokens, wrong codes, ...); see the note below on what it leaves out |
+| `homegate_dependency_errors_total` | `dependency` | Failed calls to `homeserver`, `prelude`, `phoenixd` or `google_jwks` |
+| `homegate_homeserver_request_duration_seconds` | | Histogram of signup token requests to the homeserver admin API |
+| `homegate_http_requests_total` | `route`, `method`, `status` | Every response of the public API, by matched route template (for example `/sms_verification/send_code`; `unmatched` for unknown paths), HTTP method and status code. CORS preflights are not counted |
+| `homegate_http_request_duration_seconds` | `route`, `method` | Histogram of time to respond on the public API. `/ln_verification/{id}/await` long-polls for up to 25 seconds by design, so leave it out of latency percentiles |
+| `homegate_route_enabled` | `type` | 1 if the route is enabled in config, else 0 |
+| `homegate_build_info` | `version` | Always 1; carries the running version |
+
+Counters start at zero on each restart; use `increase()` or `rate()` in Prometheus. Whether an issued code was later redeemed on the homeserver is not visible to homegate; the homeserver's own `signup_count` metric covers that side.
+
+`homegate_verification_rejected_total` is not a complete count of rejected requests. Requests that never reach a route handler are not counted: malformed JSON bodies and phone numbers that fail to parse are rejected by the request extractors with a 4xx, and a Lightning lookup for an unknown verification ID returns 404 without a metric. Phone numbers that Prelude reports as invalid do reach the handler and are counted under `invalid_phone_number`. The Lightning route records no rejections at all, and a missing client address on the IP route (a proxy misconfiguration answered with 400) and database errors are not counted either. Treat the counter as the client-attributable rejections of well-formed requests, and use `homegate_http_requests_total` by `status` for the full picture.
+
 ## Adding a New Verification Provider
 
 Each verification method is a self-contained module (`src/<provider>_verification/`) with its own HTTP router, config section, error enum, and database table. Provider routes are registered conditionally in `src/infrastructure/http/server.rs` based on config presence.
 
-The final step of every low-friction provider — atomically rate-limiting a verified identity and issuing a homeserver signup code — is shared. Do not reimplement it: derive a peppered identity hash with `HasherArgon2id` and delegate to `RateLimitedSignupIssuer` (`src/shared/rate_limited_signup_issuer.rs`). Its module documentation contains the step-by-step recipe; `src/google_verification/` is the reference implementation.
+The final step of every low-friction provider — atomically rate-limiting a verified identity and issuing a homeserver signup code — is shared. Do not reimplement it: derive a peppered identity hash with `HasherArgon2id` and delegate to `RateLimitedSignupIssuer` (`src/shared/rate_limited_signup_issuer.rs`). Its module documentation contains the step-by-step recipe; `src/google_verification/` is the reference implementation. Give the provider a `SignupType` variant and a `failure_kind()` on its error enum so its issuances and failures show up in the metrics above.
 
 ## Running Tests
 

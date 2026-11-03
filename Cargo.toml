@@ -18,6 +18,8 @@ futures-util = "0.3.31"
 getrandom = "0.3.4"
 hex = "0.4"
 jsonwebtoken = { version = "10.4", default-features = false, features = ["rust_crypto"] }
+# default-features = false drops the protobuf encoder; only the text exposition format is served
+prometheus = { version = "0.14", default-features = false }
 regex = "1.11"
 # default-features = false to avoid OpenSSL dependency; using rustls instead
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2", "charset"] }

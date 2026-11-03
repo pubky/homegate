@@ -1,8 +1,10 @@
 use std::net::IpAddr;
 
+use crate::infrastructure::config::SmsVerificationConfig;
 use crate::infrastructure::sql::{SqlDb, UnifiedExecutor};
 use crate::shared::HasherArgon2id;
 use crate::shared::HomeserverAdminAPI;
+use crate::shared::{Metrics, RejectionReason, SignupType};
 use crate::sms_verification::error::SmsVerificationError;
 use crate::sms_verification::prelude_api::{
     PreludeAPI, PreludeCheckCodeResponse, PreludeCreateVerificationResponse,
@@ -24,30 +26,33 @@ pub struct SmsVerificationService {
     max_verifications_per_year: u32,
     max_failed_validation_attempts: u32,
     limit_whitelist: Vec<PhoneNumber>,
+    metrics: Metrics,
 }
 
 impl SmsVerificationService {
     pub fn new(
         prelude_api: PreludeAPI,
         homeserver_admin_api: HomeserverAdminAPI,
-        max_verifications_per_week: u32,
-        max_verifications_per_year: u32,
-        max_failed_validation_attempts: u32,
-        limit_whitelist: Vec<PhoneNumber>,
+        config: &SmsVerificationConfig,
         hasher: HasherArgon2id,
+        metrics: Metrics,
     ) -> Self {
-        if !limit_whitelist.is_empty() {
-            tracing::info!("SMS verification limit whitelist: {:?}", limit_whitelist);
+        if !config.limit_whitelist.is_empty() {
+            tracing::info!(
+                "SMS verification limit whitelist: {:?}",
+                config.limit_whitelist
+            );
         }
 
         Self {
             prelude_api,
             homeserver_admin_api,
             hasher_argon2id: hasher,
-            max_verifications_per_week,
-            max_verifications_per_year,
-            max_failed_validation_attempts,
-            limit_whitelist,
+            max_verifications_per_week: config.max_verifications_per_week,
+            max_verifications_per_year: config.max_verifications_per_year,
+            max_failed_validation_attempts: config.max_failed_validation_attempts,
+            limit_whitelist: config.limit_whitelist.clone(),
+            metrics,
         }
     }
 
@@ -144,6 +149,14 @@ impl SmsVerificationService {
 
         SmsVerificationRepository::create_verification(&mut executor, &phone_number_hash, id)
             .await?;
+        if matches!(
+            prelude_response,
+            PreludeCreateVerificationResponse::Success { .. }
+        ) {
+            // Counted once per session, after the row exists: a Retry re-sends
+            // the code for the same session and is not a new start.
+            self.metrics.record_verification_started(SignupType::Sms);
+        }
 
         if let PreludeCreateVerificationResponse::Blocked { id, reason } = &prelude_response {
             tracing::info!(
@@ -197,7 +210,8 @@ impl SmsVerificationService {
 
         match prelude_response {
             PreludeCheckCodeResponse::Success { id, .. } => {
-                let code = match self.homeserver_admin_api.generate_signup_token().await {
+                let token_result = self.homeserver_admin_api.generate_signup_token().await;
+                let code = match token_result {
                     Ok(code) => code,
                     Err(_e) => {
                         if let Err(e) = SmsVerificationRepository::mark_failed(
@@ -214,6 +228,7 @@ impl SmsVerificationService {
                 };
 
                 SmsVerificationRepository::mark_verified(&mut executor, &id, &code).await?;
+                self.metrics.record_signup_code_issued(SignupType::Sms);
 
                 Ok(ValidateCodeResponse::Valid {
                     signup_code: code,
@@ -222,6 +237,8 @@ impl SmsVerificationService {
             }
             PreludeCheckCodeResponse::Failure { .. } => {
                 // Wrong code - don't mark as failed, allow retries (up to max_failed_validation_attempts)
+                self.metrics
+                    .record_rejection(SignupType::Sms, RejectionReason::InvalidCode);
                 Ok(ValidateCodeResponse::Invalid)
             }
             PreludeCheckCodeResponse::ExpiredOrNotFound { .. } => {
