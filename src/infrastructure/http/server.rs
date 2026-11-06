@@ -567,6 +567,52 @@ admin_password = "test-pass"
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     }
 
+    #[sqlx::test]
+    async fn test_oversized_streamed_json_body_is_rejected(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let config: AppConfig = toml::from_str(&format!(
+            r#"
+database_url = "postgres://localhost:5432/unused"
+
+[homeserver]
+admin_api_url = "{}"
+admin_password = "test-pass"
+
+[google_verification]
+google_client_id = "test-client-id"
+"#,
+            servers.homeserver_server.uri()
+        ))
+        .unwrap();
+        let metrics = Metrics::new();
+        let homeserver_api = HomeserverAdminAPI::new(
+            &servers.homeserver_server.uri().parse().unwrap(),
+            "test-pass",
+            "test-homeserver-pubky",
+            metrics.clone(),
+        );
+        let db = SqlDb::test(pool).await;
+        let hasher = HasherArgon2id::new(tempfile::tempdir().unwrap().keep().join("pepper.txt"));
+        let app = HttpServer::create_router(&config, &db, &homeserver_api, hasher, &metrics)
+            .await
+            .unwrap();
+
+        // No Content-Length: the limit has to catch the body while it is read.
+        let token = "a".repeat(MAX_REQUEST_BODY_BYTES);
+        let json = format!(r#"{{"googleIdToken":"{token}"}}"#);
+        let chunks: Vec<Result<Vec<u8>, std::io::Error>> = json
+            .into_bytes()
+            .chunks(4096)
+            .map(|c| Ok(c.to_vec()))
+            .collect();
+        let request = Request::post("/google_verification")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from_stream(futures_util::stream::iter(chunks)))
+            .unwrap();
+        let (status, _) = send(&app, request).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
     #[tokio::test]
     async fn test_slow_request_times_out_with_503() {
         let slow = || async {

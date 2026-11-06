@@ -22,7 +22,7 @@ use tokio::sync::Semaphore;
 /// Note: This hash function intentionally takes > 100ms to produce its digest.
 /// [`HasherArgon2id::hash`] therefore runs it on tokio's blocking thread pool,
 /// so it never stalls the async workers that serve every other request, and
-/// caps how many hashes run at once. When every slot is taken it fails fast
+/// caps how many hashes run at once (one per CPU unless configured). When every slot is taken it fails fast
 /// with [`HasherBusy`] instead of queueing work without bound.
 #[derive(Clone, Debug)]
 pub struct HasherArgon2id {
@@ -105,9 +105,9 @@ impl HasherArgon2id {
         hex::encode(hash_output.as_bytes())
     }
 
-    /// Replaces the concurrent hash cap (tests use a small one).
-    #[cfg(test)]
-    pub(crate) fn with_max_concurrent_hashes(mut self, max: usize) -> Self {
+    /// Replaces the default cap on concurrent hashes (one per CPU).
+    pub fn with_max_concurrent_hashes(mut self, max: usize) -> Self {
+        assert!(max > 0, "at least one concurrent hash must be allowed");
         self.hash_slots = Arc::new(Semaphore::new(max));
         self
     }
@@ -123,11 +123,10 @@ impl HasherArgon2id {
     }
 }
 
-/// Two hashes per CPU: enough to keep every core busy with some slack for
-/// bursts, while bounding the memory used by hashing (19 MiB each).
+/// One hash per CPU. Hashing is CPU-bound, so more slots would not add
+/// throughput, only memory (19 MiB per running hash).
 fn default_max_concurrent_hashes() -> usize {
-    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
-    2 * cpus
+    std::thread::available_parallelism().map_or(1, |n| n.get())
 }
 
 /// Pepper is used a bit like a salt for hashing identifiers (phone numbers, IPs, ...) in the db.
@@ -273,13 +272,14 @@ mod tests {
     }
 
     #[test]
-    fn test_default_cap_is_two_hashes_per_cpu() {
+    fn test_cap_defaults_to_cpu_count_and_can_be_overridden() {
         let cpus = std::thread::available_parallelism().unwrap().get();
-        assert_eq!(default_max_concurrent_hashes(), 2 * cpus);
-
         let temp_dir = TempDir::new().unwrap();
         let hasher = hasher_with_known_pepper(&temp_dir);
-        assert_eq!(hasher.hash_slots.available_permits(), 2 * cpus);
+        assert_eq!(hasher.hash_slots.available_permits(), cpus);
+
+        let hasher = hasher.with_max_concurrent_hashes(3);
+        assert_eq!(hasher.hash_slots.available_permits(), 3);
     }
 
     #[tokio::test]

@@ -40,7 +40,8 @@ info:
 
     ## Overload protection
     Identifier hashing (SMS, IP and Google verification) is deliberately slow, so it runs on a
-    bounded pool. When that pool is full the request is answered with `503` right away instead of
+    bounded pool (one hash per CPU by default, `max_concurrent_hashes` in `config.toml`). When that
+    pool is full the request is answered with `503` and `Retry-After: 1` right away instead of
     queueing. Every request also has a 30 second time limit (`503 request_timeout`), and request
     bodies over 64 KiB are rejected with `413`. A `503` is safe to retry after a short delay.
   version: 0.2.0
@@ -155,6 +156,12 @@ paths:
                 example: "Internal Server Error"
         '503':
           description: Server busy, retry later. Identifier hashing is at capacity, or the request took longer than 30 seconds
+          headers:
+            Retry-After:
+              description: Sent when identifier hashing is at capacity
+              schema:
+                type: integer
+                example: 1
           content:
             text/plain:
               schema:
@@ -239,6 +246,12 @@ paths:
                 example: "Internal Server Error"
         '503':
           description: Server busy, retry later. Identifier hashing is at capacity, or the request took longer than 30 seconds
+          headers:
+            Retry-After:
+              description: Sent when identifier hashing is at capacity
+              schema:
+                type: integer
+                example: 1
           content:
             text/plain:
               schema:
@@ -374,6 +387,12 @@ paths:
                   value: "Internal Server Error"
         '503':
           description: Server busy, retry later. Identifier hashing is at capacity, or the request took longer than 30 seconds
+          headers:
+            Retry-After:
+              description: Sent when identifier hashing is at capacity
+              schema:
+                type: integer
+                example: 1
           content:
             text/plain:
               schema:
@@ -468,6 +487,12 @@ paths:
                   value: "internal_error"
         '503':
           description: Server busy, retry later. Identifier hashing is at capacity, or the request took longer than 30 seconds
+          headers:
+            Retry-After:
+              description: Sent when identifier hashing is at capacity
+              schema:
+                type: integer
+                example: 1
           content:
             text/plain:
               schema:
