@@ -59,6 +59,7 @@ impl IntoResponse for IpVerificationError {
             IpVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             IpVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             IpVerificationError::IpAddressRequired => StatusCode::BAD_REQUEST,
+            IpVerificationError::ServerBusy(_) => StatusCode::SERVICE_UNAVAILABLE,
             IpVerificationError::HomeserverUnavailable => {
                 tracing::error!("Homeserver unavailable during IP verification");
                 StatusCode::INTERNAL_SERVER_ERROR

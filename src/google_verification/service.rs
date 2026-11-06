@@ -105,7 +105,8 @@ impl GoogleVerificationService {
             })?;
         let google_identity_hash = self
             .hasher_argon2id
-            .hash(&format!("{}\n{}", identity.issuer, identity.subject));
+            .hash(&format!("{}\n{}", identity.issuer, identity.subject))
+            .await?;
 
         let issued = self
             .signup_issuer

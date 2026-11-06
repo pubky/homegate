@@ -117,7 +117,10 @@ impl SmsVerificationService {
         ip_address: Option<IpAddr>,
         user_agent: Option<String>,
     ) -> Result<(), SmsVerificationError> {
-        let phone_number_hash = self.hasher_argon2id.hash(request.phone_number.as_str());
+        let phone_number_hash = self
+            .hasher_argon2id
+            .hash(request.phone_number.as_str())
+            .await?;
 
         let mut executor: UnifiedExecutor<'_> = db.pool().into();
 
@@ -179,7 +182,10 @@ impl SmsVerificationService {
         db: &SqlDb,
         request: ValidateCodeRequest,
     ) -> Result<ValidateCodeResponse, SmsVerificationError> {
-        let phone_number_hash = self.hasher_argon2id.hash(request.phone_number.as_str());
+        let phone_number_hash = self
+            .hasher_argon2id
+            .hash(request.phone_number.as_str())
+            .await?;
 
         let mut executor: UnifiedExecutor<'_> = db.pool().into();
         SmsVerificationRepository::err_if_no_active_verification(&mut executor, &phone_number_hash)

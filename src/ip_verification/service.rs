@@ -68,7 +68,7 @@ impl IpVerificationService {
         } else {
             LimitEnforcement::Enforce
         };
-        let ip_hash = self.hasher_argon2id.hash(&ip_address.to_string());
+        let ip_hash = self.hasher_argon2id.hash(&ip_address.to_string()).await?;
 
         let issued = self.signup_issuer.issue(&ip_hash, enforcement).await?;
 

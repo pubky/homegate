@@ -50,6 +50,7 @@ impl IntoResponse for GoogleVerificationError {
             GoogleVerificationError::InvalidGoogleIdToken => StatusCode::UNAUTHORIZED,
             GoogleVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             GoogleVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+            GoogleVerificationError::ServerBusy(_) => StatusCode::SERVICE_UNAVAILABLE,
             GoogleVerificationError::HomeserverUnavailable => {
                 tracing::error!("Homeserver unavailable during Google verification");
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -363,5 +364,15 @@ mod tests {
 
         assert_eq!(metrics.dependency_errors(Dependency::GoogleJwks), 1);
         assert_eq!(metrics.signup_codes_issued(SignupType::Google), 0);
+    }
+
+    #[tokio::test]
+    async fn busy_hasher_maps_to_503_server_busy() {
+        let response = GoogleVerificationError::from(crate::shared::HasherBusy).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"server_busy");
     }
 }

@@ -3,6 +3,8 @@ use argon2::{
 };
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 /// Hashes identifiers using Argon2id with a global pepper for rainbow table resistance.
 ///
@@ -18,11 +20,23 @@ use std::path::PathBuf;
 ///     If our db were to leak then this quality increases the time and resources required for an attacker to find the hash pre-images (user's phone number in this case).
 ///
 /// Note: This hash function intentionally takes > 100ms to produce its digest.
+/// [`HasherArgon2id::hash`] therefore runs it on tokio's blocking thread pool,
+/// so it never stalls the async workers that serve every other request, and
+/// caps how many hashes run at once. When every slot is taken it fails fast
+/// with [`HasherBusy`] instead of queueing work without bound.
 #[derive(Clone, Debug)]
 pub struct HasherArgon2id {
     pepper: Pepper,
     argon2: Argon2<'static>,
+    /// Shared by all clones, so the cap applies process-wide.
+    hash_slots: Arc<Semaphore>,
 }
+
+/// Every hashing slot is in use. Callers should answer "try again later"
+/// (HTTP 503) rather than wait.
+#[derive(thiserror::Error, Debug)]
+#[error("all identifier hashing slots are busy")]
+pub struct HasherBusy;
 
 impl HasherArgon2id {
     pub fn new(pepper_path: PathBuf) -> Self {
@@ -41,11 +55,39 @@ impl HasherArgon2id {
 
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let pepper = Pepper::read_or_generate(pepper_path);
-        Self { pepper, argon2 }
+        Self {
+            pepper,
+            argon2,
+            hash_slots: Arc::new(Semaphore::new(default_max_concurrent_hashes())),
+        }
     }
 
     /// Hashes a string using Argon2id with a deterministic salt.
-    pub fn hash(&self, preimage: &str) -> String {
+    ///
+    /// Runs on the blocking thread pool. Returns [`HasherBusy`] immediately if
+    /// the maximum number of concurrent hashes is already running.
+    pub async fn hash(&self, preimage: &str) -> Result<String, HasherBusy> {
+        let slot = Arc::clone(&self.hash_slots)
+            .try_acquire_owned()
+            .map_err(|_| HasherBusy)?;
+        let hasher = self.clone();
+        let preimage = preimage.to_owned();
+        // The slot moves into the blocking task, so it is released only when
+        // the hash has actually finished (or panicked), even if the caller's
+        // future is dropped first (client disconnect, request timeout).
+        let task = tokio::task::spawn_blocking(move || {
+            let _slot = slot;
+            hasher.hash_blocking(&preimage)
+        });
+        match task.await {
+            Ok(hash) => Ok(hash),
+            Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+            // Only happens while the runtime is shutting down.
+            Err(_) => Err(HasherBusy),
+        }
+    }
+
+    fn hash_blocking(&self, preimage: &str) -> String {
         // Derive deterministic salt from pepper using Blake3
         let salt_bytes = blake3::hash(self.pepper.as_bytes());
         let salt = SaltString::encode_b64(&salt_bytes.as_bytes()[..16])
@@ -62,6 +104,30 @@ impl HasherArgon2id {
 
         hex::encode(hash_output.as_bytes())
     }
+
+    /// Replaces the concurrent hash cap (tests use a small one).
+    #[cfg(test)]
+    pub(crate) fn with_max_concurrent_hashes(mut self, max: usize) -> Self {
+        self.hash_slots = Arc::new(Semaphore::new(max));
+        self
+    }
+
+    /// Takes every free hashing slot until the returned permit is dropped, so
+    /// tests can put the hasher in the "busy" state deterministically.
+    #[cfg(test)]
+    pub(crate) fn occupy_all_slots(&self) -> tokio::sync::OwnedSemaphorePermit {
+        let free = self.hash_slots.available_permits() as u32;
+        Arc::clone(&self.hash_slots)
+            .try_acquire_many_owned(free)
+            .expect("hash slots are never closed")
+    }
+}
+
+/// Two hashes per CPU: enough to keep every core busy with some slack for
+/// bursts, while bounding the memory used by hashing (19 MiB each).
+fn default_max_concurrent_hashes() -> usize {
+    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
+    2 * cpus
 }
 
 /// Pepper is used a bit like a salt for hashing identifiers (phone numbers, IPs, ...) in the db.
@@ -112,10 +178,11 @@ impl Pepper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_hasher_init_creates_new_pepper() {
+    #[tokio::test]
+    async fn test_hasher_init_creates_new_pepper() {
         let temp_dir = TempDir::new().unwrap();
         let pepper_file = temp_dir.path().join("pepper.txt");
 
@@ -135,12 +202,12 @@ mod tests {
         );
 
         // Verify hasher is functional
-        let hash = hasher.hash("+1234567890");
+        let hash = hasher.hash("+1234567890").await.unwrap();
         assert!(!hash.is_empty(), "Should produce a hash");
     }
 
-    #[test]
-    fn test_hasher_init_loads_existing_pepper() {
+    #[tokio::test]
+    async fn test_hasher_init_loads_existing_pepper() {
         let temp_dir = TempDir::new().unwrap();
         let pepper_file = temp_dir.path().join("pepper.txt");
 
@@ -150,11 +217,11 @@ mod tests {
 
         // Initialize hasher - should load existing pepper
         let hasher1 = HasherArgon2id::new(pepper_file.clone());
-        let hash1 = hasher1.hash("+1234567890");
+        let hash1 = hasher1.hash("+1234567890").await.unwrap();
 
         // Initialize another hasher - should load the same pepper
         let hasher2 = HasherArgon2id::new(pepper_file.clone());
-        let hash2 = hasher2.hash("+1234567890");
+        let hash2 = hasher2.hash("+1234567890").await.unwrap();
 
         // Both hashers should produce the same hash since they use the same pepper
         assert_eq!(
@@ -169,5 +236,100 @@ mod tests {
             known_pepper,
             "Pepper file should not be modified"
         );
+    }
+
+    const KNOWN_PEPPER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn hasher_with_known_pepper(dir: &TempDir) -> HasherArgon2id {
+        let pepper_file = dir.path().join("pepper.txt");
+        fs::write(&pepper_file, KNOWN_PEPPER).unwrap();
+        HasherArgon2id::new(pepper_file)
+    }
+
+    /// Stored rate-limit keys must keep matching: these digests were produced
+    /// by the previous, synchronous implementation for the same pepper.
+    #[tokio::test]
+    async fn test_hash_output_is_unchanged() {
+        let temp_dir = TempDir::new().unwrap();
+        let hasher = hasher_with_known_pepper(&temp_dir);
+
+        let expected = [
+            (
+                "+1234567890",
+                "86d291d8ce2d590fea59463d13a8ddd33842b7887ab84d88bc13e95e92c4b883",
+            ),
+            (
+                "203.0.113.7",
+                "ad55a7b0abeec2f878f466cff1961305a7cbdbe54529584b83b08114618c12c0",
+            ),
+            (
+                "https://accounts.google.com\n1234567890",
+                "370c5c4caed8c2a9db3c21687d50775730413f954dfe644d9a44cd70f6868b08",
+            ),
+        ];
+        for (preimage, digest) in expected {
+            assert_eq!(hasher.hash(preimage).await.unwrap(), digest, "{preimage:?}");
+        }
+    }
+
+    #[test]
+    fn test_default_cap_is_two_hashes_per_cpu() {
+        let cpus = std::thread::available_parallelism().unwrap().get();
+        assert_eq!(default_max_concurrent_hashes(), 2 * cpus);
+
+        let temp_dir = TempDir::new().unwrap();
+        let hasher = hasher_with_known_pepper(&temp_dir);
+        assert_eq!(hasher.hash_slots.available_permits(), 2 * cpus);
+    }
+
+    #[tokio::test]
+    async fn test_busy_when_all_slots_taken() {
+        let temp_dir = TempDir::new().unwrap();
+        let hasher = hasher_with_known_pepper(&temp_dir).with_max_concurrent_hashes(2);
+
+        let occupied = hasher.occupy_all_slots();
+        let result = tokio::time::timeout(Duration::from_secs(1), hasher.hash("+1234567890"))
+            .await
+            .expect("a full hasher must answer immediately, not wait for a slot");
+        assert!(matches!(result, Err(HasherBusy)));
+
+        drop(occupied);
+        assert!(hasher.hash("+1234567890").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_slot_held_while_hashing_and_shared_by_clones() {
+        let temp_dir = TempDir::new().unwrap();
+        let hasher = hasher_with_known_pepper(&temp_dir).with_max_concurrent_hashes(1);
+        let clone = hasher.clone();
+
+        let mut in_flight = std::pin::pin!(hasher.hash("+1234567890"));
+        assert!(futures_util::poll!(&mut in_flight).is_pending());
+        assert_eq!(hasher.hash_slots.available_permits(), 0);
+        assert!(matches!(clone.hash("+1987654321").await, Err(HasherBusy)));
+
+        in_flight.await.unwrap();
+        assert_eq!(hasher.hash_slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_slot_released_when_caller_is_dropped() {
+        let temp_dir = TempDir::new().unwrap();
+        let hasher = hasher_with_known_pepper(&temp_dir).with_max_concurrent_hashes(1);
+
+        let mut in_flight = Box::pin(hasher.hash("+1234567890"));
+        assert!(futures_util::poll!(&mut in_flight).is_pending());
+        // Dropping the caller (client went away) leaves the blocking hash
+        // running; its slot must come back once that hash is done.
+        drop(in_flight);
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while hasher.hash_slots.available_permits() == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("slot was never released");
+        assert!(hasher.hash("+1234567890").await.is_ok());
     }
 }

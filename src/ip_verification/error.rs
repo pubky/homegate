@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::infrastructure::sql::DbError;
-use crate::shared::{FailureKind, RejectionReason, SignupIssuanceError};
+use crate::shared::{FailureKind, HasherBusy, RejectionReason, SignupIssuanceError};
 
 #[derive(Error, Debug)]
 pub enum IpVerificationError {
@@ -16,6 +16,9 @@ pub enum IpVerificationError {
 
     #[error("Homeserver temporarily unavailable, please retry")]
     HomeserverUnavailable,
+
+    #[error("Server busy, please retry")]
+    ServerBusy(#[from] HasherBusy),
 
     #[error("{0}")]
     Database(#[from] DbError),
@@ -36,6 +39,9 @@ impl IpVerificationError {
             Self::IpAddressRequired | Self::HomeserverUnavailable | Self::Database(_) => {
                 FailureKind::NotCounted
             }
+            // Overload is the server's own state, not a client rejection; it
+            // shows as a 503 in the request counter.
+            Self::ServerBusy(_) => FailureKind::NotCounted,
         }
     }
 }

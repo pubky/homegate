@@ -82,6 +82,7 @@ impl IntoResponse for SmsVerificationError {
             SmsVerificationError::MaxValidationAttemptsExceeded => StatusCode::TOO_MANY_REQUESTS,
             SmsVerificationError::NoActiveVerification => StatusCode::UNPROCESSABLE_ENTITY,
             SmsVerificationError::InvalidPhoneNumber => StatusCode::UNPROCESSABLE_ENTITY,
+            SmsVerificationError::ServerBusy(_) => StatusCode::SERVICE_UNAVAILABLE,
             SmsVerificationError::RateLimited { retry_after } => {
                 let mut response =
                     (StatusCode::TOO_MANY_REQUESTS, self.to_string()).into_response();
@@ -411,5 +412,15 @@ mod tests {
             .assert_status(StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(metrics.dependency_errors(Dependency::Prelude), 1);
         assert_eq!(metrics.verification_started(SignupType::Sms), 1);
+    }
+
+    #[tokio::test]
+    async fn test_busy_hasher_maps_to_503() {
+        let response = SmsVerificationError::from(crate::shared::HasherBusy).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"Server busy, please retry");
     }
 }

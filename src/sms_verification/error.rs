@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     infrastructure::sql::DbError,
-    shared::{Dependency, FailureKind, RejectionReason},
+    shared::{Dependency, FailureKind, HasherBusy, RejectionReason},
     sms_verification::prelude_api::PreludeError,
 };
 
@@ -34,6 +34,9 @@ pub enum SmsVerificationError {
     #[error("Homeserver temporarily unavailable, please retry")]
     HomeserverUnavailable,
 
+    #[error("Server busy, please retry")]
+    ServerBusy(#[from] HasherBusy),
+
     #[error("HTTP request failed: {0}")]
     RequestFailed(#[from] reqwest::Error),
 
@@ -63,6 +66,9 @@ impl SmsVerificationError {
             Self::HomeserverUnavailable => FailureKind::NotCounted,
             Self::RequestFailed(_) => FailureKind::DependencyError(Dependency::Prelude),
             Self::Database(_) => FailureKind::NotCounted,
+            // Overload is the server's own state, not a client rejection; it
+            // shows as a 503 in the request counter.
+            Self::ServerBusy(_) => FailureKind::NotCounted,
         }
     }
 }

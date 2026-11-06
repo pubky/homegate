@@ -3,7 +3,7 @@ mod homeserver_admin_api;
 pub(crate) mod metrics;
 pub(crate) mod rate_limited_signup_issuer;
 
-pub use hasher_argon2id::HasherArgon2id;
+pub use hasher_argon2id::{HasherArgon2id, HasherBusy};
 pub use homeserver_admin_api::HomeserverAdminAPI;
 pub use metrics::{Dependency, FailureKind, Metrics, RejectionReason, SignupType};
 pub use rate_limited_signup_issuer::{
