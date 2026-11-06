@@ -125,7 +125,8 @@ impl HttpServer {
                 CorsLayer::new()
                     .allow_origin(Any)
                     .allow_methods(Any)
-                    .allow_headers(Any),
+                    .allow_headers(Any)
+                    .expose_headers([axum::http::header::RETRY_AFTER]),
             )
         } else {
             app
@@ -518,7 +519,9 @@ admin_password = "test-pass"
             .mount(&servers.homeserver_server)
             .await;
 
-        // Real hashes this time: one runs, the rest are turned away.
+        // Real hashes this time. Which requests get the slot depends on
+        // timing, so only check that every one finishes with 200 or 503.
+        // (Deterministic 503s are covered by the test above.)
         let requests = (1..=6u8).map(|i| {
             send(
                 &app,
@@ -545,10 +548,6 @@ admin_password = "test-pass"
             .filter(|(status, _)| *status == StatusCode::OK)
             .count();
         assert_eq!(busy + ok, responses.len(), "{responses:?}");
-        assert!(
-            busy >= 1,
-            "6 parallel hashes with a cap of 1: {responses:?}"
-        );
         assert!(ok >= 1, "{responses:?}");
     }
 
