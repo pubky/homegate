@@ -76,7 +76,7 @@ Server-side Sign in with Apple ID token verification for issuing homeserver sign
 
 Homegate verifies the RS256 token signature against Apple's JWKS and validates the issuer (`https://appleid.apple.com`), that the audience is one of the configured `allowed_audiences`, expiry, that `iat` is not in the future, and the subject. A nonce is not required. Apple users may hide their email, so rate limiting uses a secret-peppered hash of the verified issuer and subject claims only; raw Apple IDs and emails are not stored.
 
-Enabled by adding an `[apple_verification]` section with `allowed_audiences` (the Sign in with Apple Services IDs or bundle IDs of the clients allowed to request signup codes) to `config.toml`. The JWKS endpoint defaults to Apple's well-known URL; the `HOMEGATE_APPLE_JWKS_URL` environment variable overrides it if ever needed (e.g. manual testing against a mock).
+Enabled by adding an `[apple_verification]` section with `allowed_audiences` (the Sign in with Apple Services IDs or bundle IDs of the clients allowed to request signup codes) to `config.toml`. All audiences must belong to the same Apple developer team, because Apple's `sub` is team-scoped and the limits are shared across audiences by `sub`. The JWKS endpoint defaults to Apple's well-known URL; the `HOMEGATE_APPLE_JWKS_URL` environment variable overrides it if ever needed (e.g. manual testing against a mock).
 
 ## Metrics
 

@@ -107,10 +107,14 @@ impl AppleJwksIdTokenVerifier {
     }
 }
 
+/// `aud` is read as a single string: Apple always issues one audience, so a
+/// multi-valued `aud` is rejected rather than matched on any member.
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 struct AppleClaims {
     iss: String,
     sub: String,
+    aud: String,
     iat: u64,
 }
 
@@ -422,6 +426,15 @@ mod tests {
     #[tokio::test]
     async fn test_rejects_missing_audience() {
         assert_invalid(&token_without_claim("apple-subject", "aud")).await;
+    }
+
+    #[tokio::test]
+    async fn test_rejects_multi_valued_audience() {
+        assert_invalid(&token_with(
+            "apple-subject",
+            json!({ "aud": [TEST_APPLE_AUDIENCE, "other.services.id"] }),
+        ))
+        .await;
     }
 
     #[tokio::test]

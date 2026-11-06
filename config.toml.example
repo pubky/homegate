@@ -60,6 +60,6 @@ admin_password = "admin"
 # max_verifications_per_year = 4                   # optional
 
 # [apple_verification]
-# allowed_audiences = ["your.apple.services.id"]   # Sign in with Apple Services IDs / bundle IDs
+# allowed_audiences = ["your.apple.services.id"]   # Sign in with Apple Services IDs / bundle IDs (same Apple team)
 # max_verifications_per_week = 2                   # optional
 # max_verifications_per_year = 4                   # optional
