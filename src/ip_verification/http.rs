@@ -223,4 +223,15 @@ mod tests {
             "Should mention IP address: {body}"
         );
     }
+
+    #[tokio::test]
+    async fn test_busy_hasher_maps_to_503() {
+        let response = IpVerificationError::from(crate::shared::HasherBusy).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"Server busy, please retry");
+    }
 }

@@ -22,8 +22,9 @@ use tokio::sync::Semaphore;
 /// Note: This hash function intentionally takes > 100ms to produce its digest.
 /// [`HasherArgon2id::hash`] therefore runs it on tokio's blocking thread pool,
 /// so it never stalls the async workers that serve every other request, and
-/// caps how many hashes run at once (one per CPU unless configured). When every slot is taken it fails fast
-/// with [`HasherBusy`] instead of queueing work without bound.
+/// caps how many hashes run at once (one per CPU unless configured). When
+/// every slot is taken it fails fast with [`HasherBusy`] instead of queueing
+/// work without bound.
 #[derive(Clone, Debug)]
 pub struct HasherArgon2id {
     pepper: Pepper,
@@ -67,17 +68,26 @@ impl HasherArgon2id {
     /// Runs on the blocking thread pool. Returns [`HasherBusy`] immediately if
     /// the maximum number of concurrent hashes is already running.
     pub async fn hash(&self, preimage: &str) -> Result<String, HasherBusy> {
+        let hasher = self.clone();
+        let preimage = preimage.to_owned();
+        self.run_in_slot(move || hasher.hash_blocking(&preimage))
+            .await
+    }
+
+    /// Runs `work` on the blocking thread pool if a hashing slot is free.
+    async fn run_in_slot<T: Send + 'static>(
+        &self,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Result<T, HasherBusy> {
         let slot = Arc::clone(&self.hash_slots)
             .try_acquire_owned()
             .map_err(|_| HasherBusy)?;
-        let hasher = self.clone();
-        let preimage = preimage.to_owned();
         // The slot moves into the blocking task, so it is released only when
-        // the hash has actually finished (or panicked), even if the caller's
+        // the work has actually finished (or panicked), even if the caller's
         // future is dropped first (client disconnect, request timeout).
         let task = tokio::task::spawn_blocking(move || {
             let _slot = slot;
-            hasher.hash_blocking(&preimage)
+            work()
         });
         match task.await {
             Ok(hash) => Ok(hash),
@@ -105,10 +115,11 @@ impl HasherArgon2id {
         hex::encode(hash_output.as_bytes())
     }
 
-    /// Replaces the default cap on concurrent hashes (one per CPU).
+    /// Replaces the default cap on concurrent hashes (one per CPU). Values
+    /// above [`Semaphore::MAX_PERMITS`] are clamped to it.
     pub fn with_max_concurrent_hashes(mut self, max: usize) -> Self {
         assert!(max > 0, "at least one concurrent hash must be allowed");
-        self.hash_slots = Arc::new(Semaphore::new(max));
+        self.hash_slots = Arc::new(Semaphore::new(max.min(Semaphore::MAX_PERMITS)));
         self
     }
 
@@ -116,7 +127,8 @@ impl HasherArgon2id {
     /// tests can put the hasher in the "busy" state deterministically.
     #[cfg(test)]
     pub(crate) fn occupy_all_slots(&self) -> tokio::sync::OwnedSemaphorePermit {
-        let free = self.hash_slots.available_permits() as u32;
+        let free = u32::try_from(self.hash_slots.available_permits())
+            .expect("only used on hashers with a small cap");
         Arc::clone(&self.hash_slots)
             .try_acquire_many_owned(free)
             .expect("hash slots are never closed")
@@ -280,6 +292,12 @@ mod tests {
 
         let hasher = hasher.with_max_concurrent_hashes(3);
         assert_eq!(hasher.hash_slots.available_permits(), 3);
+
+        let hasher = hasher.with_max_concurrent_hashes(usize::MAX);
+        assert_eq!(
+            hasher.hash_slots.available_permits(),
+            Semaphore::MAX_PERMITS
+        );
     }
 
     #[tokio::test]
@@ -297,32 +315,48 @@ mod tests {
         assert!(hasher.hash("+1234567890").await.is_ok());
     }
 
+    /// A blocking job that runs until the returned sender is used or dropped.
+    /// The wait is bounded so a job wrongly run inline fails the test instead
+    /// of hanging it.
+    fn gated_job() -> (std::sync::mpsc::Sender<()>, impl FnOnce() + Send + 'static) {
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        (release, move || {
+            let _ = wait.recv_timeout(Duration::from_secs(10));
+        })
+    }
+
     #[tokio::test]
-    async fn test_slot_held_while_hashing_and_shared_by_clones() {
+    async fn test_slot_held_while_work_runs_and_shared_by_clones() {
         let temp_dir = TempDir::new().unwrap();
         let hasher = hasher_with_known_pepper(&temp_dir).with_max_concurrent_hashes(1);
         let clone = hasher.clone();
+        let (release, job) = gated_job();
 
-        let mut in_flight = std::pin::pin!(hasher.hash("+1234567890"));
-        assert!(futures_util::poll!(&mut in_flight).is_pending());
+        let mut running = std::pin::pin!(hasher.run_in_slot(job));
+        // Pending: the work runs on the blocking pool, not in this poll.
+        assert!(futures_util::poll!(&mut running).is_pending());
         assert_eq!(hasher.hash_slots.available_permits(), 0);
         assert!(matches!(clone.hash("+1987654321").await, Err(HasherBusy)));
 
-        in_flight.await.unwrap();
+        release.send(()).unwrap();
+        running.await.unwrap();
         assert_eq!(hasher.hash_slots.available_permits(), 1);
     }
 
     #[tokio::test]
-    async fn test_slot_released_when_caller_is_dropped() {
+    async fn test_slot_released_only_when_work_finishes_after_caller_dropped() {
         let temp_dir = TempDir::new().unwrap();
         let hasher = hasher_with_known_pepper(&temp_dir).with_max_concurrent_hashes(1);
+        let (release, job) = gated_job();
 
-        let mut in_flight = Box::pin(hasher.hash("+1234567890"));
-        assert!(futures_util::poll!(&mut in_flight).is_pending());
-        // Dropping the caller (client went away) leaves the blocking hash
-        // running; its slot must come back once that hash is done.
-        drop(in_flight);
+        let mut running = Box::pin(hasher.run_in_slot(job));
+        assert!(futures_util::poll!(&mut running).is_pending());
+        // The caller goes away (client disconnect, timeout); the blocking work
+        // keeps running and keeps its slot.
+        drop(running);
+        assert!(matches!(hasher.hash("+1234567890").await, Err(HasherBusy)));
 
+        release.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(10), async {
             while hasher.hash_slots.available_permits() == 0 {
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -331,5 +365,19 @@ mod tests {
         .await
         .expect("slot was never released");
         assert!(hasher.hash("+1234567890").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_panicking_work_releases_its_slot_and_resumes_panic() {
+        let temp_dir = TempDir::new().unwrap();
+        let hasher = hasher_with_known_pepper(&temp_dir).with_max_concurrent_hashes(1);
+
+        let caller = tokio::spawn({
+            let hasher = hasher.clone();
+            async move { hasher.run_in_slot(|| panic!("boom")).await }
+        });
+        let error = caller.await.unwrap_err();
+        assert!(error.is_panic(), "the panic reaches the caller");
+        assert_eq!(hasher.hash_slots.available_permits(), 1);
     }
 }
