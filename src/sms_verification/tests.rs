@@ -27,7 +27,9 @@ const TEST_WRONG_CODE: &str = "111111";
 
 static TEST_HASHER: std::sync::LazyLock<HasherArgon2id> = std::sync::LazyLock::new(|| {
     let dir = tempfile::tempdir().unwrap();
+    // Shared by every test thread, so it must not hit the production cap.
     HasherArgon2id::new(dir.path().join("pepper.txt"))
+        .with_max_concurrent_hashes(tokio::sync::Semaphore::MAX_PERMITS)
 });
 
 // TODO replace with faster hasher
