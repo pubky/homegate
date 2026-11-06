@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::infrastructure::sql::DbError;
-use crate::shared::SignupIssuanceError;
+use crate::shared::{HasherBusy, SignupIssuanceError};
 
 #[derive(Error, Debug)]
 pub enum IpVerificationError {
@@ -16,6 +16,9 @@ pub enum IpVerificationError {
 
     #[error("Homeserver temporarily unavailable, please retry")]
     HomeserverUnavailable,
+
+    #[error("Server busy, please retry")]
+    ServerBusy(#[from] HasherBusy),
 
     #[error("{0}")]
     Database(#[from] DbError),

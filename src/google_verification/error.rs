@@ -1,5 +1,5 @@
 use crate::infrastructure::sql::DbError;
-use crate::shared::SignupIssuanceError;
+use crate::shared::{HasherBusy, SignupIssuanceError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum GoogleVerificationError {
@@ -17,6 +17,9 @@ pub enum GoogleVerificationError {
 
     #[error("google_verifier_unavailable")]
     GoogleVerifierUnavailable,
+
+    #[error("server_busy")]
+    ServerBusy(#[from] HasherBusy),
 
     #[error("internal_error")]
     Database(#[from] DbError),

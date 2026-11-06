@@ -1,6 +1,8 @@
 use thiserror::Error;
 
-use crate::{infrastructure::sql::DbError, sms_verification::prelude_api::PreludeError};
+use crate::{
+    infrastructure::sql::DbError, shared::HasherBusy, sms_verification::prelude_api::PreludeError,
+};
 
 #[derive(Error, Debug)]
 pub enum SmsVerificationError {
@@ -29,6 +31,9 @@ pub enum SmsVerificationError {
 
     #[error("Homeserver temporarily unavailable, please retry")]
     HomeserverUnavailable,
+
+    #[error("Server busy, please retry")]
+    ServerBusy(#[from] HasherBusy),
 
     #[error("HTTP request failed: {0}")]
     RequestFailed(#[from] reqwest::Error),
