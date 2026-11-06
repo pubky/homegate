@@ -1,20 +1,13 @@
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
-
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
-use reqwest::header::CACHE_CONTROL;
-use tokio::sync::RwLock;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use url::Url;
+
+use crate::shared::{JwksCache, jwks_url_from_env_or_default};
 
 const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
 /// Environment variable that overrides [`GOOGLE_JWKS_URL`]. Intentionally not
 /// part of `config.toml` — it exists as an escape hatch (e.g. pointing at a
 /// mock during manual testing, or if Google ever moves the endpoint).
 const GOOGLE_JWKS_URL_ENV_VAR: &str = "HOMEGATE_GOOGLE_JWKS_URL";
-const DEFAULT_JWKS_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
-const MIN_FORCED_JWKS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_ID_TOKEN_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,18 +28,21 @@ pub enum GoogleIdTokenVerificationError {
 #[derive(Clone, Debug)]
 pub struct GoogleJwksIdTokenVerifier {
     google_client_id: String,
-    jwks_cache: GoogleJwksCache,
+    jwks_cache: JwksCache,
 }
 
 impl GoogleJwksIdTokenVerifier {
     pub fn new(google_client_id: String) -> Self {
-        Self::with_jwks_url(google_client_id, jwks_url_from_env_or_default())
+        Self::with_jwks_url(
+            google_client_id,
+            jwks_url_from_env_or_default(GOOGLE_JWKS_URL_ENV_VAR, GOOGLE_JWKS_URL),
+        )
     }
 
     fn with_jwks_url(google_client_id: String, jwks_url: Url) -> Self {
         Self {
             google_client_id,
-            jwks_cache: GoogleJwksCache::new(jwks_url),
+            jwks_cache: JwksCache::new(jwks_url),
         }
     }
 
@@ -54,21 +50,6 @@ impl GoogleJwksIdTokenVerifier {
     pub(crate) fn for_test(google_client_id: String, jwks_url: Url) -> Self {
         Self::with_jwks_url(google_client_id, jwks_url)
     }
-}
-
-/// Resolve the JWKS URL, honouring the [`GOOGLE_JWKS_URL_ENV_VAR`] override.
-///
-/// Panics on an invalid override so a misconfiguration fails at startup
-/// rather than surfacing as verification errors at runtime.
-fn jwks_url_from_env_or_default() -> Url {
-    let Ok(value) = std::env::var(GOOGLE_JWKS_URL_ENV_VAR) else {
-        return Url::parse(GOOGLE_JWKS_URL).expect("Default Google JWKS URL is valid");
-    };
-    let url = Url::parse(&value).unwrap_or_else(|error| {
-        panic!("{GOOGLE_JWKS_URL_ENV_VAR} must be a valid URL, got '{value}': {error}")
-    });
-    tracing::info!(jwks_url = %url, "Using Google JWKS URL override from {GOOGLE_JWKS_URL_ENV_VAR}");
-    url
 }
 
 impl GoogleJwksIdTokenVerifier {
@@ -87,16 +68,12 @@ impl GoogleJwksIdTokenVerifier {
         }
         let kid = header.kid.ok_or(GoogleIdTokenVerificationError::Invalid)?;
 
-        let jwks = self.jwks_cache.get(false).await?;
-        let jwk = match find_jwk(&jwks, &kid).cloned() {
-            Some(jwk) => jwk,
-            None => {
-                let refreshed_jwks = self.jwks_cache.get(true).await?;
-                find_jwk(&refreshed_jwks, &kid)
-                    .cloned()
-                    .ok_or(GoogleIdTokenVerificationError::Invalid)?
-            }
-        };
+        let jwk = self
+            .jwks_cache
+            .find_key(&kid)
+            .await
+            .map_err(|_| GoogleIdTokenVerificationError::DependencyUnavailable)?
+            .ok_or(GoogleIdTokenVerificationError::Invalid)?;
 
         let decoding_key = DecodingKey::from_jwk(&jwk)
             .map_err(|_| GoogleIdTokenVerificationError::DependencyUnavailable)?;
@@ -126,113 +103,6 @@ impl GoogleJwksIdTokenVerifier {
     }
 }
 
-#[derive(Clone, Debug)]
-struct GoogleJwksCache {
-    http_client: reqwest::Client,
-    jwks_url: Url,
-    cache: Arc<RwLock<Option<CachedJwks>>>,
-}
-
-impl GoogleJwksCache {
-    fn new(jwks_url: Url) -> Self {
-        let http_client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(crate::shared::DEPENDENCY_REQUEST_TIMEOUT)
-            .build()
-            .expect("Reqwest client configuration should be valid");
-        Self {
-            http_client,
-            jwks_url,
-            cache: Arc::new(RwLock::new(None)),
-        }
-    }
-
-    async fn get(
-        &self,
-        force_refresh: bool,
-    ) -> Result<Arc<JwkSet>, GoogleIdTokenVerificationError> {
-        if !force_refresh {
-            let cache = self.cache.read().await;
-            if let Some(cached) = cache.as_ref()
-                && !cached.is_expired()
-            {
-                return Ok(cached.jwks.clone());
-            }
-        } else {
-            let cache = self.cache.read().await;
-            if let Some(cached) = cache.as_ref()
-                && cached.is_forced_refresh_throttled()
-            {
-                return Ok(cached.jwks.clone());
-            }
-        }
-
-        let mut cache = self.cache.write().await;
-        if !force_refresh
-            && let Some(cached) = cache.as_ref()
-            && !cached.is_expired()
-        {
-            return Ok(cached.jwks.clone());
-        }
-        if force_refresh
-            && let Some(cached) = cache.as_ref()
-            && cached.is_forced_refresh_throttled()
-        {
-            return Ok(cached.jwks.clone());
-        }
-
-        let response = self
-            .http_client
-            .get(self.jwks_url.clone())
-            .send()
-            .await
-            .map_err(|_| GoogleIdTokenVerificationError::DependencyUnavailable)?;
-        let ttl = response
-            .headers()
-            .get(CACHE_CONTROL)
-            .and_then(|value| value.to_str().ok())
-            .and_then(cache_control_max_age)
-            .unwrap_or(DEFAULT_JWKS_CACHE_TTL);
-        let jwks = response
-            .error_for_status()
-            .map_err(|_| GoogleIdTokenVerificationError::DependencyUnavailable)?
-            .json::<JwkSet>()
-            .await
-            .map_err(|_| GoogleIdTokenVerificationError::DependencyUnavailable)?;
-
-        let cached = CachedJwks::new(jwks, ttl);
-        let jwks = cached.jwks.clone();
-        *cache = Some(cached);
-        Ok(jwks)
-    }
-}
-
-#[derive(Clone, Debug)]
-struct CachedJwks {
-    jwks: Arc<JwkSet>,
-    fetched_at: Instant,
-    expires_at: Instant,
-}
-
-impl CachedJwks {
-    fn new(jwks: JwkSet, ttl: Duration) -> Self {
-        let fetched_at = Instant::now();
-        Self {
-            jwks: Arc::new(jwks),
-            fetched_at,
-            expires_at: fetched_at + ttl,
-        }
-    }
-
-    fn is_expired(&self) -> bool {
-        Instant::now() >= self.expires_at
-    }
-
-    fn is_forced_refresh_throttled(&self) -> bool {
-        self.fetched_at.elapsed() < MIN_FORCED_JWKS_REFRESH_INTERVAL
-    }
-}
-
 #[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 struct GoogleClaims {
@@ -240,28 +110,6 @@ struct GoogleClaims {
     sub: String,
     aud: String,
     exp: usize,
-}
-
-fn find_jwk<'a>(jwks: &'a JwkSet, kid: &str) -> Option<&'a jsonwebtoken::jwk::Jwk> {
-    jwks.keys
-        .iter()
-        .find(|jwk| jwk.common.key_id.as_deref() == Some(kid))
-}
-
-fn cache_control_max_age(value: &str) -> Option<Duration> {
-    value.split(',').find_map(|directive| {
-        let (name, value) = directive.trim().split_once('=')?;
-        if name.eq_ignore_ascii_case("max-age") {
-            value
-                .trim()
-                .trim_matches('"')
-                .parse::<u64>()
-                .ok()
-                .map(Duration::from_secs)
-        } else {
-            None
-        }
-    })
 }
 
 #[cfg(test)]
@@ -404,23 +252,13 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{sync::Arc, time::Instant};
+    use std::time::{Duration, Instant};
 
+    use jsonwebtoken::jwk::JwkSet;
     use test_support::*;
     use wiremock::MockServer;
 
-    #[test]
-    fn test_cache_control_max_age() {
-        assert_eq!(
-            cache_control_max_age("public, max-age=123, must-revalidate"),
-            Some(Duration::from_secs(123))
-        );
-        assert_eq!(
-            cache_control_max_age("public, max-age=\"456\""),
-            Some(Duration::from_secs(456))
-        );
-        assert_eq!(cache_control_max_age("no-cache"), None);
-    }
+    use crate::shared::jwks_cache::MIN_FORCED_JWKS_REFRESH_INTERVAL;
 
     #[tokio::test]
     async fn test_verifies_valid_google_like_token() {
@@ -510,13 +348,16 @@ mod tests {
         let verifier = verifier_for_server(&server);
         let mut old_jwk = test_jwk();
         old_jwk.common.key_id = Some("old-kid".to_string());
-        *verifier.jwks_cache.cache.write().await = Some(CachedJwks {
-            jwks: Arc::new(JwkSet {
-                keys: vec![old_jwk],
-            }),
-            fetched_at: Instant::now() - MIN_FORCED_JWKS_REFRESH_INTERVAL - Duration::from_secs(1),
-            expires_at: Instant::now() + Duration::from_secs(3600),
-        });
+        verifier
+            .jwks_cache
+            .seed_for_test(
+                JwkSet {
+                    keys: vec![old_jwk],
+                },
+                Instant::now() - MIN_FORCED_JWKS_REFRESH_INTERVAL - Duration::from_secs(1),
+                Instant::now() + Duration::from_secs(3600),
+            )
+            .await;
         let token = valid_token("google-subject");
 
         let identity = verifier.verify(&token).await.unwrap();
