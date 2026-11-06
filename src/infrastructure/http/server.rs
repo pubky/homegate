@@ -17,13 +17,25 @@ use crate::{
 
 use super::{http_metrics::record_http_metrics, metrics_server::metrics_router};
 
-use axum::{Router, middleware, response::IntoResponse, routing::get};
+use axum::{
+    Router, error_handling::HandleErrorLayer, http::StatusCode, middleware, response::IntoResponse,
+    routing::get,
+};
 use axum_server::Handle;
 use futures_util::TryFutureExt;
+use tower::{BoxError, ServiceBuilder};
 use tower_http::{
     cors::{Any, CorsLayer},
+    limit::RequestBodyLimitLayer,
     trace::TraceLayer,
 };
+
+/// Upper bound for one request; the slowest legitimate route is the 25 s
+/// Lightning long poll. Slower requests get 503 `request_timeout`.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Request bodies are small JSON documents (an ID token is a few KiB).
+const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
 
 pub struct HttpServer {
     pub(crate) http_handle: Handle,
@@ -91,8 +103,12 @@ impl HttpServer {
             );
         }
 
-        // Innermost layer: CORS preflights answered by the CORS layer are not
-        // counted, every response of a route is.
+        // Innermost: the timeout and body limit, so the request metrics below
+        // also count `request_timeout` (503) and oversized bodies (413).
+        app = with_request_timeout(app, REQUEST_TIMEOUT)
+            .layer(RequestBodyLimitLayer::new(MAX_REQUEST_BODY_BYTES));
+        // CORS preflights answered by the CORS layer are not counted, every
+        // response of a route is.
         app = app.layer(middleware::from_fn_with_state(
             metrics.clone(),
             record_http_metrics,
@@ -231,12 +247,39 @@ fn report_enabled_routes(config: &AppConfig, metrics: &Metrics) {
     metrics.set_route_enabled(SignupType::Google, config.google_verification.is_some());
 }
 
+/// Answers 503 `request_timeout` for any request in `router` that takes
+/// longer than `timeout`.
+fn with_request_timeout(router: Router, timeout: Duration) -> Router {
+    router.layer(
+        ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(timeout_response))
+            .timeout(timeout),
+    )
+}
+
+async fn timeout_response(error: BoxError) -> (StatusCode, &'static str) {
+    if error.is::<tower::timeout::error::Elapsed>() {
+        tracing::warn!("Request timed out");
+        (StatusCode::SERVICE_UNAVAILABLE, "request_timeout")
+    } else {
+        tracing::error!(%error, "Unhandled middleware error");
+        (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
+    use axum::{
+        body::{Body, to_bytes},
+        extract::ConnectInfo,
+        http::Request,
+        response::Response,
+    };
     use axum_test::TestServer;
     use sqlx::PgPool;
+    use tower::ServiceExt;
 
     #[sqlx::test]
     async fn public_router_counts_every_response(pool: PgPool) {
@@ -367,5 +410,180 @@ google_client_id = "test-client-id"
         assert_eq!(metrics.route_enabled(SignupType::Google), 1);
         assert_eq!(metrics.route_enabled(SignupType::Sms), 0);
         assert_eq!(metrics.route_enabled(SignupType::Lightning), 0);
+    }
+
+    async fn send(router: &Router, request: Request<Body>) -> (StatusCode, String) {
+        let response: Response = router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    fn get_request(uri: &str) -> Request<Body> {
+        Request::get(uri).body(Body::empty()).unwrap()
+    }
+
+    fn post_from(uri: &str, client: [u8; 4], body: Body) -> Request<Body> {
+        let mut request = Request::post(uri).body(body).unwrap();
+        let addr = SocketAddr::from((client, 40000));
+        request.extensions_mut().insert(ConnectInfo(addr));
+        request
+    }
+
+    /// Full router with `/ip_verification` enabled and a hasher capped at
+    /// `max_concurrent_hashes`.
+    async fn ip_verification_app(
+        pool: PgPool,
+        servers: &WiremockServers,
+        max_concurrent_hashes: usize,
+    ) -> (Router, HasherArgon2id) {
+        let config: AppConfig = toml::from_str(&format!(
+            r#"
+database_url = "postgres://localhost:5432/unused"
+
+[homeserver]
+admin_api_url = "{}"
+admin_password = "test-pass"
+
+[ip_verification]
+"#,
+            servers.homeserver_server.uri()
+        ))
+        .unwrap();
+        let metrics = Metrics::new();
+        let homeserver_api = HomeserverAdminAPI::new(
+            &servers.homeserver_server.uri().parse().unwrap(),
+            "test-pass",
+            "test-homeserver-pubky",
+            metrics.clone(),
+        );
+        let db = SqlDb::test(pool).await;
+        let hasher = HasherArgon2id::new(tempfile::tempdir().unwrap().keep().join("pepper.txt"))
+            .with_max_concurrent_hashes(max_concurrent_hashes);
+        let router =
+            HttpServer::create_router(&config, &db, &homeserver_api, hasher.clone(), &metrics)
+                .await
+                .unwrap();
+        (router, hasher)
+    }
+
+    #[sqlx::test]
+    async fn test_busy_hasher_returns_503_fast_and_root_stays_up(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let (app, hasher) = ip_verification_app(pool, &servers, 2).await;
+        setup_homeserver_signup_token("token-after-busy")
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+
+        let occupied = hasher.occupy_all_slots();
+        let requests = (1..=8u8).map(|i| {
+            send(
+                &app,
+                post_from("/ip_verification", [198, 51, 100, i], Body::empty()),
+            )
+        });
+        let responses = tokio::time::timeout(
+            Duration::from_secs(5),
+            futures_util::future::join_all(requests),
+        )
+        .await
+        .expect("requests over the hashing cap must not wait for a slot");
+        for (status, body) in responses {
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(body, "Server busy, please retry");
+        }
+
+        let (status, body) = send(&app, get_request("/")).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::OK, "Homegate Service")
+        );
+
+        drop(occupied);
+        let (status, body) = send(
+            &app,
+            post_from("/ip_verification", [198, 51, 100, 1], Body::empty()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body.contains("token-after-busy"), "{body}");
+    }
+
+    #[sqlx::test]
+    async fn test_parallel_requests_beyond_hashing_cap_never_hang(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let (app, _hasher) = ip_verification_app(pool, &servers, 1).await;
+        setup_homeserver_signup_token("token")
+            .mount(&servers.homeserver_server)
+            .await;
+
+        // Real hashes this time: one runs, the rest are turned away.
+        let requests = (1..=6u8).map(|i| {
+            send(
+                &app,
+                post_from("/ip_verification", [198, 51, 100, i], Body::empty()),
+            )
+        });
+        let (responses, root) = tokio::time::timeout(
+            Duration::from_secs(30),
+            futures_util::future::join(
+                futures_util::future::join_all(requests),
+                send(&app, get_request("/")),
+            ),
+        )
+        .await
+        .expect("no request may hang");
+
+        assert_eq!(root.0, StatusCode::OK);
+        let busy = responses
+            .iter()
+            .filter(|(status, _)| *status == StatusCode::SERVICE_UNAVAILABLE)
+            .count();
+        let ok = responses
+            .iter()
+            .filter(|(status, _)| *status == StatusCode::OK)
+            .count();
+        assert_eq!(busy + ok, responses.len(), "{responses:?}");
+        assert!(
+            busy >= 1,
+            "6 parallel hashes with a cap of 1: {responses:?}"
+        );
+        assert!(ok >= 1, "{responses:?}");
+    }
+
+    #[sqlx::test]
+    async fn test_oversized_body_is_rejected(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let (app, _hasher) = ip_verification_app(pool, &servers, 2).await;
+
+        let body = Body::from(vec![b'a'; MAX_REQUEST_BODY_BYTES + 1]);
+        let mut request = post_from("/ip_verification", [198, 51, 100, 1], body);
+        request.headers_mut().insert(
+            axum::http::header::CONTENT_LENGTH,
+            (MAX_REQUEST_BODY_BYTES + 1).into(),
+        );
+        let (status, _) = send(&app, request).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn test_slow_request_times_out_with_503() {
+        let slow = || async {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            "done"
+        };
+        let app = with_request_timeout(
+            Router::new().route("/slow", get(slow)),
+            Duration::from_millis(50),
+        );
+
+        assert_eq!(
+            send(&app, get_request("/slow")).await,
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "request_timeout".to_string()
+            )
+        );
     }
 }
