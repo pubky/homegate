@@ -82,10 +82,10 @@ scrape_configs:
 
 | Metric | Labels | Meaning |
 |---|---|---|
-| `homegate_signup_codes_issued_total` | `type` | Signup codes issued per route (`sms`, `lightning`, `ip`, `google`) |
+| `homegate_signup_codes_issued_total` | `type` | Signup codes issued per route (`sms`, `lightning`, `ip`, `google`, `apple`) |
 | `homegate_verification_started_total` | `type` | SMS codes sent and Lightning invoices created; compare with issued for drop-off |
 | `homegate_verification_rejected_total` | `type`, `reason` | Requests refused for a client-attributable reason (rate limits, invalid tokens, wrong codes, ...); see the note below on what it leaves out |
-| `homegate_dependency_errors_total` | `dependency` | Failed calls to `homeserver`, `prelude`, `phoenixd` or `google_jwks` |
+| `homegate_dependency_errors_total` | `dependency` | Failed calls to `homeserver`, `prelude`, `phoenixd`, `google_jwks` or `apple_jwks` |
 | `homegate_homeserver_request_duration_seconds` | | Histogram of signup token requests to the homeserver admin API |
 | `homegate_http_requests_total` | `route`, `method`, `status` | Every response of the public API, by matched route template (for example `/sms_verification/send_code`; `unmatched` for unknown paths), HTTP method and status code. CORS preflights are not counted |
 | `homegate_http_request_duration_seconds` | `route`, `method` | Histogram of time to respond on the public API. `/ln_verification/{id}/await` long-polls for up to 25 seconds by design, so leave it out of latency percentiles |

@@ -1,3 +1,4 @@
+mod apple_verification;
 mod google_verification;
 mod infrastructure;
 mod ip_verification;

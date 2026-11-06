@@ -28,14 +28,16 @@ pub enum SignupType {
     Lightning,
     Ip,
     Google,
+    Apple,
 }
 
 impl SignupType {
-    pub const ALL: [SignupType; 4] = [
+    pub const ALL: [SignupType; 5] = [
         SignupType::Sms,
         SignupType::Lightning,
         SignupType::Ip,
         SignupType::Google,
+        SignupType::Apple,
     ];
 
     /// Routes with a distinct "started" step before a code can be issued.
@@ -47,6 +49,7 @@ impl SignupType {
             SignupType::Lightning => "lightning",
             SignupType::Ip => "ip",
             SignupType::Google => "google",
+            SignupType::Apple => "apple",
         }
     }
 }
@@ -58,14 +61,16 @@ pub enum Dependency {
     Prelude,
     Phoenixd,
     GoogleJwks,
+    AppleJwks,
 }
 
 impl Dependency {
-    pub const ALL: [Dependency; 4] = [
+    pub const ALL: [Dependency; 5] = [
         Dependency::Homeserver,
         Dependency::Prelude,
         Dependency::Phoenixd,
         Dependency::GoogleJwks,
+        Dependency::AppleJwks,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -74,6 +79,7 @@ impl Dependency {
             Dependency::Prelude => "prelude",
             Dependency::Phoenixd => "phoenixd",
             Dependency::GoogleJwks => "google_jwks",
+            Dependency::AppleJwks => "apple_jwks",
         }
     }
 }
@@ -86,6 +92,7 @@ pub enum RejectionReason {
     WeeklyLimitExceeded,
     AnnualLimitExceeded,
     InvalidGoogleIdToken,
+    InvalidAppleIdToken,
     InvalidPhoneNumber,
     Blocked,
     PreludeRateLimited,
@@ -95,10 +102,11 @@ pub enum RejectionReason {
 }
 
 impl RejectionReason {
-    pub const ALL: [RejectionReason; 9] = [
+    pub const ALL: [RejectionReason; 10] = [
         RejectionReason::WeeklyLimitExceeded,
         RejectionReason::AnnualLimitExceeded,
         RejectionReason::InvalidGoogleIdToken,
+        RejectionReason::InvalidAppleIdToken,
         RejectionReason::InvalidPhoneNumber,
         RejectionReason::Blocked,
         RejectionReason::PreludeRateLimited,
@@ -112,6 +120,7 @@ impl RejectionReason {
             RejectionReason::WeeklyLimitExceeded => "weekly_limit_exceeded",
             RejectionReason::AnnualLimitExceeded => "annual_limit_exceeded",
             RejectionReason::InvalidGoogleIdToken => "invalid_google_id_token",
+            RejectionReason::InvalidAppleIdToken => "invalid_apple_id_token",
             RejectionReason::InvalidPhoneNumber => "invalid_phone_number",
             RejectionReason::Blocked => "blocked",
             RejectionReason::PreludeRateLimited => "prelude_rate_limited",

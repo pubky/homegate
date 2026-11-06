@@ -10,6 +10,7 @@ use crate::infrastructure::sql::{
         m20260120_add_validation_attempts::M20260120AddValidationAttempts,
         m20260324_create_ip_verifications::M20260324CreateIpVerifications,
         m20260630_create_google_verifications::M20260630CreateGoogleVerifications,
+        m20261105_create_apple_verifications::M20261105CreateAppleVerifications,
     },
 };
 
@@ -37,6 +38,7 @@ impl<'a> Migrator<'a> {
             Box::new(M20260120AddValidationAttempts),
             Box::new(M20260324CreateIpVerifications),
             Box::new(M20260630CreateGoogleVerifications),
+            Box::new(M20261105CreateAppleVerifications),
         ]
     }
 
