@@ -329,7 +329,10 @@ impl SmsVerificationRepository {
         phone_number: &PhoneNumber,
         hasher: &crate::shared::HasherArgon2id,
     ) -> Result<SmsVerificationEntity, DbError> {
-        let hashed_phone = hasher.hash(phone_number.as_str());
+        let hashed_phone = hasher
+            .hash(phone_number.as_str())
+            .await
+            .expect("test hasher has free slots");
 
         let statement = Query::select()
             .columns([

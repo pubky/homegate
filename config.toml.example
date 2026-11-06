@@ -4,6 +4,7 @@ database_url = "postgres://postgres:postgres@localhost:5432/pubky_homegate"
 http_listen_socket = "0.0.0.0:8080"
 # allow_cors = false
 # accept_proxy_ip_headers = false
+# max_concurrent_hashes = 4                         # optional, defaults to the number of CPUs
 
 [homeserver]
 admin_api_url = "http://localhost:6288"
