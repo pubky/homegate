@@ -37,6 +37,12 @@ info:
     uses a secret-peppered hash of the verified issuer and subject claims; raw Google IDs and
     emails are not stored. Disabled by default (omit the `[google_verification]` section from
     `config.toml`).
+
+    ## Overload protection
+    Identifier hashing (SMS, IP and Google verification) is deliberately slow, so it runs on a
+    bounded pool. When that pool is full the request is answered with `503` right away instead of
+    queueing. Every request also has a 30 second time limit (`503 request_timeout`), and request
+    bodies over 64 KiB are rejected with `413`. A `503` is safe to retry after a short delay.
   version: 0.2.0
   contact:
     name: Homegate API Support
@@ -48,6 +54,7 @@ servers:
     description: Production server (example)
 
 paths:
+
   /:
     get:
       summary: Root endpoint
@@ -146,6 +153,17 @@ paths:
               schema:
                 type: string
                 example: "Internal Server Error"
+        '503':
+          description: Server busy, retry later. Identifier hashing is at capacity, or the request took longer than 30 seconds
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                hashingBusy:
+                  value: "Server busy, please retry"
+                requestTimeout:
+                  value: "request_timeout"
 
   /sms_verification/validate_code:
     post:
@@ -219,6 +237,17 @@ paths:
               schema:
                 type: string
                 example: "Internal Server Error"
+        '503':
+          description: Server busy, retry later. Identifier hashing is at capacity, or the request took longer than 30 seconds
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                hashingBusy:
+                  value: "Server busy, please retry"
+                requestTimeout:
+                  value: "request_timeout"
 
   /ln_verification:
     post:
@@ -255,6 +284,8 @@ paths:
               schema:
                 type: string
                 example: "Internal Server Error"
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /sms_verification/info:
     get:
@@ -270,6 +301,8 @@ paths:
       responses:
         '200':
           description: SMS verification is available
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /ip_verification:
     post:
@@ -339,6 +372,17 @@ paths:
                   value: "Homeserver temporarily unavailable, please retry"
                 internalError:
                   value: "Internal Server Error"
+        '503':
+          description: Server busy, retry later. Identifier hashing is at capacity, or the request took longer than 30 seconds
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                hashingBusy:
+                  value: "Server busy, please retry"
+                requestTimeout:
+                  value: "request_timeout"
 
   /google_verification:
     post:
@@ -422,6 +466,17 @@ paths:
                   value: "google_verifier_unavailable"
                 internalError:
                   value: "internal_error"
+        '503':
+          description: Server busy, retry later. Identifier hashing is at capacity, or the request took longer than 30 seconds
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                hashingBusy:
+                  value: "server_busy"
+                requestTimeout:
+                  value: "request_timeout"
 
   /ln_verification/info:
     get:
@@ -447,6 +502,8 @@ paths:
                   summary: Info response
                   value:
                     amountSat: 1000
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /ln_verification/{id}:
     get:
@@ -521,6 +578,8 @@ paths:
               schema:
                 type: string
                 example: "Internal Server Error"
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /ln_verification/{id}/await:
     get:
@@ -597,6 +656,8 @@ paths:
               schema:
                 type: string
                 example: "Internal Server Error"
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
 components:
   schemas:
@@ -819,6 +880,14 @@ components:
           schema:
             type: string
             example: "Internal Server Error"
+
+    ServiceUnavailable:
+      description: Request took longer than 30 seconds, retry later
+      content:
+        text/plain:
+          schema:
+            type: string
+          example: "request_timeout"
 
     NotFound:
       description: Resource not found
