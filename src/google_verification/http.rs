@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::State,
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -42,7 +42,15 @@ impl IntoResponse for GoogleVerificationError {
             GoogleVerificationError::InvalidGoogleIdToken => StatusCode::UNAUTHORIZED,
             GoogleVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             GoogleVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
-            GoogleVerificationError::ServerBusy(_) => StatusCode::SERVICE_UNAVAILABLE,
+            GoogleVerificationError::ServerBusy(_) => {
+                let retry_after = [(header::RETRY_AFTER, "1")];
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    retry_after,
+                    self.to_string(),
+                )
+                    .into_response();
+            }
             GoogleVerificationError::HomeserverUnavailable => {
                 tracing::error!("Homeserver unavailable during Google verification");
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -252,6 +260,7 @@ mod tests {
     async fn busy_hasher_maps_to_503_server_busy() {
         let response = GoogleVerificationError::from(crate::shared::HasherBusy).into_response();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();

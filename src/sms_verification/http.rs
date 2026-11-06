@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::State,
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -73,7 +73,15 @@ impl IntoResponse for SmsVerificationError {
             SmsVerificationError::MaxValidationAttemptsExceeded => StatusCode::TOO_MANY_REQUESTS,
             SmsVerificationError::NoActiveVerification => StatusCode::UNPROCESSABLE_ENTITY,
             SmsVerificationError::InvalidPhoneNumber => StatusCode::UNPROCESSABLE_ENTITY,
-            SmsVerificationError::ServerBusy(_) => StatusCode::SERVICE_UNAVAILABLE,
+            SmsVerificationError::ServerBusy(_) => {
+                let retry_after = [(header::RETRY_AFTER, "1")];
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    retry_after,
+                    self.to_string(),
+                )
+                    .into_response();
+            }
             SmsVerificationError::RateLimited { retry_after } => {
                 let mut response =
                     (StatusCode::TOO_MANY_REQUESTS, self.to_string()).into_response();
@@ -321,6 +329,7 @@ mod tests {
     async fn test_busy_hasher_maps_to_503() {
         let response = SmsVerificationError::from(crate::shared::HasherBusy).into_response();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();

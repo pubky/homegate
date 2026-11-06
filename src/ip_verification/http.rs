@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::State,
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -43,7 +43,15 @@ impl IntoResponse for IpVerificationError {
             IpVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             IpVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             IpVerificationError::IpAddressRequired => StatusCode::BAD_REQUEST,
-            IpVerificationError::ServerBusy(_) => StatusCode::SERVICE_UNAVAILABLE,
+            IpVerificationError::ServerBusy(_) => {
+                let retry_after = [(header::RETRY_AFTER, "1")];
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    retry_after,
+                    self.to_string(),
+                )
+                    .into_response();
+            }
             IpVerificationError::HomeserverUnavailable => {
                 tracing::error!("Homeserver unavailable during IP verification");
                 StatusCode::INTERNAL_SERVER_ERROR
