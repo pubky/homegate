@@ -9,6 +9,7 @@ This service depends on
 - [Prelude](https://docs.prelude.so/) as a SMS service provider.
 - [PhoenixD](https://github.com/ACINQ/phoenixd) As a Lightning Payment provider.
 - Google JWKS for Google ID token verification.
+- Apple JWKS for Sign in with Apple ID token verification.
 
 # Configuration
 
@@ -20,7 +21,7 @@ The `database_url` field must point to an existing PostgreSQL database, e.g.:
 database_url = "postgres://postgres:postgres@localhost:5432/pubky_homegate"
 ```
 
-Verification routes are **optional** — include an `[sms_verification]`, `[ln_verification]`, `[ip_verification]`, or `[google_verification]` section to enable each one. Omitting a section disables that route entirely.
+Verification routes are **optional** — include an `[sms_verification]`, `[ln_verification]`, `[ip_verification]`, `[google_verification]`, or `[apple_verification]` section to enable each one. Omitting a section disables that route entirely.
 
 See `config.toml.example` for the full list of options and defaults.
 
@@ -63,6 +64,14 @@ Homegate verifies the token signature against Google's JWKS and validates the ex
 
 Enabled by adding a `[google_verification]` section with `google_client_id` to `config.toml`. The JWKS endpoint defaults to Google's well-known URL; the `HOMEGATE_GOOGLE_JWKS_URL` environment variable overrides it if ever needed (e.g. manual testing against a mock).
 
+## Apple Verification
+
+Server-side Sign in with Apple ID token verification for issuing homeserver signup codes. A client POSTs to `/apple_verification` with an `appleIdToken` and receives a signup code if the token is valid and the Apple identity has not exceeded the configured weekly/annual limits.
+
+Homegate verifies the RS256 token signature against Apple's JWKS and validates the issuer (`https://appleid.apple.com`), that the audience is one of the configured `allowed_audiences`, expiry, that `iat` is not in the future, and the subject. A nonce is not required. Apple users may hide their email, so rate limiting uses a secret-peppered hash of the verified issuer and subject claims only; raw Apple IDs and emails are not stored.
+
+Enabled by adding an `[apple_verification]` section with `allowed_audiences` (the Sign in with Apple Services IDs or bundle IDs of the clients allowed to request signup codes) to `config.toml`. The JWKS endpoint defaults to Apple's well-known URL; the `HOMEGATE_APPLE_JWKS_URL` environment variable overrides it if ever needed (e.g. manual testing against a mock).
+
 ## Adding a New Verification Provider
 
 Each verification method is a self-contained module (`src/<provider>_verification/`) with its own HTTP router, config section, error enum, and database table. Provider routes are registered conditionally in `src/infrastructure/http/server.rs` based on config presence.
@@ -84,5 +93,5 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/pubky_homegate?pubky-te
 ### Test Structure
 
 - **Unit Tests**: IP extraction logic (`src/infrastructure/http/extractors/request_origin.rs`)
-- **Service Tests**: Business logic and database operations (`src/sms_verification/tests.rs`, `src/ip_verification/tests.rs`, `src/google_verification/tests.rs`)
+- **Service Tests**: Business logic and database operations (`src/sms_verification/tests.rs`, `src/ip_verification/tests.rs`, `src/google_verification/tests.rs`, `src/apple_verification/tests.rs`)
 - **E2E Tests**: Full HTTP integration tests (`src/e2e/`)
