@@ -4,11 +4,12 @@ info:
   description: |
     #### WARNING: This OpenAPI specification is AI generated. It may not be accurate.
 
-    A backend service to gatekeep Pubky Homeserver signups. Provides four verification methods:
+    A backend service to gatekeep Pubky Homeserver signups. Provides five verification methods:
     - SMS verification via Prelude
     - Lightning Network payment verification
     - IP-based verification (optional, disabled by default)
     - Google ID token verification (optional, disabled by default)
+    - Apple ID token verification (optional, disabled by default)
 
     ## SMS Verification
     Uses Prelude for SMS verification. Each phone number:
@@ -38,8 +39,15 @@ info:
     emails are not stored. Disabled by default (omit the `[google_verification]` section from
     `config.toml`).
 
+    ## Apple Verification
+    Server-side verification of Sign in with Apple ID tokens. The token signature is validated
+    against Apple's JWKS along with the issuer, the configured audiences, expiry, issued-at, and
+    subject. Apple users may hide their email, so rate limiting uses a secret-peppered hash of the
+    verified issuer and subject claims only; raw Apple IDs and emails are not stored. Disabled by
+    default (omit the `[apple_verification]` section from `config.toml`).
+
     ## Overload protection
-    Identifier hashing (SMS, IP and Google verification) is deliberately slow, so it runs on a
+    Identifier hashing (SMS, IP, Google and Apple verification) is deliberately slow, so it runs on a
     bounded pool (one hash per CPU by default, `max_concurrent_hashes` in `config.toml`). When that
     pool is full the request is answered with `503` and `Retry-After: 1` right away instead of
     queueing. Every request also has a 30 second time limit (`503 request_timeout`), and request
@@ -505,6 +513,106 @@ paths:
                 requestTimeout:
                   value: "request_timeout"
 
+  /apple_verification:
+    post:
+      summary: Create Apple ID token verification
+      description: |
+        Verifies a Sign in with Apple ID token server-side and returns a signup code if the token
+        is valid and the Apple identity has not exceeded the configured weekly/annual rate limits.
+
+        The token must be an RS256-signed Apple ID token with issuer `https://appleid.apple.com`,
+        an audience listed in `allowed_audiences`, an unexpired `exp`, an `iat` that is not in the
+        future, and a non-empty `sub`. A nonce is not required.
+
+        Rate limits apply per verified Apple identity (peppered hash of `iss` + `sub`):
+        - Weekly limit: 2 verifications (default, configurable via `max_verifications_per_week` in `[apple_verification]`)
+        - Annual limit: 4 verifications (default, configurable via `max_verifications_per_year` in `[apple_verification]`)
+
+        This endpoint is only available when an `[apple_verification]` section is present in `config.toml`. Returns 404 otherwise.
+      operationId: createAppleVerification
+      tags:
+        - Apple Verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppleVerificationRequest'
+            examples:
+              valid:
+                summary: Valid Apple ID token
+                value:
+                  appleIdToken: "eyJraWQiOiJXNldjT0tCIiwiYWxnIjoiUlMyNTYifQ..."
+      responses:
+        '200':
+          description: Verification successful, signup code issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppleVerificationResponse'
+              examples:
+                success:
+                  summary: Successful verification
+                  value:
+                    signupCode: "token-uuid-123"
+                    homeserverPubky: "test-homeserver-pubky"
+        '400':
+          description: The request body is not valid JSON
+        '401':
+          description: The Apple ID token is invalid (bad signature, unknown key, wrong audience/issuer, expired, or issued in the future)
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "invalid_apple_id_token"
+        '404':
+          description: Apple verification is not enabled on this server
+        '415':
+          description: "The request is missing the `Content-Type: application/json` header"
+        '422':
+          description: The JSON body is missing `appleIdToken`
+        '429':
+          description: Rate limit exceeded for this Apple identity
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                weeklyLimit:
+                  value: "weekly_limit_exceeded"
+                annualLimit:
+                  value: "annual_limit_exceeded"
+        '500':
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                homeserverUnavailable:
+                  value: "homeserver_unavailable"
+                appleVerifierUnavailable:
+                  value: "apple_verifier_unavailable"
+                internalError:
+                  value: "internal_error"
+        '503':
+          description: Server busy, retry later. Identifier hashing is at capacity, or the request took longer than 30 seconds
+          headers:
+            Retry-After:
+              description: Sent when identifier hashing is at capacity
+              schema:
+                type: integer
+                example: 1
+          content:
+            text/plain:
+              schema:
+                type: string
+              examples:
+                hashingBusy:
+                  value: "server_busy"
+                requestTimeout:
+                  value: "request_timeout"
+
   /ln_verification/info:
     get:
       summary: Get Lightning Network verification info
@@ -856,6 +964,31 @@ components:
           description: Public key of the homeserver
           example: "test-homeserver-pubky"
 
+    AppleVerificationRequest:
+      type: object
+      required:
+        - appleIdToken
+      properties:
+        appleIdToken:
+          type: string
+          description: RS256-signed Sign in with Apple ID token issued for one of the configured audiences
+          example: "eyJraWQiOiJXNldjT0tCIiwiYWxnIjoiUlMyNTYifQ..."
+
+    AppleVerificationResponse:
+      type: object
+      required:
+        - signupCode
+        - homeserverPubky
+      properties:
+        signupCode:
+          type: string
+          description: Signup token to use for homeserver registration
+          example: "token-uuid-123"
+        homeserverPubky:
+          type: string
+          description: Public key of the homeserver
+          example: "test-homeserver-pubky"
+
     LnInfoResponse:
       type: object
       required:
@@ -954,3 +1087,5 @@ tags:
     description: IP-based verification endpoints (optional, disabled by default)
   - name: Google Verification
     description: Google ID token verification endpoints (optional, disabled by default)
+  - name: Apple Verification
+    description: Apple ID token verification endpoints (optional, disabled by default)
