@@ -150,6 +150,8 @@ pub struct GoogleVerificationConfig {
 pub struct AppleVerificationConfig {
     /// Accepted `aud` values: the Sign in with Apple Services IDs (web) and/or
     /// bundle IDs (native) of the clients allowed to request signup codes.
+    /// They must all belong to the same Apple developer team: Apple's `sub` is
+    /// team-scoped, so IDs from another team would give each user a separate quota.
     #[serde(deserialize_with = "deserialize_apple_audiences")]
     pub allowed_audiences: Vec<String>,
     #[serde(default = "default_max_apple_verifications_per_week")]
@@ -168,9 +170,12 @@ where
             "allowed_audiences must list at least one Apple Services ID or bundle ID",
         ));
     }
-    if audiences.iter().any(|audience| audience.trim().is_empty()) {
+    if audiences
+        .iter()
+        .any(|audience| audience.trim().is_empty() || audience.trim() != audience)
+    {
         return Err(serde::de::Error::custom(
-            "allowed_audiences must not contain empty values",
+            "allowed_audiences must not contain empty values or surrounding whitespace",
         ));
     }
     Ok(audiences)
@@ -539,7 +544,11 @@ admin_password = "test-admin-password"
 
     #[test]
     fn test_apple_verification_rejects_empty_audiences() {
-        for audiences in [r#"[]"#, r#"["app.pubky.passport", " "]"#] {
+        for audiences in [
+            r#"[]"#,
+            r#"["app.pubky.passport", " "]"#,
+            r#"[" app.pubky.passport"]"#,
+        ] {
             let toml = format!(
                 r#"
 database_url = "postgres://localhost:5432/pubky_homegate"
