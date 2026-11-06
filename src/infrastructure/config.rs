@@ -23,6 +23,7 @@ pub struct AppConfig {
     pub ln_verification: Option<LnVerificationConfig>,
     pub ip_verification: Option<IpVerificationConfig>,
     pub google_verification: Option<GoogleVerificationConfig>,
+    pub apple_verification: Option<AppleVerificationConfig>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -145,6 +146,36 @@ pub struct GoogleVerificationConfig {
     pub max_verifications_per_year: u32,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AppleVerificationConfig {
+    /// Accepted `aud` values: the Sign in with Apple Services IDs (web) and/or
+    /// bundle IDs (native) of the clients allowed to request signup codes.
+    #[serde(deserialize_with = "deserialize_apple_audiences")]
+    pub allowed_audiences: Vec<String>,
+    #[serde(default = "default_max_apple_verifications_per_week")]
+    pub max_verifications_per_week: u32,
+    #[serde(default = "default_max_apple_verifications_per_year")]
+    pub max_verifications_per_year: u32,
+}
+
+fn deserialize_apple_audiences<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let audiences: Vec<String> = serde::Deserialize::deserialize(deserializer)?;
+    if audiences.is_empty() {
+        return Err(serde::de::Error::custom(
+            "allowed_audiences must list at least one Apple Services ID or bundle ID",
+        ));
+    }
+    if audiences.iter().any(|audience| audience.trim().is_empty()) {
+        return Err(serde::de::Error::custom(
+            "allowed_audiences must not contain empty values",
+        ));
+    }
+    Ok(audiences)
+}
+
 fn default_http_listen_socket() -> SocketAddr {
     "0.0.0.0:8080"
         .parse()
@@ -192,6 +223,14 @@ fn default_max_google_verifications_per_week() -> u32 {
 }
 
 fn default_max_google_verifications_per_year() -> u32 {
+    4
+}
+
+fn default_max_apple_verifications_per_week() -> u32 {
+    2
+}
+
+fn default_max_apple_verifications_per_year() -> u32 {
     4
 }
 
@@ -267,6 +306,9 @@ phoenixd_api_password = "test-password"
 
 [google_verification]
 google_client_id = "test-google-client-id.apps.googleusercontent.com"
+
+[apple_verification]
+allowed_audiences = ["app.pubky.passport"]
 "#;
         let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
         assert_eq!(
@@ -278,6 +320,7 @@ google_client_id = "test-google-client-id.apps.googleusercontent.com"
         assert!(config.ln_verification.is_some());
         assert!(config.ip_verification.is_some());
         assert!(config.google_verification.is_some());
+        assert!(config.apple_verification.is_some());
     }
 
     #[test]
@@ -426,6 +469,7 @@ admin_password = "test-admin-password"
         assert!(config.ln_verification.is_none());
         assert!(config.ip_verification.is_none());
         assert!(config.google_verification.is_none());
+        assert!(config.apple_verification.is_none());
     }
 
     #[test]
@@ -473,6 +517,71 @@ google_client_id = "test-google-client-id.apps.googleusercontent.com"
         );
         assert_eq!(google.max_verifications_per_week, 2);
         assert_eq!(google.max_verifications_per_year, 4);
+    }
+
+    #[test]
+    fn test_apple_verification_requires_allowed_audiences() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[apple_verification]
+"#;
+        let err = toml::from_str::<AppConfig>(toml).unwrap_err();
+        assert!(
+            err.to_string().contains("allowed_audiences"),
+            "Should require allowed_audiences, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_apple_verification_rejects_empty_audiences() {
+        for audiences in [r#"[]"#, r#"["app.pubky.passport", " "]"#] {
+            let toml = format!(
+                r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[apple_verification]
+allowed_audiences = {audiences}
+"#
+            );
+            let err = toml::from_str::<AppConfig>(&toml).unwrap_err();
+            assert!(
+                err.to_string().contains("allowed_audiences"),
+                "Should reject allowed_audiences = {audiences}, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_apple_verification_defaults() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[apple_verification]
+allowed_audiences = ["app.pubky.passport", "app.pubky.passport.staging"]
+"#;
+        let config: AppConfig = toml::from_str(toml).expect("Failed to parse config");
+        let apple = config
+            .apple_verification
+            .expect("apple_verification should be present");
+        assert_eq!(
+            apple.allowed_audiences,
+            ["app.pubky.passport", "app.pubky.passport.staging"]
+        );
+        assert_eq!(apple.max_verifications_per_week, 2);
+        assert_eq!(apple.max_verifications_per_year, 4);
     }
 
     #[test]

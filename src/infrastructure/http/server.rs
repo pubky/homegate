@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    google_verification,
+    apple_verification, google_verification,
     infrastructure::{
         config::AppConfig,
         http::HttpServerError,
@@ -64,6 +64,14 @@ impl HttpServer {
             app = app.nest(
                 "/google_verification",
                 google_verification::router(homeserver_api, google, db.clone(), hasher.clone())
+                    .await?,
+            );
+        }
+        if let Some(apple) = &config.apple_verification {
+            tracing::info!("Apple verification enabled");
+            app = app.nest(
+                "/apple_verification",
+                apple_verification::router(homeserver_api, apple, db.clone(), hasher.clone())
                     .await?,
             );
         }
