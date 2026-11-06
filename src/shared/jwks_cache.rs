@@ -4,7 +4,8 @@
 //! Keys are cached for the `Cache-Control: max-age` the provider sends (5 minutes
 //! when absent). A token whose `kid` is not in the cached set triggers one forced
 //! refetch, throttled to one per minute so unknown `kid`s cannot be used to hammer
-//! the provider.
+//! the provider. A failed refresh counts towards that throttle and keeps
+//! serving the still-valid cached keys.
 
 use std::{
     sync::Arc,
@@ -81,13 +82,30 @@ impl JwksCache {
         {
             return Ok(cached.jwks.clone());
         }
-        if force_refresh
-            && let Some(cached) = cache.as_ref()
-            && cached.is_forced_refresh_throttled()
-        {
-            return Ok(cached.jwks.clone());
+        if force_refresh && let Some(cached) = cache.as_mut() {
+            if cached.is_forced_refresh_throttled() {
+                return Ok(cached.jwks.clone());
+            }
+            // Count the attempt even if it fails, so a JWKS outage cannot be
+            // turned into one refetch per request with unknown `kid`s.
+            cached.refresh_attempted_at = Instant::now();
         }
 
+        match self.fetch().await {
+            Ok(fetched) => {
+                let jwks = fetched.jwks.clone();
+                *cache = Some(fetched);
+                Ok(jwks)
+            }
+            // A failed forced refresh keeps serving the still-valid cached keys.
+            Err(error) => match cache.as_ref() {
+                Some(cached) if force_refresh && !cached.is_expired() => Ok(cached.jwks.clone()),
+                _ => Err(error),
+            },
+        }
+    }
+
+    async fn fetch(&self) -> Result<CachedJwks, JwksUnavailable> {
         let response = self
             .http_client
             .get(self.jwks_url.clone())
@@ -107,10 +125,7 @@ impl JwksCache {
             .await
             .map_err(|_| JwksUnavailable)?;
 
-        let cached = CachedJwks::new(jwks, ttl);
-        let jwks = cached.jwks.clone();
-        *cache = Some(cached);
-        Ok(jwks)
+        Ok(CachedJwks::new(jwks, ttl))
     }
 
     /// Replaces the cached key set, e.g. to simulate a stale cache after key rotation.
@@ -123,7 +138,7 @@ impl JwksCache {
     ) {
         *self.cache.write().await = Some(CachedJwks {
             jwks: Arc::new(jwks),
-            fetched_at,
+            refresh_attempted_at: fetched_at,
             expires_at,
         });
     }
@@ -146,7 +161,8 @@ pub fn jwks_url_from_env_or_default(env_var: &str, default_url: &str) -> Url {
 #[derive(Clone, Debug)]
 struct CachedJwks {
     jwks: Arc<JwkSet>,
-    fetched_at: Instant,
+    /// Time of the last fetch attempt, successful or not; throttles forced refreshes.
+    refresh_attempted_at: Instant,
     expires_at: Instant,
 }
 
@@ -155,7 +171,7 @@ impl CachedJwks {
         let fetched_at = Instant::now();
         Self {
             jwks: Arc::new(jwks),
-            fetched_at,
+            refresh_attempted_at: fetched_at,
             expires_at: fetched_at + ttl,
         }
     }
@@ -165,7 +181,7 @@ impl CachedJwks {
     }
 
     fn is_forced_refresh_throttled(&self) -> bool {
-        self.fetched_at.elapsed() < MIN_FORCED_JWKS_REFRESH_INTERVAL
+        self.refresh_attempted_at.elapsed() < MIN_FORCED_JWKS_REFRESH_INTERVAL
     }
 }
 
@@ -278,6 +294,31 @@ mod tests {
             .await;
 
         assert!(cache.find_key("kid-b").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_failed_forced_refresh_keeps_cached_keys_and_is_throttled() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/keys"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let cache = cache_for_server(&server);
+        cache
+            .seed_for_test(
+                JwkSet {
+                    keys: vec![jwk_with_kid("kid-a")],
+                },
+                Instant::now() - MIN_FORCED_JWKS_REFRESH_INTERVAL - Duration::from_secs(1),
+                Instant::now() + Duration::from_secs(3600),
+            )
+            .await;
+
+        assert!(cache.find_key("unknown-kid").await.unwrap().is_none());
+        assert!(cache.find_key("other-unknown-kid").await.unwrap().is_none());
+        assert!(cache.find_key("kid-a").await.unwrap().is_some());
     }
 
     #[tokio::test]
