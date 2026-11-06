@@ -41,7 +41,7 @@ If this value is lost then you lose the ability to match phone numbers which hav
 
 Identifiers are hashed with Argon2id, which deliberately takes around 100 ms of CPU and 19 MiB of memory per hash. Hashing runs on Tokio's blocking thread pool, at most one hash per CPU at a time (set `max_concurrent_hashes` in `config.toml` to change this, e.g. in a container without a CPU limit, where every host CPU counts). When every slot is taken, SMS, IP and Google verification answer `503` with `Retry-After: 1` straight away instead of queueing the work.
 
-Every request has a 30 second time limit (`503 request_timeout`), and request bodies are limited to 64 KiB.
+Every request has a 30 second time limit (`503 request_timeout`), and request bodies are limited to 64 KiB. Calls to the homeserver admin API and to Prelude time out after 10 seconds, so a stuck dependency fails the request cleanly well before that limit.
 
 ## SMS Verification
 
