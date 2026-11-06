@@ -43,7 +43,9 @@ info:
     bounded pool (one hash per CPU by default, `max_concurrent_hashes` in `config.toml`). When that
     pool is full the request is answered with `503` and `Retry-After: 1` right away instead of
     queueing. Every request also has a 30 second time limit (`503 request_timeout`), and request
-    bodies over 64 KiB are rejected with `413`. A `503` is safe to retry after a short delay.
+    bodies over 64 KiB are rejected with `413`. A busy `503` (with `Retry-After`) is returned before any
+    work is done, so it is safe to retry. After `request_timeout` the outcome is unknown: the request
+    may have been partly processed.
   version: 0.2.0
   contact:
     name: Homegate API Support
