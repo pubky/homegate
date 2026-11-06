@@ -1,7 +1,7 @@
 //! Shared "verify identity → issue signup code" core used by verification providers.
 //!
-//! Every low-friction verification route (currently `ip_verification` and
-//! `google_verification`) ends the same way: once a provider-specific identity
+//! Every low-friction verification route (currently `ip_verification`,
+//! `google_verification` and `apple_verification`) ends the same way: once a provider-specific identity
 //! has been verified and reduced to a peppered hash, homegate must atomically
 //! enforce weekly/annual issuance limits for that identity and hand out a
 //! homeserver signup code. This module owns that final step so providers don't
