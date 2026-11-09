@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::infrastructure::sql::DbError;
-use crate::shared::SignupIssuanceError;
+use crate::shared::{FailureKind, RejectionReason, SignupIssuanceError};
 
 #[derive(Error, Debug)]
 pub enum IpVerificationError {
@@ -19,6 +19,25 @@ pub enum IpVerificationError {
 
     #[error("{0}")]
     Database(#[from] DbError),
+}
+
+impl IpVerificationError {
+    /// How this error is counted in metrics.
+    pub fn failure_kind(&self) -> FailureKind {
+        match self {
+            Self::WeeklyLimitExceeded => {
+                FailureKind::Rejected(RejectionReason::WeeklyLimitExceeded)
+            }
+            Self::AnnualLimitExceeded => {
+                FailureKind::Rejected(RejectionReason::AnnualLimitExceeded)
+            }
+            // A missing address is a proxy misconfiguration, not a client
+            // rejection; it shows as a 400 in the request counter.
+            Self::IpAddressRequired | Self::HomeserverUnavailable | Self::Database(_) => {
+                FailureKind::NotCounted
+            }
+        }
+    }
 }
 
 impl From<SignupIssuanceError> for IpVerificationError {

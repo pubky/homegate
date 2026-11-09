@@ -23,6 +23,15 @@ pub struct AppConfig {
     pub ln_verification: Option<LnVerificationConfig>,
     pub ip_verification: Option<IpVerificationConfig>,
     pub google_verification: Option<GoogleVerificationConfig>,
+    /// Prometheus metrics listener. Absent = disabled.
+    pub metrics: Option<MetricsConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct MetricsConfig {
+    /// Socket the `/metrics` endpoint listens on. Keep it off the public network.
+    #[serde(default = "default_metrics_listen_socket")]
+    pub listen_socket: SocketAddr,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -149,6 +158,12 @@ fn default_http_listen_socket() -> SocketAddr {
     "0.0.0.0:8080"
         .parse()
         .expect("Default HTTP listen socket is valid")
+}
+
+fn default_metrics_listen_socket() -> SocketAddr {
+    "127.0.0.1:8081"
+        .parse()
+        .expect("Default metrics listen socket is valid")
 }
 
 fn default_prelude_api_url() -> Url {
@@ -571,5 +586,51 @@ admin_password = "test-admin-password"
                 .unwrap()
                 .contains_key("allowed_write_paths")
         );
+    }
+
+    #[test]
+    fn test_metrics_config_optional() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+"#;
+        let config: AppConfig = toml::from_str(toml).unwrap();
+        assert!(config.metrics.is_none());
+    }
+
+    #[test]
+    fn test_metrics_config_defaults_listen_socket() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[metrics]
+"#;
+        let config: AppConfig = toml::from_str(toml).unwrap();
+        let metrics = config.metrics.expect("metrics section present");
+        assert_eq!(metrics.listen_socket, "127.0.0.1:8081".parse().unwrap());
+    }
+
+    #[test]
+    fn test_metrics_config_listen_socket() {
+        let toml = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+
+[metrics]
+listen_socket = "0.0.0.0:6301"
+"#;
+        let config: AppConfig = toml::from_str(toml).unwrap();
+        let metrics = config.metrics.expect("metrics section present");
+        assert_eq!(metrics.listen_socket, "0.0.0.0:6301".parse().unwrap());
     }
 }

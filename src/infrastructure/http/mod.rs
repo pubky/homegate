@@ -1,5 +1,7 @@
 mod error;
 pub mod extractors;
+mod http_metrics;
+mod metrics_server;
 mod server;
 
 pub use error::HttpServerError;

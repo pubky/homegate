@@ -18,6 +18,7 @@ use crate::ln_verification::{
     payment_hash::PaymentHash,
     phoenixd_api::{error::PhoenixdError, websocket::ReceivePaymentsWebsocket},
 };
+use crate::shared::{Dependency, Metrics};
 
 /// Helper function to deserialize a u64 timestamp in milliseconds to DateTime<Utc>
 fn deserialize_timestamp_millis<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
@@ -93,7 +94,8 @@ pub struct GetIncomingInvoiceResponse {
     pub expires_at: DateTime<Utc>,
 }
 
-/// PhoenixD API
+/// PhoenixD API. Failed calls are counted in [`Metrics`] here, so callers
+/// need not instrument them.
 ///
 /// # Arguments
 ///
@@ -113,15 +115,35 @@ pub struct PhoenixdAPI {
     http_client: reqwest::Client,
     base_url: Url,
     password: String,
+    metrics: Metrics,
 }
 
 impl PhoenixdAPI {
-    pub fn new(base_url: &Url, password: &str) -> Self {
+    pub fn new(base_url: &Url, password: &str, metrics: Metrics) -> Self {
         Self {
             http_client: reqwest::Client::new(),
             base_url: base_url.clone(),
             password: password.to_owned(),
+            metrics,
         }
+    }
+
+    /// Send an authenticated request and parse its JSON body, counting any
+    /// failure as a PhoenixD dependency error.
+    async fn send<T: serde::de::DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<T, PhoenixdError> {
+        self.metrics
+            .count_dependency_failure(Dependency::Phoenixd, async {
+                let response = request
+                    .basic_auth("", Some(&self.password))
+                    .send()
+                    .await?
+                    .error_for_status()?;
+                Ok(response.json::<T>().await?)
+            })
+            .await
     }
 
     /// Creates a new invoice for the given amount, description, and expiry seconds
@@ -150,20 +172,12 @@ impl PhoenixdAPI {
             .base_url
             .join("/createinvoice")
             .expect("input is always valid");
-        let response = self
-            .http_client
-            .post(url)
-            .basic_auth("", Some(&self.password))
-            .form(&json!({
-                "amountSat": amount_satoshis,
-                "description": description,
-                "expirySeconds": expiry_seconds,
-            }))
-            .send()
-            .await?;
-        let response = response.error_for_status()?;
-        let invoice_response = response.json::<CreateInvoiceResponse>().await?;
-        Ok(invoice_response)
+        let request = self.http_client.post(url).form(&json!({
+            "amountSat": amount_satoshis,
+            "description": description,
+            "expirySeconds": expiry_seconds,
+        }));
+        self.send(request).await
     }
 
     /// Gets an invoice by payment hash
@@ -190,15 +204,7 @@ impl PhoenixdAPI {
             .expect("input is always valid")
             .join(payment_hash.as_str())
             .expect("input is always valid");
-        let response = self
-            .http_client
-            .get(url)
-            .basic_auth("", Some(&self.password))
-            .send()
-            .await?;
-        let response = response.error_for_status()?;
-        let invoice_response = response.json::<GetIncomingInvoiceResponse>().await?;
-        Ok(invoice_response)
+        self.send(self.http_client.get(url)).await
     }
 
     /// Lists paid incoming invoices.
@@ -240,26 +246,24 @@ impl PhoenixdAPI {
             query_params.push(("all", "true".to_string()));
         }
 
-        let response = self
-            .http_client
-            .get(url)
-            .query(&query_params)
-            .basic_auth("", Some(&self.password))
-            .send()
-            .await?;
-        let response = response.error_for_status()?;
-        let invoice_response = response.json::<Vec<GetIncomingInvoiceResponse>>().await?;
-        Ok(invoice_response)
+        self.send(self.http_client.get(url).query(&query_params))
+            .await
     }
 
     /// Syntactic sugar to build a websocket connection to receive payment events
     pub async fn received_payments_websocket(
         &self,
     ) -> Result<ReceivePaymentsWebsocket, PhoenixdError> {
-        let websocket =
-            ReceivePaymentsWebsocket::connect(&self.base_url, &self.password, &self.http_client)
-                .await?;
-        Ok(websocket)
+        self.metrics
+            .count_dependency_failure(
+                Dependency::Phoenixd,
+                ReceivePaymentsWebsocket::connect(
+                    &self.base_url,
+                    &self.password,
+                    &self.http_client,
+                ),
+            )
+            .await
     }
 }
 
@@ -288,7 +292,11 @@ mod tests {
             .expect(1)
             .mount(&mock_server).await;
 
-        let api = PhoenixdAPI::new(&mock_server.uri().parse().unwrap(), password);
+        let api = PhoenixdAPI::new(
+            &mock_server.uri().parse().unwrap(),
+            password,
+            Metrics::new(),
+        );
         let invoice = api
             .create_invoice(100, "Test Invoice", 60 * 10)
             .await
@@ -330,7 +338,11 @@ mod tests {
             .expect(1)
             .mount(&mock_server).await;
 
-        let api = PhoenixdAPI::new(&mock_server.uri().parse().unwrap(), password);
+        let api = PhoenixdAPI::new(
+            &mock_server.uri().parse().unwrap(),
+            password,
+            Metrics::new(),
+        );
 
         let invoice_get = api
             .get_invoice(&PaymentHash::new(payment_hash).unwrap())
@@ -388,7 +400,11 @@ mod tests {
             .expect(1)
             .mount(&mock_server).await;
 
-        let api = PhoenixdAPI::new(&mock_server.uri().parse().unwrap(), password);
+        let api = PhoenixdAPI::new(
+            &mock_server.uri().parse().unwrap(),
+            password,
+            Metrics::new(),
+        );
 
         let invoices = api
             .list_paid_invoices(
@@ -419,5 +435,25 @@ mod tests {
         );
 
         mock_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn failed_requests_count_as_phoenixd_dependency_errors() {
+        // No routes mounted: every call gets a 404.
+        let mock_server = MockServer::start().await;
+        let metrics = Metrics::new();
+        let api = PhoenixdAPI::new(
+            &mock_server.uri().parse().unwrap(),
+            "unused",
+            metrics.clone(),
+        );
+        let payment_hash =
+            PaymentHash::new("bb4b823baf2ed506c5c8679e5887499aff7097e063d91eaa2d135fe35c88d289")
+                .unwrap();
+
+        let result = api.get_invoice(&payment_hash).await;
+
+        assert!(result.is_err());
+        assert_eq!(metrics.dependency_errors(Dependency::Phoenixd), 1);
     }
 }

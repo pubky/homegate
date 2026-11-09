@@ -37,10 +37,12 @@ fn create_service_with_quota(
     max_per_year: u32,
     signup_quota: Option<SignupQuotaConfig>,
 ) -> IpVerificationService {
+    let metrics = crate::shared::Metrics::new();
     let homeserver_admin_api = HomeserverAdminAPI::new(
         &servers.homeserver_server.uri().parse().unwrap(),
         "test-pass",
         "test-homeserver-pubky",
+        metrics.clone(),
     );
     let config = IpVerificationConfig {
         max_verifications_per_week: max_per_week,
@@ -48,7 +50,13 @@ fn create_service_with_quota(
         signup_quota,
         limit_whitelist: vec![],
     };
-    IpVerificationService::new(db, homeserver_admin_api, &config, TEST_HASHER.clone())
+    IpVerificationService::new(
+        db,
+        homeserver_admin_api,
+        &config,
+        TEST_HASHER.clone(),
+        metrics,
+    )
 }
 
 #[sqlx::test]

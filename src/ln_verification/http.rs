@@ -15,7 +15,7 @@ use crate::{
         VerificationId, app_state::AppState, error::LnVerificationError, phoenixd_api::PhoenixdAPI,
         service::LnVerificationService, types::VerificationResponse,
     },
-    shared::HomeserverAdminAPI,
+    shared::{HomeserverAdminAPI, Metrics},
 };
 
 /// Default timeout for long-polling verification requests
@@ -28,8 +28,13 @@ pub async fn router(
     homeserver_api: &HomeserverAdminAPI,
     ln: &LnVerificationConfig,
     db: crate::infrastructure::sql::SqlDb,
+    metrics: Metrics,
 ) -> Result<Router, HttpServerError> {
-    let phoenixd_api = PhoenixdAPI::new(&ln.phoenixd_api_url, &ln.phoenixd_api_password);
+    let phoenixd_api = PhoenixdAPI::new(
+        &ln.phoenixd_api_url,
+        &ln.phoenixd_api_password,
+        metrics.clone(),
+    );
 
     let ln_service = LnVerificationService::new(
         db,
@@ -38,6 +43,7 @@ pub async fn router(
         ln.invoice_price_sat,
         ln.invoice_description.clone(),
         ln.invoice_expiry_seconds,
+        metrics,
     );
     let ln_service = std::sync::Arc::new(ln_service);
 
@@ -219,11 +225,17 @@ mod tests {
     async fn create_test_router(pool: PgPool) -> Router {
         let db = SqlDb::test(pool).await;
         // Use placeholder URLs - these won't be called for the /info endpoint
-        let phoenixd_api = PhoenixdAPI::new(&"http://localhost:1".parse().unwrap(), "unused");
+        let metrics = Metrics::new();
+        let phoenixd_api = PhoenixdAPI::new(
+            &"http://localhost:1".parse().unwrap(),
+            "unused",
+            metrics.clone(),
+        );
         let homeserver_api = HomeserverAdminAPI::new(
             &"http://localhost:1".parse().unwrap(),
             "unused",
             "test-homeserver-pubky",
+            metrics.clone(),
         );
 
         let ln_service = crate::ln_verification::service::LnVerificationService::new(
@@ -233,6 +245,7 @@ mod tests {
             1000, // amount_sat
             "Test Invoice".to_string(),
             600, // invoice_expiry_seconds
+            metrics,
         );
         let ln_service = std::sync::Arc::new(ln_service);
 

@@ -24,10 +24,13 @@
 //!    `signup_code`, `created_at`, plus an index on `(<your>_hash, created_at)`
 //!    — copy `m20260630_create_google_verifications`.
 //! 4. **Describe the table** with a [`VerificationTable`] const in your service
-//!    and call [`RateLimitedSignupIssuer::issue`] with the identity hash.
+//!    (adding a [`SignupType`] variant for the metrics `type` label) and call
+//!    [`RateLimitedSignupIssuer::issue`] with the identity hash.
 //! 5. Keep the HTTP layer, request/response DTOs, error enum, and config
 //!    section per-slice (see `google_verification` for the pattern), mapping
-//!    [`SignupIssuanceError`] into your error enum with a `From` impl.
+//!    [`SignupIssuanceError`] into your error enum with a `From` impl, and
+//!    give the error enum a `failure_kind()` so the handler can record
+//!    rejections and dependency errors in [`Metrics`].
 //!
 //! Rate-limit windows are fixed at 7/365 days; the per-window maximums come
 //! from the provider's config section.
@@ -39,7 +42,7 @@ use sqlx::Row;
 
 use crate::infrastructure::config::SignupQuotaConfig;
 use crate::infrastructure::sql::{DbError, SqlDb, UnifiedExecutor};
-use crate::shared::HomeserverAdminAPI;
+use crate::shared::{HomeserverAdminAPI, Metrics, SignupType};
 
 const WEEKLY_WINDOW_DAYS: i64 = 7;
 const ANNUAL_WINDOW_DAYS: i64 = 365;
@@ -51,6 +54,8 @@ pub struct VerificationTable {
     pub name: &'static str,
     /// Column holding the peppered identity hash, e.g. `"google_identity_hash"`.
     pub hash_column: &'static str,
+    /// The route this table belongs to, used as the metrics `type` label.
+    pub signup_type: SignupType,
 }
 
 /// Whether rate limits apply to a given issuance.
@@ -95,6 +100,7 @@ pub struct RateLimitedSignupIssuer {
     max_verifications_per_week: u32,
     max_verifications_per_year: u32,
     signup_quota: Option<SignupQuotaConfig>,
+    metrics: Metrics,
 }
 
 impl RateLimitedSignupIssuer {
@@ -105,6 +111,7 @@ impl RateLimitedSignupIssuer {
         max_verifications_per_week: u32,
         max_verifications_per_year: u32,
         signup_quota: Option<SignupQuotaConfig>,
+        metrics: Metrics,
     ) -> Self {
         Self {
             db,
@@ -113,6 +120,7 @@ impl RateLimitedSignupIssuer {
             max_verifications_per_week,
             max_verifications_per_year,
             signup_quota,
+            metrics,
         }
     }
 
@@ -147,6 +155,8 @@ impl RateLimitedSignupIssuer {
 
         drop(executor);
         tx.commit().await.map_err(DbError::from)?;
+        self.metrics
+            .record_signup_code_issued(self.table.signup_type);
 
         Ok(IssuedSignup {
             signup_code,
