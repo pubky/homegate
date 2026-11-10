@@ -1,12 +1,6 @@
-use std::time::Duration;
-
 use crate::infrastructure::config::SignupQuotaConfig;
-use crate::shared::Metrics;
+use crate::shared::{DEPENDENCY_REQUEST_TIMEOUT, Metrics};
 use url::Url;
-
-/// Fail a stuck homeserver call well before the 30 s request timeout, so the
-/// error rolls the issuance back cleanly instead of the request being cut.
-const HOMESERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Client for the homeserver admin API. Signup token requests are timed and
 /// their failures counted in [`Metrics`] here, so callers need not instrument them.
@@ -111,7 +105,7 @@ impl HomeserverAdminAPI {
 
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .timeout(HOMESERVER_REQUEST_TIMEOUT)
+        .timeout(DEPENDENCY_REQUEST_TIMEOUT)
         .build()
         .expect("Reqwest client configuration should be valid")
 }

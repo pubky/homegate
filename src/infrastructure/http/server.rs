@@ -11,7 +11,7 @@ use crate::{
         sql::{DbError, SqlDb},
     },
     ip_verification, ln_verification,
-    shared::{HasherArgon2id, HomeserverAdminAPI, Metrics, SignupType},
+    shared::{DEPENDENCY_REQUEST_TIMEOUT, HasherArgon2id, HomeserverAdminAPI, Metrics, SignupType},
     sms_verification::http::router,
 };
 
@@ -33,6 +33,8 @@ use tower_http::{
 /// Upper bound for one request; the slowest legitimate route is the 25 s
 /// Lightning long poll. Slower requests get 503 `request_timeout`.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+// Calls to external services must fail before the request is cut.
+const _: () = assert!(DEPENDENCY_REQUEST_TIMEOUT.as_secs() < REQUEST_TIMEOUT.as_secs());
 
 /// Request bodies are small JSON documents (an ID token is a few KiB).
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
@@ -459,8 +461,10 @@ admin_password = "test-pass"
             metrics.clone(),
         );
         let db = SqlDb::test(pool).await;
-        let hasher = HasherArgon2id::new(tempfile::tempdir().unwrap().keep().join("pepper.txt"))
-            .with_max_concurrent_hashes(max_concurrent_hashes);
+        let hasher = HasherArgon2id::with_max_concurrent_hashes(
+            tempfile::tempdir().unwrap().keep().join("pepper.txt"),
+            max_concurrent_hashes,
+        );
         let router =
             HttpServer::create_router(&config, &db, &homeserver_api, hasher.clone(), &metrics)
                 .await

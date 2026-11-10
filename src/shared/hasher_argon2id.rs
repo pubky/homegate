@@ -40,7 +40,16 @@ pub struct HasherArgon2id {
 pub struct HasherBusy;
 
 impl HasherArgon2id {
+    /// Creates a hasher with the default cap on concurrent hashes (one per CPU).
     pub fn new(pepper_path: PathBuf) -> Self {
+        Self::with_max_concurrent_hashes(pepper_path, default_max_concurrent_hashes())
+    }
+
+    /// Creates a hasher that runs at most `max` hashes at once. Values above
+    /// [`Semaphore::MAX_PERMITS`] are clamped to it. The cap is set here and
+    /// never changed, so every clone shares the same slots.
+    pub fn with_max_concurrent_hashes(pepper_path: PathBuf, max: usize) -> Self {
+        assert!(max > 0, "at least one concurrent hash must be allowed");
         // OWASP recommended parameters for Argon2id
         // Memory: 19456 KiB (19 MiB)
         // Iterations: 2
@@ -59,7 +68,7 @@ impl HasherArgon2id {
         Self {
             pepper,
             argon2,
-            hash_slots: Arc::new(Semaphore::new(default_max_concurrent_hashes())),
+            hash_slots: Arc::new(Semaphore::new(max.min(Semaphore::MAX_PERMITS))),
         }
     }
 
@@ -113,14 +122,6 @@ impl HasherArgon2id {
             .expect("Argon2 hash output should always be present");
 
         hex::encode(hash_output.as_bytes())
-    }
-
-    /// Replaces the default cap on concurrent hashes (one per CPU). Values
-    /// above [`Semaphore::MAX_PERMITS`] are clamped to it.
-    pub fn with_max_concurrent_hashes(mut self, max: usize) -> Self {
-        assert!(max > 0, "at least one concurrent hash must be allowed");
-        self.hash_slots = Arc::new(Semaphore::new(max.min(Semaphore::MAX_PERMITS)));
-        self
     }
 
     /// Takes every free hashing slot until the returned permit is dropped, so
@@ -251,10 +252,18 @@ mod tests {
 
     const KNOWN_PEPPER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-    fn hasher_with_known_pepper(dir: &TempDir) -> HasherArgon2id {
+    fn known_pepper_file(dir: &TempDir) -> PathBuf {
         let pepper_file = dir.path().join("pepper.txt");
         fs::write(&pepper_file, KNOWN_PEPPER).unwrap();
-        HasherArgon2id::new(pepper_file)
+        pepper_file
+    }
+
+    fn hasher_with_known_pepper(dir: &TempDir) -> HasherArgon2id {
+        HasherArgon2id::new(known_pepper_file(dir))
+    }
+
+    fn capped_hasher(dir: &TempDir, max: usize) -> HasherArgon2id {
+        HasherArgon2id::with_max_concurrent_hashes(known_pepper_file(dir), max)
     }
 
     /// Stored rate-limit keys must keep matching: these digests were produced
@@ -290,10 +299,10 @@ mod tests {
         let hasher = hasher_with_known_pepper(&temp_dir);
         assert_eq!(hasher.hash_slots.available_permits(), cpus);
 
-        let hasher = hasher.with_max_concurrent_hashes(3);
+        let hasher = capped_hasher(&temp_dir, 3);
         assert_eq!(hasher.hash_slots.available_permits(), 3);
 
-        let hasher = hasher.with_max_concurrent_hashes(usize::MAX);
+        let hasher = capped_hasher(&temp_dir, usize::MAX);
         assert_eq!(
             hasher.hash_slots.available_permits(),
             Semaphore::MAX_PERMITS
@@ -303,7 +312,7 @@ mod tests {
     #[tokio::test]
     async fn test_busy_when_all_slots_taken() {
         let temp_dir = TempDir::new().unwrap();
-        let hasher = hasher_with_known_pepper(&temp_dir).with_max_concurrent_hashes(2);
+        let hasher = capped_hasher(&temp_dir, 2);
 
         let occupied = hasher.occupy_all_slots();
         let result = tokio::time::timeout(Duration::from_secs(1), hasher.hash("+1234567890"))
@@ -328,7 +337,7 @@ mod tests {
     #[tokio::test]
     async fn test_slot_held_while_work_runs_and_shared_by_clones() {
         let temp_dir = TempDir::new().unwrap();
-        let hasher = hasher_with_known_pepper(&temp_dir).with_max_concurrent_hashes(1);
+        let hasher = capped_hasher(&temp_dir, 1);
         let clone = hasher.clone();
         let (release, job) = gated_job();
 
@@ -346,7 +355,7 @@ mod tests {
     #[tokio::test]
     async fn test_slot_released_only_when_work_finishes_after_caller_dropped() {
         let temp_dir = TempDir::new().unwrap();
-        let hasher = hasher_with_known_pepper(&temp_dir).with_max_concurrent_hashes(1);
+        let hasher = capped_hasher(&temp_dir, 1);
         let (release, job) = gated_job();
 
         let mut running = Box::pin(hasher.run_in_slot(job));
@@ -370,7 +379,7 @@ mod tests {
     #[tokio::test]
     async fn test_panicking_work_releases_its_slot_and_resumes_panic() {
         let temp_dir = TempDir::new().unwrap();
-        let hasher = hasher_with_known_pepper(&temp_dir).with_max_concurrent_hashes(1);
+        let hasher = capped_hasher(&temp_dir, 1);
 
         let caller = tokio::spawn({
             let hasher = hasher.clone();

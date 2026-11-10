@@ -19,8 +19,10 @@ use std::net::IpAddr;
 static TEST_HASHER: std::sync::LazyLock<crate::shared::HasherArgon2id> =
     std::sync::LazyLock::new(|| {
         let dir = tempfile::tempdir().unwrap();
-        crate::shared::HasherArgon2id::new(dir.path().join("pepper.txt"))
-            .with_max_concurrent_hashes(tokio::sync::Semaphore::MAX_PERMITS)
+        crate::shared::HasherArgon2id::with_max_concurrent_hashes(
+            dir.path().join("pepper.txt"),
+            tokio::sync::Semaphore::MAX_PERMITS,
+        )
     });
 
 fn create_service(

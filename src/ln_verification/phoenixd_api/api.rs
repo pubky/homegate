@@ -18,7 +18,7 @@ use crate::ln_verification::{
     payment_hash::PaymentHash,
     phoenixd_api::{error::PhoenixdError, websocket::ReceivePaymentsWebsocket},
 };
-use crate::shared::{Dependency, Metrics};
+use crate::shared::{DEPENDENCY_REQUEST_TIMEOUT, Dependency, Metrics};
 
 /// Helper function to deserialize a u64 timestamp in milliseconds to DateTime<Utc>
 fn deserialize_timestamp_millis<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
@@ -130,6 +130,9 @@ impl PhoenixdAPI {
 
     /// Send an authenticated request and parse its JSON body, counting any
     /// failure as a PhoenixD dependency error.
+    ///
+    /// The timeout is set per request rather than on the client, because the
+    /// payments websocket shares the client and has to stay open.
     async fn send<T: serde::de::DeserializeOwned>(
         &self,
         request: reqwest::RequestBuilder,
@@ -137,6 +140,7 @@ impl PhoenixdAPI {
         self.metrics
             .count_dependency_failure(Dependency::Phoenixd, async {
                 let response = request
+                    .timeout(DEPENDENCY_REQUEST_TIMEOUT)
                     .basic_auth("", Some(&self.password))
                     .send()
                     .await?

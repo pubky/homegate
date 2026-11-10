@@ -30,10 +30,11 @@ async fn main() -> anyhow::Result<()> {
 
     infrastructure::tracing::init_tracing(config.logging.as_ref());
 
-    let mut hasher = HasherArgon2id::new(data_dir.pepper_file_path());
-    if let Some(max) = config.max_concurrent_hashes {
-        hasher = hasher.with_max_concurrent_hashes(max.get());
-    }
+    let pepper_path = data_dir.pepper_file_path();
+    let hasher = match config.max_concurrent_hashes {
+        Some(max) => HasherArgon2id::with_max_concurrent_hashes(pepper_path, max.get()),
+        None => HasherArgon2id::new(pepper_path),
+    };
     let http_server = HttpServer::start(config, hasher).await?;
 
     tracing::info!("Homegate HTTP listening on {}", http_server.url_string());

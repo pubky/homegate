@@ -1,13 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use std::time::Duration;
 use url::Url;
 
+use crate::shared::DEPENDENCY_REQUEST_TIMEOUT;
 use crate::sms_verification::{Code, PhoneNumber};
-
-/// Fail a stuck Prelude call well before the 30 s request timeout, so it
-/// surfaces as an error instead of the request being cut.
-const PRELUDE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -271,7 +267,7 @@ impl PreludeAPI {
     pub fn new(base_url: &Url, api_key: &str) -> Self {
         Self {
             http_client: reqwest::Client::builder()
-                .timeout(PRELUDE_REQUEST_TIMEOUT)
+                .timeout(DEPENDENCY_REQUEST_TIMEOUT)
                 .build()
                 .expect("Reqwest client configuration should be valid"),
             api_key: api_key.to_owned(),
