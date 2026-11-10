@@ -17,16 +17,6 @@ use super::google_id_token_verifier::test_support::{
 };
 use super::service::GoogleVerificationService;
 
-// Shared by every test thread, so it must not hit the production cap.
-static TEST_HASHER: std::sync::LazyLock<crate::shared::HasherArgon2id> =
-    std::sync::LazyLock::new(|| {
-        let dir = tempfile::tempdir().unwrap();
-        crate::shared::HasherArgon2id::with_max_concurrent_hashes(
-            dir.path().join("pepper.txt"),
-            tokio::sync::Semaphore::MAX_PERMITS,
-        )
-    });
-
 fn create_service(
     servers: &WiremockServers,
     google_server: &MockServer,
@@ -60,7 +50,7 @@ fn create_service_with_google_server(
         db,
         homeserver_admin_api,
         &config,
-        TEST_HASHER.clone(),
+        crate::shared::HasherArgon2id::for_test(),
         metrics,
         jwks_url(google_server),
     )
