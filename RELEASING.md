@@ -62,7 +62,7 @@ Nothing is published if validation fails. The release and the image are publishe
 
 The previous release is the nearest earlier tag in the history of the tagged commit, so a hotfix is compared with the release it was cut from. A stable release skips pre-release tags and lists everything since the last stable release.
 
-The changelog is built from [Conventional Commits](https://www.conventionalcommits.org/) (`feat: ...`, `fix: ...`). PRs are squash-merged, so the PR title becomes the commit message: a PR whose title does not follow the format would be left out. The [PR Title workflow](.github/workflows/pr-labels.yml) fails such a PR.
+The changelog is built from [Conventional Commits](https://www.conventionalcommits.org/) (`feat: ...`, `fix: ...`). PRs are squash-merged, so the PR title becomes the commit message: a PR whose title does not follow the format would be left out. The [PR Title workflow](.github/workflows/pr-title.yml) fails such a PR.
 
 ## Post-Release Verification
 

@@ -5,7 +5,9 @@ name: PR Title
 
 on:
   pull_request_target:
-    types: [opened, reopened, edited]
+    # `synchronize` re-runs the check on each push, which a required check needs:
+    # without it the new head commit has no result and the PR stays blocked.
+    types: [opened, reopened, edited, synchronize]
 
 jobs:
   pr-title:
@@ -27,7 +29,6 @@ jobs:
             ci
             build
             chore
-            deps
           requireScope: false
           subjectPattern: ^.+$
           subjectPatternError: "PR title must have a subject after the type prefix"

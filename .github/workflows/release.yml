@@ -84,6 +84,7 @@ jobs:
           toTag: ${{ steps.previous.outputs.tag }}
           excludeTypes: ""
           useGitmojis: false
+          writeToFile: false
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
