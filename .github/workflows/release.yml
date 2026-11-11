@@ -33,22 +33,19 @@ jobs:
             exit 1
           fi
           echo "Cargo.toml version matches tag: $VERSION"
-
-  # The binary is not attached to the release. This only checks that the tagged commit builds.
-  build:
-    name: Build
-    needs: validate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup environment
-        uses: ./.github/setup
-      - name: Build Project
-        run: cargo build --release
+      - name: Verify version matches openapi.yaml
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          OPENAPI_VERSION=$(sed -n 's/^  version: //p' openapi.yaml)
+          if [ "$OPENAPI_VERSION" != "$VERSION" ]; then
+            echo "::error::Version mismatch: tag is $VERSION but openapi.yaml has $OPENAPI_VERSION"
+            exit 1
+          fi
+          echo "openapi.yaml version matches tag: $VERSION"
 
   release:
     name: Create Release
-    needs: build
+    needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: write

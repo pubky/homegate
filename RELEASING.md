@@ -18,16 +18,13 @@ git checkout master
 git pull origin master
 ```
 
-Set the new version in two places:
-
-- `version` in `Cargo.toml`
-- `info.version` in `openapi.yaml`
-
-Then update `Cargo.lock`:
+Run the version bump script:
 
 ```bash
-cargo check
+./.scripts/set-version.sh 0.3.0
 ```
+
+This updates the version in `Cargo.toml`, `Cargo.lock` and `openapi.yaml`.
 
 Create the version PR:
 
@@ -57,9 +54,8 @@ This triggers the release workflow. That's it -- CI handles the rest.
 
 When a `v*` tag is pushed, the [release workflow](.github/workflows/release.yml):
 
-1. **Validates** the tag is valid semver, and matches the version in `Cargo.toml`
-2. **Builds** the binary in release mode on Linux, to check that the tagged commit compiles. The binary is not published.
-3. **Creates a GitHub Release** with a changelog generated from the commit messages since the previous tag
+1. **Validates** the tag is valid semver, and matches the version in `Cargo.toml` and `openapi.yaml`
+2. **Creates a GitHub Release** with a changelog generated from the commit messages since the previous tag
 
 The same tag also triggers the [Docker workflow](.github/workflows/docker.yml), which builds the image for `linux/amd64` and `linux/arm64` and pushes it to Docker Hub as `synonymsoft/homegate`, tagged with the version and `latest`.
 
@@ -90,7 +86,11 @@ git checkout -b hot_fix_v0.3.1 v0.3.0
 
 ### 2. Apply the fix and bump the version
 
-Merge all fixes into the hotfix branch, then set the new version in `Cargo.toml` and `openapi.yaml` and run `cargo check`, as in a normal release.
+Merge all fixes into the hotfix branch, then run the version bump script:
+
+```bash
+./.scripts/set-version.sh 0.3.1
+```
 
 ### 3. Tag and push
 
@@ -111,7 +111,7 @@ git cherry-pick <commit-sha>
 
 ## Troubleshooting
 
-**CI build fails?** Fix the issue, then delete and re-push the tag:
+**Release workflow fails?** Fix the issue, then delete and re-push the tag:
 
 ```bash
 git tag -d v0.3.0
