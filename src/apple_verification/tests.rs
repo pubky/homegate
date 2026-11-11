@@ -35,16 +35,6 @@ fn create_service(
     max_per_week: u32,
     max_per_year: u32,
 ) -> AppleVerificationService {
-    create_service_with_apple_server(servers, apple_server, db, max_per_week, max_per_year)
-}
-
-fn create_service_with_apple_server(
-    servers: &WiremockServers,
-    apple_server: &MockServer,
-    db: SqlDb,
-    max_per_week: u32,
-    max_per_year: u32,
-) -> AppleVerificationService {
     let metrics = crate::shared::Metrics::new();
     let homeserver_admin_api = HomeserverAdminAPI::new(
         &servers.homeserver_server.uri().parse().unwrap(),
