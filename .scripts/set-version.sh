@@ -12,9 +12,9 @@ if [ -z "$NEW_VERSION" ]; then
   exit 1
 fi
 
-SEMVER_REGEX="^([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z.-]+))?(\+([0-9A-Za-z.-]+))?$"
+SEMVER_REGEX="^([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z.-]+))?$"
 if [[ ! "$NEW_VERSION" =~ $SEMVER_REGEX ]]; then
-  echo "Error: Version '$NEW_VERSION' is not in semver format (e.g., 1.2.3, 1.0.0-alpha, 2.0.1+build.123)."
+  echo "Error: Version '$NEW_VERSION' is not in semver format (e.g., 1.2.3, 1.0.0-rc.1)."
   exit 1
 fi
 

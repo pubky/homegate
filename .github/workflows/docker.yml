@@ -33,10 +33,11 @@ jobs:
           registry: registry-1.docker.io/synonymsoft
           context: .
           push: true
-          # A pre-release (v1.0.0-rc.1) is pushed under its version tag only.
+          # A pre-release (v1.0.0-rc.1) is pushed under its version tag only. `type=semver`
+          # is needed as well: `type=ref,event=tag` would add `latest` for every tag.
           latest: ${{ !contains(github.ref_name, '-') }}
           tags: |
-            type=ref,event=tag
+            type=semver,pattern={{raw}}
           platforms: |
             linux/arm64
             linux/amd64

@@ -129,9 +129,10 @@ gh release edit v0.4.0 --latest
 
 ## Troubleshooting
 
-**Release workflow fails?** Fix the issue, then delete and re-push the tag:
+**Release workflow fails?** Fix the issue, then delete the release (if it was created) and the tag, and re-push the tag:
 
 ```bash
+gh release delete v0.3.0 --yes
 git tag -d v0.3.0
 git push origin :refs/tags/v0.3.0
 # fix the issue and merge the fix into master
@@ -141,6 +142,6 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-If only one of the release and the Docker image failed, re-pushing the tag publishes both again and replaces the one that already exists.
+If only one of the release and the Docker image failed, re-pushing the tag publishes both again. The Docker image tag is overwritten.
 
 **Docker push fails?** Check that `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are set and the token has not expired.
