@@ -1,9 +1,13 @@
 name: Build and Publish Docker Image
 
+# Called by the release workflow once the tag has been validated.
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  workflow_call:
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
 
 permissions:
       contents: read

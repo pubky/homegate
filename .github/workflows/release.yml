@@ -43,6 +43,14 @@ jobs:
           fi
           echo "openapi.yaml version matches tag: $VERSION"
 
+  docker:
+    name: Publish Docker Image
+    needs: validate
+    uses: ./.github/workflows/docker.yml
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
   release:
     name: Create Release
     needs: validate
@@ -53,12 +61,27 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # The changelog action's own lookup takes the two newest tags by commit date, which is
+      # wrong for a hotfix cut from an older release. This takes the nearest tag in the
+      # history of the tagged commit. A stable release skips pre-release tags, so it lists
+      # everything since the last stable release.
+      - name: Find previous tag
+        id: previous
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^")
+          else
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 --exclude '*-*' "$GITHUB_REF_NAME^")
+          fi
+          echo "Previous tag: $PREVIOUS_TAG"
+          echo "tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
       - name: Generate changelog
         id: changelog
         uses: requarks/changelog-action@v1
         with:
           token: ${{ github.token }}
-          tag: ${{ github.ref_name }}
+          fromTag: ${{ github.ref_name }}
+          toTag: ${{ steps.previous.outputs.tag }}
           excludeTypes: ""
           useGitmojis: false
       - name: Create Release

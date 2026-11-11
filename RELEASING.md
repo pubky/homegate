@@ -1,6 +1,6 @@
 # Releasing homegate
 
-A release is a version tag with a GitHub Release that lists the changes since the previous tag. No executables are attached; the deployable artifact is the Docker image.
+A release is a version tag with a GitHub Release that lists the changes since the previous release. No executables are attached; the deployable artifact is the Docker image.
 
 ## Prerequisites
 
@@ -55,9 +55,12 @@ This triggers the release workflow. That's it -- CI handles the rest.
 When a `v*` tag is pushed, the [release workflow](.github/workflows/release.yml):
 
 1. **Validates** the tag is valid semver, and matches the version in `Cargo.toml` and `openapi.yaml`
-2. **Creates a GitHub Release** with a changelog generated from the commit messages since the previous tag. A tag with a pre-release part, such as `v0.3.0-rc.1`, is marked as a pre-release.
+2. **Creates a GitHub Release** with a changelog generated from the commit messages since the previous release. A tag with a pre-release part, such as `v0.3.0-rc.1`, is marked as a pre-release.
+3. **Publishes the Docker image** through the [Docker workflow](.github/workflows/docker.yml): built for `linux/amd64` and `linux/arm64` and pushed to Docker Hub as `synonymsoft/homegate`, tagged with the version and `latest`
 
-The same tag also triggers the [Docker workflow](.github/workflows/docker.yml), which builds the image for `linux/amd64` and `linux/arm64` and pushes it to Docker Hub as `synonymsoft/homegate`, tagged with the version and `latest`.
+Nothing is published if validation fails. The release and the image are published independently of each other, so one can succeed while the other fails.
+
+The previous release is the nearest earlier tag in the history of the tagged commit, so a hotfix is compared with the release it was cut from. A stable release skips pre-release tags and lists everything since the last stable release.
 
 The changelog is built from [Conventional Commits](https://www.conventionalcommits.org/) (`feat: ...`, `fix: ...`). PRs are squash-merged, so the PR title becomes the commit message: a PR whose title does not follow the format would be left out. The [PR Title workflow](.github/workflows/pr-labels.yml) fails such a PR.
 
@@ -123,6 +126,6 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-The Docker workflow runs independently of the release workflow, so the image for the failed tag may already be on Docker Hub, with `latest` pointing at it. Re-pushing the tag publishes the image again and replaces it.
+If only one of the release and the Docker image failed, re-pushing the tag publishes both again and replaces the one that already exists.
 
 **Docker push fails?** Check that `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are set and the token has not expired.
