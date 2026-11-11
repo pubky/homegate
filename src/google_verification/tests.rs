@@ -115,8 +115,7 @@ async fn test_rate_limits_are_per_google_identity(pool: PgPool) {
     let servers = WiremockServers::start().await;
     let google_server = jwks_server().await;
     let db = SqlDb::test(pool).await;
-    let service_a = create_service(&servers, &google_server, db.clone(), 1, 10);
-    let service_b = create_service(&servers, &google_server, db, 1, 10);
+    let service = create_service(&servers, &google_server, db, 1, 10);
     let token_a = valid_token("google-subject-a");
     let token_b = valid_token("google-subject-b");
 
@@ -125,16 +124,16 @@ async fn test_rate_limits_are_per_google_identity(pool: PgPool) {
         .mount(&servers.homeserver_server)
         .await;
 
-    service_a
+    service
         .verify(&token_a)
         .await
         .expect("first identity should pass");
-    service_b
+    service
         .verify(&token_b)
         .await
         .expect("second identity should pass independently");
 
-    let error = service_a.verify(&token_a).await.unwrap_err();
+    let error = service.verify(&token_a).await.unwrap_err();
     assert!(matches!(
         error,
         GoogleVerificationError::WeeklyLimitExceeded
