@@ -9,6 +9,7 @@ This service depends on
 - [Prelude](https://docs.prelude.so/) as a SMS service provider.
 - [PhoenixD](https://github.com/ACINQ/phoenixd) As a Lightning Payment provider.
 - Google JWKS for Google ID token verification.
+- Apple JWKS for Sign in with Apple ID token verification.
 
 # Configuration
 
@@ -20,7 +21,7 @@ The `database_url` field must point to an existing PostgreSQL database, e.g.:
 database_url = "postgres://postgres:postgres@localhost:5432/pubky_homegate"
 ```
 
-Verification routes are **optional** — include an `[sms_verification]`, `[ln_verification]`, `[ip_verification]`, or `[google_verification]` section to enable each one. Omitting a section disables that route entirely.
+Verification routes are **optional** — include an `[sms_verification]`, `[ln_verification]`, `[ip_verification]`, `[google_verification]`, or `[apple_verification]` section to enable each one. Omitting a section disables that route entirely.
 
 See `config.toml.example` for the full list of options and defaults.
 
@@ -41,7 +42,7 @@ If this value is lost then you lose the ability to match phone numbers which hav
 
 Identifiers are hashed with Argon2id, which deliberately takes around 100 ms of CPU and 19 MiB of memory per hash. Hashing runs on Tokio's blocking thread pool, at most one hash per CPU at a time (set `max_concurrent_hashes` in `config.toml` to change this, e.g. in a container without a CPU limit, where every host CPU counts). When every slot is taken, SMS, IP and Google verification answer `503` with `Retry-After: 1` straight away instead of queueing the work.
 
-Every request has a 30 second time limit (`503 request_timeout`), and request bodies are limited to 64 KiB. Calls to the homeserver admin API, Prelude, Google's JWKS endpoint and the PhoenixD REST API time out after 10 seconds, so a stuck dependency fails the request cleanly well before that limit.
+Every request has a 30 second time limit (`503 request_timeout`), and request bodies are limited to 64 KiB. Calls to the homeserver admin API, Prelude, Google's and Apple's JWKS endpoints and the PhoenixD REST API time out after 10 seconds, so a stuck dependency fails the request cleanly well before that limit.
 
 ## SMS Verification
 
@@ -69,6 +70,14 @@ Homegate verifies the token signature against Google's JWKS and validates the ex
 
 Enabled by adding a `[google_verification]` section with `google_client_id` to `config.toml`. The JWKS endpoint defaults to Google's well-known URL; the `HOMEGATE_GOOGLE_JWKS_URL` environment variable overrides it if ever needed (e.g. manual testing against a mock).
 
+## Apple Verification
+
+Server-side Sign in with Apple ID token verification for issuing homeserver signup codes. A client POSTs to `/apple_verification` with an `appleIdToken` and receives a signup code if the token is valid and the Apple identity has not exceeded the configured weekly/annual limits.
+
+Homegate verifies the RS256 token signature against Apple's JWKS and validates the issuer (`https://appleid.apple.com`), that the audience is one of the configured `allowed_audiences`, expiry, that `iat` is not in the future, and the subject. A nonce is not required. Apple users may hide their email, so rate limiting uses a secret-peppered hash of the verified issuer and subject claims only; raw Apple IDs and emails are not stored.
+
+Enabled by adding an `[apple_verification]` section with `allowed_audiences` (the Sign in with Apple Services IDs or bundle IDs of the clients allowed to request signup codes) to `config.toml`. All audiences must belong to the same Apple developer team, because Apple's `sub` is team-scoped and the limits are shared across audiences by `sub`. The JWKS endpoint defaults to Apple's well-known URL; the `HOMEGATE_APPLE_JWKS_URL` environment variable overrides it if ever needed (e.g. manual testing against a mock).
+
 ## Metrics
 
 Adding a `[metrics]` section to `config.toml` starts a second listener (default `127.0.0.1:8081`) that serves Prometheus metrics at `/metrics`. Keep it off the public network; only the monitoring stack needs it. In a container, localhost is not reachable from outside: set `listen_socket = "0.0.0.0:8081"` and publish that port only on the private network Prometheus is in, never to the internet. Then add the target to Prometheus:
@@ -82,10 +91,10 @@ scrape_configs:
 
 | Metric | Labels | Meaning |
 |---|---|---|
-| `homegate_signup_codes_issued_total` | `type` | Signup codes issued per route (`sms`, `lightning`, `ip`, `google`) |
+| `homegate_signup_codes_issued_total` | `type` | Signup codes issued per route (`sms`, `lightning`, `ip`, `google`, `apple`) |
 | `homegate_verification_started_total` | `type` | SMS codes sent and Lightning invoices created; compare with issued for drop-off |
 | `homegate_verification_rejected_total` | `type`, `reason` | Requests refused for a client-attributable reason (rate limits, invalid tokens, wrong codes, ...); see the note below on what it leaves out |
-| `homegate_dependency_errors_total` | `dependency` | Failed calls to `homeserver`, `prelude`, `phoenixd` or `google_jwks` |
+| `homegate_dependency_errors_total` | `dependency` | Failed calls to `homeserver`, `prelude`, `phoenixd`, `google_jwks` or `apple_jwks` |
 | `homegate_homeserver_request_duration_seconds` | | Histogram of signup token requests to the homeserver admin API |
 | `homegate_http_requests_total` | `route`, `method`, `status` | Every response of the public API, by matched route template (for example `/sms_verification/send_code`; `unmatched` for unknown paths), HTTP method and status code. CORS preflights are not counted |
 | `homegate_http_request_duration_seconds` | `route`, `method` | Histogram of time to respond on the public API. `/ln_verification/{id}/await` long-polls for up to 25 seconds by design, so leave it out of latency percentiles |
@@ -117,5 +126,5 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/pubky_homegate?pubky-te
 ### Test Structure
 
 - **Unit Tests**: IP extraction logic (`src/infrastructure/http/extractors/request_origin.rs`)
-- **Service Tests**: Business logic and database operations (`src/sms_verification/tests.rs`, `src/ip_verification/tests.rs`, `src/google_verification/tests.rs`)
+- **Service Tests**: Business logic and database operations (`src/sms_verification/tests.rs`, `src/ip_verification/tests.rs`, `src/google_verification/tests.rs`, `src/apple_verification/tests.rs`)
 - **E2E Tests**: Full HTTP integration tests (`src/e2e/`)

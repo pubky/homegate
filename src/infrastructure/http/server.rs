@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    google_verification,
+    apple_verification, google_verification,
     infrastructure::{
         config::AppConfig,
         http::HttpServerError,
@@ -97,6 +97,20 @@ impl HttpServer {
                 google_verification::router(
                     homeserver_api,
                     google,
+                    db.clone(),
+                    hasher.clone(),
+                    metrics.clone(),
+                )
+                .await?,
+            );
+        }
+        if let Some(apple) = &config.apple_verification {
+            tracing::info!("Apple verification enabled");
+            app = app.nest(
+                "/apple_verification",
+                apple_verification::router(
+                    homeserver_api,
+                    apple,
                     db.clone(),
                     hasher.clone(),
                     metrics.clone(),
@@ -248,6 +262,7 @@ fn report_enabled_routes(config: &AppConfig, metrics: &Metrics) {
     metrics.set_route_enabled(SignupType::Lightning, config.ln_verification.is_some());
     metrics.set_route_enabled(SignupType::Ip, config.ip_verification.is_some());
     metrics.set_route_enabled(SignupType::Google, config.google_verification.is_some());
+    metrics.set_route_enabled(SignupType::Apple, config.apple_verification.is_some());
 }
 
 /// Answers 503 `request_timeout` for any request in `router` that takes
@@ -413,6 +428,7 @@ google_client_id = "test-client-id"
         assert_eq!(metrics.route_enabled(SignupType::Google), 1);
         assert_eq!(metrics.route_enabled(SignupType::Sms), 0);
         assert_eq!(metrics.route_enabled(SignupType::Lightning), 0);
+        assert_eq!(metrics.route_enabled(SignupType::Apple), 0);
     }
 
     async fn send(router: &Router, request: Request<Body>) -> (StatusCode, String) {
