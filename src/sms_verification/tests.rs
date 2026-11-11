@@ -25,14 +25,8 @@ use std::net::IpAddr;
 const TEST_VERIFICATION_CODE: &str = "123456";
 const TEST_WRONG_CODE: &str = "111111";
 
-// Shared by every test thread, so it must not hit the production cap.
-static TEST_HASHER: std::sync::LazyLock<HasherArgon2id> = std::sync::LazyLock::new(|| {
-    let dir = tempfile::tempdir().unwrap();
-    HasherArgon2id::with_max_concurrent_hashes(
-        dir.path().join("pepper.txt"),
-        tokio::sync::Semaphore::MAX_PERMITS,
-    )
-});
+static TEST_HASHER: std::sync::LazyLock<HasherArgon2id> =
+    std::sync::LazyLock::new(HasherArgon2id::for_test);
 
 // TODO replace with faster hasher
 fn test_phone_hasher() -> HasherArgon2id {

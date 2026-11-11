@@ -307,7 +307,7 @@ max_verifications_per_week = 1
             "test-homeserver-pubky",
             metrics.clone(),
         );
-        let hasher = HasherArgon2id::new(tempfile::tempdir().unwrap().keep().join("pepper.txt"));
+        let hasher = HasherArgon2id::for_test();
         let router = HttpServer::create_router(
             &config,
             &SqlDb::test(pool).await,
@@ -363,7 +363,7 @@ admin_password = "unused"
             "test-homeserver-pubky",
             metrics.clone(),
         );
-        let hasher = HasherArgon2id::new(tempfile::tempdir().unwrap().keep().join("pepper.txt"));
+        let hasher = HasherArgon2id::for_test();
         let router = HttpServer::create_router(
             &config,
             &SqlDb::test(pool).await,
@@ -461,10 +461,7 @@ admin_password = "test-pass"
             metrics.clone(),
         );
         let db = SqlDb::test(pool).await;
-        let hasher = HasherArgon2id::with_max_concurrent_hashes(
-            tempfile::tempdir().unwrap().keep().join("pepper.txt"),
-            max_concurrent_hashes,
-        );
+        let hasher = HasherArgon2id::for_test_with_max_concurrent_hashes(max_concurrent_hashes);
         let router =
             HttpServer::create_router(&config, &db, &homeserver_api, hasher.clone(), &metrics)
                 .await
@@ -595,7 +592,7 @@ google_client_id = "test-client-id"
             metrics.clone(),
         );
         let db = SqlDb::test(pool).await;
-        let hasher = HasherArgon2id::new(tempfile::tempdir().unwrap().keep().join("pepper.txt"));
+        let hasher = HasherArgon2id::for_test();
         let app = HttpServer::create_router(&config, &db, &homeserver_api, hasher, &metrics)
             .await
             .unwrap();

@@ -140,9 +140,7 @@ mod tests {
             max_verifications_per_year: max_per_year,
         };
         let db = SqlDb::test(pool).await;
-        let hasher = crate::shared::HasherArgon2id::new(
-            tempfile::tempdir().unwrap().keep().join("pepper.txt"),
-        );
+        let hasher = crate::shared::HasherArgon2id::for_test();
         let google_verification = GoogleVerificationService::for_test(
             db,
             homeserver_api,

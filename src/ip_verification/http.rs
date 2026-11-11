@@ -138,9 +138,7 @@ mod tests {
 
         let db = SqlDb::test(pool).await;
 
-        let hasher = crate::shared::HasherArgon2id::new(
-            tempfile::tempdir().unwrap().keep().join("pepper.txt"),
-        );
+        let hasher = crate::shared::HasherArgon2id::for_test();
         let ip_verification_router = router(&homeserver_api, &ip_config, db, hasher, metrics)
             .await
             .expect("Failed to create router");

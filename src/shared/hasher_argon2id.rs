@@ -72,6 +72,23 @@ impl HasherArgon2id {
         }
     }
 
+    /// Hasher with a fresh random pepper for tests. The pepper file lives in a
+    /// temporary directory that is removed as soon as it has been read. It has
+    /// no practical cap on concurrent hashes, so parallel tests never see
+    /// [`HasherBusy`]; use [`Self::for_test_with_max_concurrent_hashes`] to
+    /// test the cap.
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self::for_test_with_max_concurrent_hashes(Semaphore::MAX_PERMITS)
+    }
+
+    /// Like [`Self::for_test`], but runs at most `max` hashes at once.
+    #[cfg(test)]
+    pub(crate) fn for_test_with_max_concurrent_hashes(max: usize) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        Self::with_max_concurrent_hashes(dir.path().join("pepper.txt"), max)
+    }
+
     /// Hashes a string using Argon2id with a deterministic salt.
     ///
     /// Runs on the blocking thread pool. Returns [`HasherBusy`] immediately if
