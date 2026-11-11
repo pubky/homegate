@@ -33,7 +33,7 @@ jobs:
         run: cp target/release/homegate homegate-${{ steps.version.outputs.version }}-linux-amd64
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-x86_64
           path: homegate-*
