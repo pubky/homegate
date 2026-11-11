@@ -282,9 +282,17 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
 
+    use std::time::{Duration, Instant};
+
+    use jsonwebtoken::jwk::JwkSet;
     use serde_json::json;
     use test_support::*;
-    use wiremock::MockServer;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    use crate::shared::jwks_cache::MIN_FORCED_JWKS_REFRESH_INTERVAL;
 
     fn verifier_for_server(server: &MockServer) -> AppleJwksIdTokenVerifier {
         AppleJwksIdTokenVerifier::for_test(
@@ -481,6 +489,41 @@ mod tests {
         let server = MockServer::start().await;
         let verifier = verifier_for_server(&server);
 
+        let error = verifier
+            .verify(&valid_token("apple-subject"))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppleIdTokenVerificationError::DependencyUnavailable
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_unknown_kid_with_failed_refresh_is_dependency_unavailable() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/auth/keys"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let verifier = verifier_for_server(&server);
+        let mut old_jwk = test_jwk();
+        old_jwk.common.key_id = Some("old-kid".to_string());
+        verifier
+            .jwks_cache
+            .seed_for_test(
+                JwkSet {
+                    keys: vec![old_jwk],
+                },
+                Instant::now() - MIN_FORCED_JWKS_REFRESH_INTERVAL - Duration::from_secs(1),
+                Instant::now() + Duration::from_secs(3600),
+            )
+            .await;
+
+        // The provider may have rotated keys, so this is not an invalid token.
         let error = verifier
             .verify(&valid_token("apple-subject"))
             .await
