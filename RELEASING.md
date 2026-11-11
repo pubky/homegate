@@ -56,7 +56,7 @@ When a `v*` tag is pushed, the [release workflow](.github/workflows/release.yml)
 
 1. **Validates** the tag is valid semver, and matches the version in `Cargo.toml` and `openapi.yaml`
 2. **Creates a GitHub Release** with a changelog generated from the commit messages since the previous release. A tag with a pre-release part, such as `v0.3.0-rc.1`, is marked as a pre-release.
-3. **Publishes the Docker image** through the [Docker workflow](.github/workflows/docker.yml): built for `linux/amd64` and `linux/arm64` and pushed to Docker Hub as `synonymsoft/homegate`, tagged with the version and `latest`
+3. **Publishes the Docker image** through the [Docker workflow](.github/workflows/docker.yml): built for `linux/amd64` and `linux/arm64` and pushed to Docker Hub as `synonymsoft/homegate`, tagged with the version. A stable release is also tagged `latest`; a pre-release is not.
 
 Nothing is published if validation fails. The release and the image are published independently of each other, so one can succeed while the other fails.
 
@@ -85,11 +85,14 @@ For urgent patches that need to ship without merging into `master` first (e.g. w
 
 ```bash
 git checkout -b hot_fix_v0.3.1 v0.3.0
+git push origin hot_fix_v0.3.1
 ```
 
-### 2. Apply the fix and bump the version
+### 2. Apply the fix and bump the version through PRs
 
-Merge all fixes into the hotfix branch, then run the version bump script:
+The release workflow does not run the tests, so a commit pushed straight to the hotfix branch would be released untested. Open each fix as a PR that targets the hotfix branch, and merge it only when the PR checks pass.
+
+Bump the version the same way, in a PR that targets the hotfix branch:
 
 ```bash
 ./.scripts/set-version.sh 0.3.1
@@ -97,8 +100,11 @@ Merge all fixes into the hotfix branch, then run the version bump script:
 
 ### 3. Tag and push
 
+After the PRs have been merged:
+
 ```bash
-git push origin hot_fix_v0.3.1
+git checkout hot_fix_v0.3.1
+git pull origin hot_fix_v0.3.1
 git tag v0.3.1
 git push origin v0.3.1
 ```
@@ -110,6 +116,15 @@ After the release, cherry-pick or merge the fix and version bump into `master` s
 ```bash
 git checkout master
 git cherry-pick <commit-sha>
+```
+
+### Hotfix for an older release
+
+CI does not compare versions. If a newer stable release already exists (for example a `v0.3.1` hotfix after `v0.4.0`), the hotfix still takes the `latest` tag on Docker Hub and may be labelled "Latest" on the GitHub Releases page. Point both back at the newest release afterwards:
+
+```bash
+docker buildx imagetools create -t synonymsoft/homegate:latest synonymsoft/homegate:v0.4.0
+gh release edit v0.4.0 --latest
 ```
 
 ## Troubleshooting

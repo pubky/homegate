@@ -33,7 +33,8 @@ jobs:
           registry: registry-1.docker.io/synonymsoft
           context: .
           push: true
-          latest: true
+          # A pre-release (v1.0.0-rc.1) is pushed under its version tag only.
+          latest: ${{ !contains(github.ref_name, '-') }}
           tags: |
             type=ref,event=tag
           platforms: |
