@@ -1,5 +1,5 @@
 use crate::infrastructure::config::SignupQuotaConfig;
-use crate::shared::Metrics;
+use crate::shared::{DEPENDENCY_REQUEST_TIMEOUT, Metrics};
 use url::Url;
 
 /// Client for the homeserver admin API. Signup token requests are timed and
@@ -22,7 +22,7 @@ impl HomeserverAdminAPI {
         metrics: Metrics,
     ) -> Self {
         Self {
-            http_client: reqwest::Client::new(),
+            http_client: http_client(),
             admin_password: admin_password.to_owned(),
             base_url: base_url.clone(),
             homeserver_pubky: homeserver_pubky.to_owned(),
@@ -32,7 +32,7 @@ impl HomeserverAdminAPI {
 
     pub fn from_config(base_url: &Url, admin_password: &str, metrics: Metrics) -> Self {
         Self {
-            http_client: reqwest::Client::new(),
+            http_client: http_client(),
             admin_password: admin_password.to_owned(),
             base_url: base_url.clone(),
             homeserver_pubky: String::new(),
@@ -101,4 +101,11 @@ impl HomeserverAdminAPI {
         tracing::info!(pubky = %self.homeserver_pubky, "Fetched homeserver public key");
         Ok(())
     }
+}
+
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(DEPENDENCY_REQUEST_TIMEOUT)
+        .build()
+        .expect("Reqwest client configuration should be valid")
 }

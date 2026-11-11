@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 
 use std::net::IpAddr;
 
@@ -17,6 +18,9 @@ pub struct AppConfig {
     pub allow_cors: bool,
     #[serde(default)]
     pub accept_proxy_ip_headers: bool,
+    /// Cap on identifier hashes running at once (Argon2id, 19 MiB each).
+    /// Defaults to the number of CPUs.
+    pub max_concurrent_hashes: Option<NonZeroUsize>,
     pub logging: Option<LoggingConfig>,
     pub homeserver: HomeserverConfig,
     pub sms_verification: Option<SmsVerificationConfig>,
@@ -293,6 +297,27 @@ google_client_id = "test-google-client-id.apps.googleusercontent.com"
         assert!(config.ln_verification.is_some());
         assert!(config.ip_verification.is_some());
         assert!(config.google_verification.is_some());
+    }
+
+    #[test]
+    fn test_max_concurrent_hashes() {
+        let base = r#"
+database_url = "postgres://localhost:5432/pubky_homegate"
+
+[homeserver]
+admin_api_url = "http://localhost:6288"
+admin_password = "test-admin-password"
+"#;
+        let config: AppConfig = toml::from_str(base).unwrap();
+        assert_eq!(config.max_concurrent_hashes, None);
+
+        let config: AppConfig =
+            toml::from_str(&format!("max_concurrent_hashes = 4\n{base}")).unwrap();
+        assert_eq!(config.max_concurrent_hashes.map(NonZeroUsize::get), Some(4));
+
+        assert!(
+            toml::from_str::<AppConfig>(&format!("max_concurrent_hashes = 0\n{base}")).is_err()
+        );
     }
 
     #[test]

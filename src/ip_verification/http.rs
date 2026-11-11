@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::State,
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -59,6 +59,15 @@ impl IntoResponse for IpVerificationError {
             IpVerificationError::WeeklyLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             IpVerificationError::AnnualLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             IpVerificationError::IpAddressRequired => StatusCode::BAD_REQUEST,
+            IpVerificationError::ServerBusy(_) => {
+                let retry_after = [(header::RETRY_AFTER, "1")];
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    retry_after,
+                    self.to_string(),
+                )
+                    .into_response();
+            }
             IpVerificationError::HomeserverUnavailable => {
                 tracing::error!("Homeserver unavailable during IP verification");
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -307,5 +316,16 @@ mod tests {
         for reason in RejectionReason::ALL {
             assert_eq!(metrics.verification_rejected(SignupType::Ip, reason), 0);
         }
+    }
+
+    #[tokio::test]
+    async fn test_busy_hasher_maps_to_503() {
+        let response = IpVerificationError::from(crate::shared::HasherBusy).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"Server busy, please retry");
     }
 }

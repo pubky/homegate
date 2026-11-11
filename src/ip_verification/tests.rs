@@ -15,10 +15,14 @@ use crate::shared::HomeserverAdminAPI;
 use sqlx::PgPool;
 use std::net::IpAddr;
 
+// Shared by every test thread, so it must not hit the production cap.
 static TEST_HASHER: std::sync::LazyLock<crate::shared::HasherArgon2id> =
     std::sync::LazyLock::new(|| {
         let dir = tempfile::tempdir().unwrap();
-        crate::shared::HasherArgon2id::new(dir.path().join("pepper.txt"))
+        crate::shared::HasherArgon2id::with_max_concurrent_hashes(
+            dir.path().join("pepper.txt"),
+            tokio::sync::Semaphore::MAX_PERMITS,
+        )
     });
 
 fn create_service(

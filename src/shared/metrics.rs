@@ -131,7 +131,8 @@ pub enum FailureKind {
     DependencyError(Dependency),
     /// Not counted by the handler: database failures and deployment faults
     /// (such as a missing client address) are not client rejections, and
-    /// homeserver and PhoenixD failures are already counted by their clients.
+    /// homeserver and PhoenixD failures are already counted by their clients;
+    /// a busy hasher (503) is the server's own load, seen in the request counter.
     NotCounted,
 }
 

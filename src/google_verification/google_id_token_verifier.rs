@@ -14,7 +14,6 @@ const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
 /// mock during manual testing, or if Google ever moves the endpoint).
 const GOOGLE_JWKS_URL_ENV_VAR: &str = "HOMEGATE_GOOGLE_JWKS_URL";
 const DEFAULT_JWKS_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
-const GOOGLE_JWKS_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MIN_FORCED_JWKS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_ID_TOKEN_BYTES: usize = 16 * 1024;
 
@@ -138,7 +137,7 @@ impl GoogleJwksCache {
     fn new(jwks_url: Url) -> Self {
         let http_client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(GOOGLE_JWKS_REQUEST_TIMEOUT)
+            .timeout(crate::shared::DEPENDENCY_REQUEST_TIMEOUT)
             .build()
             .expect("Reqwest client configuration should be valid");
         Self {

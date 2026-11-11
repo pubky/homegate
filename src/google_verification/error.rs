@@ -1,5 +1,5 @@
 use crate::infrastructure::sql::DbError;
-use crate::shared::{Dependency, FailureKind, RejectionReason, SignupIssuanceError};
+use crate::shared::{Dependency, FailureKind, HasherBusy, RejectionReason, SignupIssuanceError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum GoogleVerificationError {
@@ -17,6 +17,9 @@ pub enum GoogleVerificationError {
 
     #[error("google_verifier_unavailable")]
     GoogleVerifierUnavailable,
+
+    #[error("server_busy")]
+    ServerBusy(#[from] HasherBusy),
 
     #[error("internal_error")]
     Database(#[from] DbError),
@@ -38,6 +41,9 @@ impl GoogleVerificationError {
             Self::HomeserverUnavailable => FailureKind::NotCounted,
             Self::GoogleVerifierUnavailable => FailureKind::DependencyError(Dependency::GoogleJwks),
             Self::Database(_) => FailureKind::NotCounted,
+            // Overload is the server's own state, not a client rejection; it
+            // shows as a 503 in the request counter.
+            Self::ServerBusy(_) => FailureKind::NotCounted,
         }
     }
 }

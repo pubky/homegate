@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use url::Url;
 
+use crate::shared::DEPENDENCY_REQUEST_TIMEOUT;
 use crate::sms_verification::{Code, PhoneNumber};
 
 #[derive(Deserialize, Debug, PartialEq)]
@@ -265,7 +266,10 @@ pub enum PreludeCheckCodeResponse {
 impl PreludeAPI {
     pub fn new(base_url: &Url, api_key: &str) -> Self {
         Self {
-            http_client: reqwest::Client::new(),
+            http_client: reqwest::Client::builder()
+                .timeout(DEPENDENCY_REQUEST_TIMEOUT)
+                .build()
+                .expect("Reqwest client configuration should be valid"),
             api_key: api_key.to_owned(),
             base_url: base_url.clone(),
         }

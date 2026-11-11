@@ -17,8 +17,10 @@
 //!    ID token against the provider's keys). Keep this behind a small trait so
 //!    tests can fake it — see `google_verification::google_id_token_verifier`.
 //! 2. **Derive a stable identity hash** with [`crate::shared::HasherArgon2id`],
-//!    e.g. `hasher.hash(&format!("{issuer}\n{subject}"))`. Never store or log
-//!    raw identifiers.
+//!    e.g. `hasher.hash(&format!("{issuer}\n{subject}")).await?`. Never store or
+//!    log raw identifiers. The hash runs on the blocking pool and fails fast with
+//!    [`crate::shared::HasherBusy`] when the server is saturated; give your
+//!    error enum a `#[from] HasherBusy` variant that maps to 503.
 //! 3. **Create a table** to record issuance, via a migration in
 //!    `infrastructure::sql::migrations` with the columns `id`, `<your>_hash`,
 //!    `signup_code`, `created_at`, plus an index on `(<your>_hash, created_at)`
