@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate semver format
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SEMVER_REGEX="^([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z.-]+))?(\+([0-9A-Za-z.-]+))?$"
+          if [[ ! "$VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not valid semver (expected e.g. v0.8.0, v1.0.0-rc.1)"
+            exit 1
+          fi
+      - name: Verify version matches Cargo.toml
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION=$(cargo pkgid | sed 's/.*#//;s/.*@//')
+          if [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "::error::Version mismatch: tag is $VERSION but Cargo.toml has $CARGO_VERSION"
+            exit 1
+          fi
+          echo "Cargo.toml version matches tag: $VERSION"
+
+  # The binary is not attached to the release. This only checks that the tagged commit builds.
+  build:
+    name: Build
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup environment
+        uses: ./.github/setup
+      - name: Build Project
+        run: cargo build --release
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate changelog
+        id: changelog
+        uses: requarks/changelog-action@v1
+        with:
+          token: ${{ github.token }}
+          tag: ${{ github.ref_name }}
+          excludeTypes: ""
+          useGitmojis: false
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.changes }}
