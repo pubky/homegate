@@ -1,0 +1,34 @@
+# Enforces conventional commit format on PR titles (e.g. "feat:", "fix(scope)!:").
+# PRs are squash-merged, so the title becomes the commit message on master, which
+# requarks/changelog-action parses to generate the release notes.
+name: PR Title
+
+on:
+  pull_request_target:
+    # `synchronize` re-runs the check on each push, which a required check needs:
+    # without it the new head commit has no result and the PR stays blocked.
+    types: [opened, reopened, edited, synchronize]
+
+jobs:
+  pr-title:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            refactor
+            test
+            ci
+            build
+            chore
+          requireScope: false
+          subjectPattern: ^.+$
+          subjectPatternError: "PR title must have a subject after the type prefix"

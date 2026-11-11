@@ -1,9 +1,13 @@
 name: Build and Publish Docker Image
 
+# Called by the release workflow once the tag has been validated.
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  workflow_call:
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
 
 permissions:
       contents: read
@@ -15,10 +19,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -29,9 +33,11 @@ jobs:
           registry: registry-1.docker.io/synonymsoft
           context: .
           push: true
-          latest: true
+          # A pre-release (v1.0.0-rc.1) is pushed under its version tag only. `type=semver`
+          # is needed as well: `type=ref,event=tag` would add `latest` for every tag.
+          latest: ${{ !contains(github.ref_name, '-') }}
           tags: |
-            type=ref,event=tag
+            type=semver,pattern={{raw}}
           platforms: |
             linux/arm64
             linux/amd64

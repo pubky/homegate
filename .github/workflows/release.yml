@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate semver format
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SEMVER_REGEX="^([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z.-]+))?$"
+          if [[ ! "$VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not valid semver (expected e.g. v0.8.0, v1.0.0-rc.1)"
+            exit 1
+          fi
+      - name: Verify version matches Cargo.toml
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION=$(cargo pkgid | sed 's/.*#//;s/.*@//')
+          if [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "::error::Version mismatch: tag is $VERSION but Cargo.toml has $CARGO_VERSION"
+            exit 1
+          fi
+          echo "Cargo.toml version matches tag: $VERSION"
+      - name: Verify version matches openapi.yaml
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          OPENAPI_VERSION=$(sed -n 's/^  version: //p' openapi.yaml)
+          if [ "$OPENAPI_VERSION" != "$VERSION" ]; then
+            echo "::error::Version mismatch: tag is $VERSION but openapi.yaml has $OPENAPI_VERSION"
+            exit 1
+          fi
+          echo "openapi.yaml version matches tag: $VERSION"
+
+  docker:
+    name: Publish Docker Image
+    needs: validate
+    uses: ./.github/workflows/docker.yml
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  release:
+    name: Create Release
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The changelog action's own lookup takes the two newest tags by commit date, which is
+      # wrong for a hotfix cut from an older release. This takes the nearest tag in the
+      # history of the tagged commit. A stable release skips pre-release tags, so it lists
+      # everything since the last stable release.
+      - name: Find previous tag
+        id: previous
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^")
+          else
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 --exclude '*-*' "$GITHUB_REF_NAME^")
+          fi
+          echo "Previous tag: $PREVIOUS_TAG"
+          echo "tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+      - name: Generate changelog
+        id: changelog
+        uses: requarks/changelog-action@v1
+        with:
+          token: ${{ github.token }}
+          fromTag: ${{ github.ref_name }}
+          toTag: ${{ steps.previous.outputs.tag }}
+          excludeTypes: ""
+          useGitmojis: false
+          writeToFile: false
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          body: ${{ steps.changelog.outputs.changes }}
+          # A validated semver tag with a hyphen has a pre-release part (v1.0.0-rc.1).
+          prerelease: ${{ contains(github.ref_name, '-') }}
