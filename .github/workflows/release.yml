@@ -65,3 +65,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.changelog.outputs.changes }}
+          # A validated semver tag with a hyphen has a pre-release part (v1.0.0-rc.1).
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -55,11 +55,11 @@ This triggers the release workflow. That's it -- CI handles the rest.
 When a `v*` tag is pushed, the [release workflow](.github/workflows/release.yml):
 
 1. **Validates** the tag is valid semver, and matches the version in `Cargo.toml` and `openapi.yaml`
-2. **Creates a GitHub Release** with a changelog generated from the commit messages since the previous tag
+2. **Creates a GitHub Release** with a changelog generated from the commit messages since the previous tag. A tag with a pre-release part, such as `v0.3.0-rc.1`, is marked as a pre-release.
 
 The same tag also triggers the [Docker workflow](.github/workflows/docker.yml), which builds the image for `linux/amd64` and `linux/arm64` and pushes it to Docker Hub as `synonymsoft/homegate`, tagged with the version and `latest`.
 
-The changelog is built from [Conventional Commits](https://www.conventionalcommits.org/) (`feat: ...`, `fix: ...`). PRs are squash-merged, so the PR title becomes the commit message: a PR whose title does not follow the format is left out.
+The changelog is built from [Conventional Commits](https://www.conventionalcommits.org/) (`feat: ...`, `fix: ...`). PRs are squash-merged, so the PR title becomes the commit message: a PR whose title does not follow the format would be left out. The [PR Title workflow](.github/workflows/pr-labels.yml) fails such a PR.
 
 ## Post-Release Verification
 
