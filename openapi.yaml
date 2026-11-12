@@ -54,7 +54,7 @@ info:
     bodies over 64 KiB are rejected with `413`. A busy `503` (with `Retry-After`) is returned before any
     state is changed, so it is safe to retry. After `request_timeout` the outcome is unknown: the request
     may have been partly processed.
-  version: 0.2.0
+  version: 0.3.0
   contact:
     name: Homegate API Support
 
