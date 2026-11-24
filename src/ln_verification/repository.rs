@@ -3,7 +3,7 @@ use crate::{
     ln_verification::{payment_hash::PaymentHash, verification_id::VerificationId},
 };
 use chrono::NaiveDateTime;
-use sea_query::{Expr, PostgresQueryBuilder, Query};
+use sea_query::{Expr, LockType, PostgresQueryBuilder, Query};
 use sea_query_binder::SqlxBinder;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -111,7 +111,9 @@ impl LnVerificationRepository {
         Ok(Some(verification))
     }
 
-    /// Get a verification by payment hash
+    /// Get a verification by payment hash and lock its row (`FOR UPDATE`).
+    /// Inside a transaction the lock is held until the transaction ends, so
+    /// concurrent callers for the same payment hash run one after the other.
     ///
     /// # Arguments
     /// * `payment_hash` - The payment hash of the Lightning invoice
@@ -122,7 +124,7 @@ impl LnVerificationRepository {
     ///
     /// # Errors
     /// * `sqlx::Error` - If the query fails
-    pub async fn get_verification_by_payment_hash<'a>(
+    pub async fn lock_verification_by_payment_hash<'a>(
         payment_hash: &PaymentHash,
         executor: &mut UnifiedExecutor<'a>,
     ) -> Result<Option<LightningVerificationEntity>, sqlx::Error> {
@@ -138,6 +140,7 @@ impl LnVerificationRepository {
             ])
             .from(TABLE_NAME)
             .and_where(Expr::col("payment_hash").eq(payment_hash.as_str()))
+            .lock(LockType::Update)
             .to_owned();
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
         let con = executor.get_con().await?;
@@ -255,7 +258,7 @@ mod tests {
         .await
         .unwrap_err();
 
-        let veri2 = LnVerificationRepository::get_verification_by_payment_hash(
+        let veri2 = LnVerificationRepository::lock_verification_by_payment_hash(
             &payment_hash,
             &mut db.pool().into(),
         )
@@ -273,7 +276,7 @@ mod tests {
         let db = SqlDb::test(pool).await;
 
         let payment_hash = PaymentHash::random();
-        let veri2 = LnVerificationRepository::get_verification_by_payment_hash(
+        let veri2 = LnVerificationRepository::lock_verification_by_payment_hash(
             &payment_hash,
             &mut db.pool().into(),
         )
