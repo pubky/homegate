@@ -100,12 +100,32 @@ impl LnVerificationService {
         &self,
         payment_hash: &PaymentHash,
     ) -> Result<Option<LightningVerificationEntity>, LnVerificationError> {
-        // Ask phoenixd before taking the row lock, so that polls of an unpaid invoice do not
-        // queue behind each other's phoenixd calls. Paid is final, so this read cannot go stale.
+        // Everything up to the phoenixd answer runs without a transaction, so that syncs of
+        // unknown, finalised or unpaid invoices neither hold a row lock nor call phoenixd
+        // needlessly. Paid is final, so the phoenixd answer cannot go stale before the lock.
+        let verification = match LnVerificationRepository::get_verification_by_payment_hash(
+            payment_hash,
+            &mut self.db.pool().into(),
+        )
+        .await?
+        {
+            Some(verification) => verification,
+            None => {
+                return Ok(None);
+            }
+        };
+        if verification.is_finalised() {
+            return Ok(Some(verification));
+        }
+
         let invoice = self.phoenix_api.get_invoice(payment_hash).await?;
+        if !invoice.is_paid {
+            return Ok(Some(verification));
+        }
 
         let mut tx = self.db.pool().begin().await?;
 
+        // A concurrent sync may have finalised the verification since the read above.
         let verification = match LnVerificationRepository::lock_verification_by_payment_hash(
             payment_hash,
             &mut UnifiedExecutor::from_tx(&mut tx),
@@ -117,7 +137,7 @@ impl LnVerificationService {
                 return Ok(None);
             }
         };
-        if verification.is_finalised() || !invoice.is_paid {
+        if verification.is_finalised() {
             return Ok(Some(verification));
         }
 
@@ -502,6 +522,41 @@ mod tests {
             background
         );
         assert_eq!(metrics.signup_codes_issued(SignupType::Lightning), 1);
+    }
+
+    /// The background syncer exits the process on a PhoenixD error, so it must not
+    /// ask PhoenixD about payments that need no finalising.
+    #[sqlx::test]
+    async fn sync_skips_phoenixd_for_unknown_and_finalised_invoices(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let phoenixd = start_phoenixd_mock(true).await;
+        let service = service(SqlDb::test(pool).await, &phoenixd, &servers, Metrics::new());
+        setup_homeserver_signup_token("token-123")
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+        let (verification, _invoice) = service.create_verification().await.unwrap();
+        let finalised = service
+            .sync_invoice(&verification.payment_hash)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(finalised.is_finalised());
+        let phoenixd_requests_before = phoenixd.received_requests().await.unwrap().len();
+
+        let unknown = service.sync_invoice(&PaymentHash::random()).await.unwrap();
+        let already_finalised = service
+            .sync_invoice(&verification.payment_hash)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(unknown.is_none());
+        assert_eq!(already_finalised.signup_code, finalised.signup_code);
+        assert_eq!(
+            phoenixd.received_requests().await.unwrap().len(),
+            phoenixd_requests_before
+        );
     }
 
     #[sqlx::test]
