@@ -214,26 +214,35 @@ impl IntoResponse for LnVerificationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::e2e::{
+        WiremockServers, setup_homeserver_slow_distinct_signup_tokens, start_phoenixd_mock,
+    };
     use crate::infrastructure::sql::SqlDb;
     use crate::ln_verification::phoenixd_api::PhoenixdAPI;
     use crate::shared::HomeserverAdminAPI;
     use axum_test::TestServer;
     use sqlx::PgPool;
 
+    /// Creates a test router whose PhoenixD and homeserver URLs are placeholders,
+    /// for endpoints such as /info that never call them.
+    async fn create_test_router(pool: PgPool) -> Router {
+        let placeholder_url = "http://localhost:1".parse().unwrap();
+        create_test_router_with_dependencies(pool, &placeholder_url, &placeholder_url).await
+    }
+
     /// Creates a test router for LN verification WITHOUT starting the background sync task.
     /// This is suitable for testing endpoints that don't require websocket connectivity.
-    async fn create_test_router(pool: PgPool) -> Router {
+    async fn create_test_router_with_dependencies(
+        pool: PgPool,
+        phoenixd_url: &url::Url,
+        homeserver_url: &url::Url,
+    ) -> Router {
         let db = SqlDb::test(pool).await;
-        // Use placeholder URLs - these won't be called for the /info endpoint
         let metrics = Metrics::new();
-        let phoenixd_api = PhoenixdAPI::new(
-            &"http://localhost:1".parse().unwrap(),
-            "unused",
-            metrics.clone(),
-        );
+        let phoenixd_api = PhoenixdAPI::new(phoenixd_url, "unused", metrics.clone());
         let homeserver_api = HomeserverAdminAPI::new(
-            &"http://localhost:1".parse().unwrap(),
-            "unused",
+            homeserver_url,
+            "test-pass",
             "test-homeserver-pubky",
             metrics.clone(),
         );
@@ -249,9 +258,11 @@ mod tests {
         );
         let ln_service = std::sync::Arc::new(ln_service);
 
-        // Note: We intentionally skip spawning the background sync task for this test
+        // Note: We intentionally skip spawning the background sync task
         let state = AppState::new(ln_service, homeserver_api.clone());
         Router::new()
+            .route("/", post(create_verification_handler))
+            .route("/{id}", get(get_verification_handler))
             .route("/info", get(get_info_handler))
             .with_state(state)
     }
@@ -272,5 +283,35 @@ mod tests {
             body["amountSat"], 1000,
             "Response should include the configured price"
         );
+    }
+
+    /// One paid invoice must yield one signup code, however many requests race for it.
+    #[sqlx::test]
+    async fn test_concurrent_get_verification_requests_return_one_signup_code(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let phoenixd = start_phoenixd_mock(true).await;
+        setup_homeserver_slow_distinct_signup_tokens()
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+        let router = create_test_router_with_dependencies(
+            pool,
+            &phoenixd.uri().parse().unwrap(),
+            &servers.homeserver_server.uri().parse().unwrap(),
+        )
+        .await;
+        let server = TestServer::new(router).expect("Failed to create test server");
+        let created: CreateVerificationResponse = server.post("/").await.json();
+        let verification_path = format!("/{}", created.id);
+
+        let (first, second) = tokio::join!(
+            server.get(&verification_path).into_future(),
+            server.get(&verification_path).into_future(),
+        );
+
+        let first: GetVerificationResponse = first.json();
+        let second: GetVerificationResponse = second.json();
+        assert!(first.signup_code.is_some());
+        assert_eq!(second.signup_code, first.signup_code);
     }
 }

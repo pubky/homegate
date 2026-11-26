@@ -87,20 +87,46 @@ impl LnVerificationService {
         Ok((verification, invoice))
     }
 
-    /// Sync an phonenixd invoice with the database.
+    /// Sync a phoenixd invoice with the database, issuing a signup code once the invoice is paid.
     /// This is necessary to keep our database in sync with the phoenixd invoice status.
+    /// The verification row is locked before the signup code is requested, so concurrent
+    /// syncs of one paid invoice run one after the other and only the first requests a code.
     /// # Returns
-    /// * `Ok(Some(verification))` - If the invoice was newly finalized during this sync
-    /// * `Ok(None)` - If the invoice was already finalized, not found, not paid, or homeserver failed
+    /// * `Ok(Some(verification))` - The verification as it is after this sync, finalised or not
+    /// * `Ok(None)` - If there is no verification for this payment hash
     /// # Errors
-    /// * `LnVerificationError` - If database or phoenixd errors occur (homeserver errors are handled gracefully)
+    /// * `LnVerificationError` - If database, phoenixd or homeserver errors occur
     async fn sync_invoice(
         &self,
         payment_hash: &PaymentHash,
     ) -> Result<Option<LightningVerificationEntity>, LnVerificationError> {
+        // Everything up to the phoenixd answer runs without a transaction, so that syncs of
+        // unknown, finalised or unpaid invoices neither hold a row lock nor call phoenixd
+        // needlessly. Paid is final, so the phoenixd answer cannot go stale before the lock.
+        let verification = match LnVerificationRepository::get_verification_by_payment_hash(
+            payment_hash,
+            &mut self.db.pool().into(),
+        )
+        .await?
+        {
+            Some(verification) => verification,
+            None => {
+                return Ok(None);
+            }
+        };
+        if verification.is_finalised() {
+            return Ok(Some(verification));
+        }
+
+        let invoice = self.phoenix_api.get_invoice(payment_hash).await?;
+        if !invoice.is_paid {
+            return Ok(Some(verification));
+        }
+
         let mut tx = self.db.pool().begin().await?;
 
-        let verification = match LnVerificationRepository::get_verification_by_payment_hash(
+        // A concurrent sync may have finalised the verification since the read above.
+        let verification = match LnVerificationRepository::lock_verification_by_payment_hash(
             payment_hash,
             &mut UnifiedExecutor::from_tx(&mut tx),
         )
@@ -112,12 +138,7 @@ impl LnVerificationService {
             }
         };
         if verification.is_finalised() {
-            return Ok(None);
-        }
-
-        let invoice = self.phoenix_api.get_invoice(payment_hash).await?;
-        if !invoice.is_paid {
-            return Ok(None);
+            return Ok(Some(verification));
         }
 
         let signup_code = match self.homeserver_api.generate_signup_token().await {
@@ -205,13 +226,11 @@ impl LnVerificationService {
             None => return Ok(None),
         };
 
-        if !verification.is_finalised()
-            && let Some(newly_finalised) = self.sync_invoice(&verification.payment_hash).await?
-        {
-            return Ok(Some(newly_finalised));
+        if verification.is_finalised() {
+            return Ok(Some(verification));
         }
 
-        Ok(Some(verification))
+        self.sync_invoice(&verification.payment_hash).await
     }
 
     /// Get a verification and wait for it to finalize if needed.
@@ -369,49 +388,13 @@ impl LnVerificationService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::e2e::{WiremockServers, setup_homeserver_signup_token};
+    use crate::e2e::{
+        WiremockServers, setup_homeserver_signup_token,
+        setup_homeserver_slow_distinct_signup_tokens, start_phoenixd_mock,
+    };
     use crate::shared::Dependency;
-    use serde_json::json;
     use sqlx::PgPool;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    const PAYMENT_HASH: &str = "bb4b823baf2ed506c5c8679e5887499aff7097e063d91eaa2d135fe35c88d289";
-
-    /// Mock PhoenixD: invoice creation plus an invoice lookup reporting the
-    /// given payment state.
-    async fn phoenixd_mock(is_paid: bool) -> MockServer {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/createinvoice"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "amountSat": 1000,
-                "paymentHash": PAYMENT_HASH,
-                "serialized": "lnbc-test-invoice",
-            })))
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!("/payments/incoming/{PAYMENT_HASH}")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "paymentHash": PAYMENT_HASH,
-                "preimage": "00",
-                "externalId": null,
-                "description": "Test Invoice",
-                "invoice": "lnbc-test-invoice",
-                "isPaid": is_paid,
-                "receivedSat": if is_paid { 1000 } else { 0 },
-                "requestedSat": 1000,
-                "fees": 0,
-                "completedAt": null,
-                "createdAt": 1765463919000u64,
-                "isExpired": false,
-                "expiresAt": 1765464519000u64,
-            })))
-            .mount(&server)
-            .await;
-        server
-    }
+    use wiremock::MockServer;
 
     fn service(
         db: SqlDb,
@@ -438,7 +421,7 @@ mod tests {
     #[sqlx::test]
     async fn metrics_follow_a_paid_verification(pool: PgPool) {
         let servers = WiremockServers::start().await;
-        let phoenixd = phoenixd_mock(true).await;
+        let phoenixd = start_phoenixd_mock(true).await;
         let metrics = Metrics::new();
         let service = service(
             SqlDb::test(pool).await,
@@ -465,10 +448,121 @@ mod tests {
         assert_eq!(metrics.dependency_errors(Dependency::Homeserver), 0);
     }
 
+    async fn stored_signup_code(
+        service: &LnVerificationService,
+        id: &VerificationId,
+    ) -> Option<String> {
+        service
+            .get_verification(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .signup_code
+    }
+
+    #[sqlx::test]
+    async fn concurrent_verification_requests_share_one_signup_code(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let phoenixd = start_phoenixd_mock(true).await;
+        let metrics = Metrics::new();
+        let service = service(
+            SqlDb::test(pool).await,
+            &phoenixd,
+            &servers,
+            metrics.clone(),
+        );
+        setup_homeserver_slow_distinct_signup_tokens()
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+        let (verification, _invoice) = service.create_verification().await.unwrap();
+
+        let (first, second) = tokio::join!(
+            service.get_and_sync_verification(&verification.id),
+            service.get_and_sync_verification(&verification.id),
+        );
+
+        let first = first.unwrap().unwrap().signup_code;
+        let second = second.unwrap().unwrap().signup_code;
+        assert!(first.is_some());
+        assert_eq!(second, first);
+        assert_eq!(stored_signup_code(&service, &verification.id).await, first);
+        assert_eq!(metrics.signup_codes_issued(SignupType::Lightning), 1);
+    }
+
+    #[sqlx::test]
+    async fn background_sync_and_verification_request_share_one_signup_code(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let phoenixd = start_phoenixd_mock(true).await;
+        let metrics = Metrics::new();
+        let service = service(
+            SqlDb::test(pool).await,
+            &phoenixd,
+            &servers,
+            metrics.clone(),
+        );
+        setup_homeserver_slow_distinct_signup_tokens()
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+        let (verification, _invoice) = service.create_verification().await.unwrap();
+
+        // The background syncer calls `sync_invoice` for every payment event.
+        let (background, request) = tokio::join!(
+            service.sync_invoice(&verification.payment_hash),
+            service.get_and_sync_verification(&verification.id),
+        );
+
+        let background = background.unwrap().unwrap().signup_code;
+        let request = request.unwrap().unwrap().signup_code;
+        assert!(background.is_some());
+        assert_eq!(request, background);
+        assert_eq!(
+            stored_signup_code(&service, &verification.id).await,
+            background
+        );
+        assert_eq!(metrics.signup_codes_issued(SignupType::Lightning), 1);
+    }
+
+    /// The background syncer exits the process on a PhoenixD error, so it must not
+    /// ask PhoenixD about payments that need no finalising.
+    #[sqlx::test]
+    async fn sync_skips_phoenixd_for_unknown_and_finalised_invoices(pool: PgPool) {
+        let servers = WiremockServers::start().await;
+        let phoenixd = start_phoenixd_mock(true).await;
+        let service = service(SqlDb::test(pool).await, &phoenixd, &servers, Metrics::new());
+        setup_homeserver_signup_token("token-123")
+            .expect(1)
+            .mount(&servers.homeserver_server)
+            .await;
+        let (verification, _invoice) = service.create_verification().await.unwrap();
+        let finalised = service
+            .sync_invoice(&verification.payment_hash)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(finalised.is_finalised());
+        let phoenixd_requests_before = phoenixd.received_requests().await.unwrap().len();
+
+        let unknown = service.sync_invoice(&PaymentHash::random()).await.unwrap();
+        let already_finalised = service
+            .sync_invoice(&verification.payment_hash)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(unknown.is_none());
+        assert_eq!(already_finalised.signup_code, finalised.signup_code);
+        assert_eq!(
+            phoenixd.received_requests().await.unwrap().len(),
+            phoenixd_requests_before
+        );
+    }
+
     #[sqlx::test]
     async fn metrics_count_homeserver_failure_during_sync(pool: PgPool) {
         let servers = WiremockServers::start().await;
-        let phoenixd = phoenixd_mock(true).await;
+        let phoenixd = start_phoenixd_mock(true).await;
         let metrics = Metrics::new();
         let service = service(
             SqlDb::test(pool).await,
@@ -492,7 +586,7 @@ mod tests {
     #[sqlx::test]
     async fn metrics_do_not_count_unpaid_invoices(pool: PgPool) {
         let servers = WiremockServers::start().await;
-        let phoenixd = phoenixd_mock(false).await;
+        let phoenixd = start_phoenixd_mock(false).await;
         let metrics = Metrics::new();
         let service = service(
             SqlDb::test(pool).await,

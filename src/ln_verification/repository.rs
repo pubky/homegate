@@ -3,7 +3,7 @@ use crate::{
     ln_verification::{payment_hash::PaymentHash, verification_id::VerificationId},
 };
 use chrono::NaiveDateTime;
-use sea_query::{Expr, PostgresQueryBuilder, Query};
+use sea_query::{Expr, LockType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_binder::SqlxBinder;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -126,7 +126,34 @@ impl LnVerificationRepository {
         payment_hash: &PaymentHash,
         executor: &mut UnifiedExecutor<'a>,
     ) -> Result<Option<LightningVerificationEntity>, sqlx::Error> {
-        let statement = Query::select()
+        let statement = Self::select_by_payment_hash(payment_hash);
+        Self::fetch_optional_verification(statement, executor).await
+    }
+
+    /// Get a verification by payment hash and lock its row (`FOR UPDATE`).
+    /// Inside a transaction the lock is held until the transaction ends, so
+    /// concurrent callers for the same payment hash run one after the other.
+    ///
+    /// # Arguments
+    /// * `payment_hash` - The payment hash of the Lightning invoice
+    /// * `executor` - The executor to use to execute the query
+    ///
+    /// # Returns
+    /// * `LightningVerificationEntity` - The verification record
+    ///
+    /// # Errors
+    /// * `sqlx::Error` - If the query fails
+    pub async fn lock_verification_by_payment_hash<'a>(
+        payment_hash: &PaymentHash,
+        executor: &mut UnifiedExecutor<'a>,
+    ) -> Result<Option<LightningVerificationEntity>, sqlx::Error> {
+        let mut statement = Self::select_by_payment_hash(payment_hash);
+        statement.lock(LockType::Update);
+        Self::fetch_optional_verification(statement, executor).await
+    }
+
+    fn select_by_payment_hash(payment_hash: &PaymentHash) -> SelectStatement {
+        Query::select()
             .columns([
                 "id",
                 "payment_hash",
@@ -138,17 +165,18 @@ impl LnVerificationRepository {
             ])
             .from(TABLE_NAME)
             .and_where(Expr::col("payment_hash").eq(payment_hash.as_str()))
-            .to_owned();
+            .to_owned()
+    }
+
+    async fn fetch_optional_verification<'a>(
+        statement: SelectStatement,
+        executor: &mut UnifiedExecutor<'a>,
+    ) -> Result<Option<LightningVerificationEntity>, sqlx::Error> {
         let (query, values) = statement.build_sqlx(PostgresQueryBuilder);
         let con = executor.get_con().await?;
-        let verification: LightningVerificationEntity =
-            match sqlx::query_as_with(&query, values).fetch_one(con).await {
-                Ok(verification) => verification,
-                Err(sqlx::Error::RowNotFound) => return Ok(None),
-                Err(e) => return Err(e),
-            };
-
-        Ok(Some(verification))
+        sqlx::query_as_with(&query, values)
+            .fetch_optional(con)
+            .await
     }
 
     /// Update a verification to finalised
