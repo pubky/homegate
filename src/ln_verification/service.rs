@@ -89,8 +89,8 @@ impl LnVerificationService {
 
     /// Sync a phoenixd invoice with the database, issuing a signup code once the invoice is paid.
     /// This is necessary to keep our database in sync with the phoenixd invoice status.
-    /// The verification row stays locked for the whole sync, so concurrent syncs of one
-    /// invoice run one after the other and only the first requests a signup code.
+    /// The verification row is locked before the signup code is requested, so concurrent
+    /// syncs of one paid invoice run one after the other and only the first requests a code.
     /// # Returns
     /// * `Ok(Some(verification))` - The verification as it is after this sync, finalised or not
     /// * `Ok(None)` - If there is no verification for this payment hash
@@ -100,6 +100,10 @@ impl LnVerificationService {
         &self,
         payment_hash: &PaymentHash,
     ) -> Result<Option<LightningVerificationEntity>, LnVerificationError> {
+        // Ask phoenixd before taking the row lock, so that polls of an unpaid invoice do not
+        // queue behind each other's phoenixd calls. Paid is final, so this read cannot go stale.
+        let invoice = self.phoenix_api.get_invoice(payment_hash).await?;
+
         let mut tx = self.db.pool().begin().await?;
 
         let verification = match LnVerificationRepository::lock_verification_by_payment_hash(
@@ -113,12 +117,7 @@ impl LnVerificationService {
                 return Ok(None);
             }
         };
-        if verification.is_finalised() {
-            return Ok(Some(verification));
-        }
-
-        let invoice = self.phoenix_api.get_invoice(payment_hash).await?;
-        if !invoice.is_paid {
+        if verification.is_finalised() || !invoice.is_paid {
             return Ok(Some(verification));
         }
 
